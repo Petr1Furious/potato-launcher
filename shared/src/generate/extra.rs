@@ -10,10 +10,11 @@ use crate::{
     progress::{self, NoProgressBar, ProgressBar as _},
     utils::{url_from_path, url_from_rel_path},
     version::{
-        extra_version_metadata::{AuthBackend, ExtraVersionMetadata, Include, Object},
+        extra_version_metadata::{ExtraVersionMetadata, Include, Object},
         version_metadata::Library,
     },
 };
+use launcher_auth::providers::AuthProviderConfig;
 use log::info;
 use serde::Deserialize;
 
@@ -144,7 +145,7 @@ pub struct ExtraMetadataGenerator {
     version_name: String,
     include_config: Option<IncludeConfig>,
     extra_forge_libs_paths: Vec<PathBuf>,
-    auth_backend: Option<AuthBackend>,
+    auth_backend: Option<AuthProviderConfig>,
     recommended_xmx: Option<String>,
 }
 
@@ -153,7 +154,7 @@ impl ExtraMetadataGenerator {
         version_name: String,
         include_config: Option<IncludeConfig>,
         extra_forge_libs_paths: Vec<PathBuf>,
-        auth_backend: Option<AuthBackend>,
+        auth_backend: Option<AuthProviderConfig>,
         recommended_xmx: Option<String>,
     ) -> Self {
         Self {

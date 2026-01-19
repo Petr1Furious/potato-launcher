@@ -6,19 +6,18 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use reqwest::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 
-use crate::config::build_config;
-use crate::lang::LangMessage;
+use crate::UserInfo;
+use crate::flow::{AuthMessage, AuthMessageProvider, AuthResultData, AuthState};
 
-use super::auth_flow::AuthMessageProvider;
-use super::base::{AuthProvider, AuthResultData, AuthState};
-use super::user_info::UserInfo;
+use super::base::AuthProvider;
 
 const ELY_BY_BASE: &str = "https://ely.by/";
 
@@ -38,9 +37,16 @@ pub enum AuthError {
     MissingQueryString,
 }
 
+pub(crate) fn elyby_default_launcher_name() -> String {
+    "Potato Launcher".to_string()
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
 pub struct ElyByAuthProvider {
-    client_id: String,
-    client_secret: String,
+    pub client_id: String,
+    pub client_secret: String,
+    #[serde(default = "elyby_default_launcher_name")]
+    pub launcher_name: String,
 }
 
 #[derive(Deserialize)]
@@ -92,18 +98,47 @@ enum TokenResult {
     Error(anyhow::Error),
 }
 
-async fn handle_request(
-    client_id: String,
-    client_secret: String,
-    redirect_uri: String,
-    req: Request<hyper::body::Incoming>,
-    token_tx: Box<mpsc::UnboundedSender<TokenResult>>,
-) -> anyhow::Result<Response<Full<Bytes>>> {
-    let query = req.uri().query().ok_or(AuthError::MissingQueryString)?;
-    let auth_query: AuthQuery = serde_urlencoded::from_str(query)?;
+impl ElyByAuthProvider {
+    pub fn new(client_id: String, client_secret: String, launcher_name: String) -> Self {
+        ElyByAuthProvider {
+            client_id,
+            client_secret,
+            launcher_name,
+        }
+    }
 
-    let token_result =
-        match exchange_code(&client_id, &client_secret, &auth_query.code, &redirect_uri).await {
+    async fn print_auth_url(
+        &self,
+        redirect_uri: &str,
+        message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
+    ) {
+        let url = format!(
+            "https://account.ely.by/oauth2/v1?client_id={}&redirect_uri={}&response_type=code&scope=account_info%20minecraft_server_session&prompt=select_account",
+            &self.client_id, redirect_uri
+        );
+        let _ = open::that(&url);
+        message_provider
+            .set_message(AuthMessage::Link { url })
+            .await;
+    }
+
+    async fn handle_request(
+        &self,
+        redirect_uri: String,
+        req: Request<hyper::body::Incoming>,
+        token_tx: Box<mpsc::UnboundedSender<TokenResult>>,
+    ) -> anyhow::Result<Response<Full<Bytes>>> {
+        let query = req.uri().query().ok_or(AuthError::MissingQueryString)?;
+        let auth_query: AuthQuery = serde_urlencoded::from_str(query)?;
+
+        let token_result = match exchange_code(
+            &self.client_id,
+            &self.client_secret,
+            &auth_query.code,
+            &redirect_uri,
+        )
+        .await
+        {
             Ok(token) => TokenResult::Token(token),
             Err(e) => match e.downcast::<AuthError>() {
                 Ok(e) => match e {
@@ -114,49 +149,30 @@ async fn handle_request(
             },
         };
 
-    let response = match &token_result {
-        TokenResult::Token(_) => Response::builder()
-            .status(302)
-            .header(
-                "Location",
-                format!(
-                    "https://account.ely.by/oauth2/code/success?appName={}",
-                    &build_config::get_launcher_name(),
-                ),
-            )
-            .body(Full::new(Bytes::from("")))?,
+        let response = match &token_result {
+            TokenResult::Token(_) => Response::builder()
+                .status(302)
+                .header(
+                    "Location",
+                    format!(
+                        "https://account.ely.by/oauth2/code/success?appName={}",
+                        &self.launcher_name,
+                    ),
+                )
+                .body(Full::new(Bytes::from("")))?,
 
-        TokenResult::InvalidCode => Response::builder()
-            .status(400)
-            .body(Full::new(Bytes::from("Invalid code")))?,
+            TokenResult::InvalidCode => Response::builder()
+                .status(400)
+                .body(Full::new(Bytes::from("Invalid code")))?,
 
-        TokenResult::Error(_) => Response::builder()
-            .status(500)
-            .body(Full::new(Bytes::from("Internal server error")))?,
-    };
+            TokenResult::Error(_) => Response::builder()
+                .status(500)
+                .body(Full::new(Bytes::from("Internal server error")))?,
+        };
 
-    let _ = token_tx.send(token_result);
+        let _ = token_tx.send(token_result);
 
-    Ok(response)
-}
-
-impl ElyByAuthProvider {
-    pub fn new(elyby_client_id: &str, elyby_client_secret: &str) -> Self {
-        ElyByAuthProvider {
-            client_id: elyby_client_id.to_string(),
-            client_secret: elyby_client_secret.to_string(),
-        }
-    }
-
-    async fn print_auth_url(&self, redirect_uri: &str, message_provider: &AuthMessageProvider) {
-        let url = format!(
-            "https://account.ely.by/oauth2/v1?client_id={}&redirect_uri={}&response_type=code&scope=account_info%20minecraft_server_session&prompt=select_account",
-            &self.client_id, redirect_uri
-        );
-        let _ = open::that(&url);
-        message_provider
-            .set_message(LangMessage::AuthMessage { url })
-            .await;
+        Ok(response)
     }
 }
 
@@ -164,7 +180,7 @@ impl ElyByAuthProvider {
 impl AuthProvider for ElyByAuthProvider {
     async fn authenticate(
         &self,
-        message_provider: &AuthMessageProvider,
+        message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
     ) -> anyhow::Result<AuthState> {
         let addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let listener = TcpListener::bind(addr).await?;
@@ -196,13 +212,7 @@ impl AuthProvider for ElyByAuthProvider {
                 io,
                 service_fn(|req: Request<hyper::body::Incoming>| {
                     let token_tx = token_tx.clone();
-                    handle_request(
-                        self.client_id.clone(),
-                        self.client_secret.clone(),
-                        redirect_uri.clone(),
-                        req,
-                        token_tx,
-                    )
+                    self.handle_request(redirect_uri.clone(), req, token_tx)
                 }),
             )
             .await?;
@@ -241,11 +251,7 @@ impl AuthProvider for ElyByAuthProvider {
         Ok(AuthState::Success(resp))
     }
 
-    fn get_auth_url(&self) -> Option<String> {
+    fn get_injector_url(&self) -> Option<String> {
         Some(ELY_BY_BASE.to_string())
-    }
-
-    fn get_name(&self) -> String {
-        "Ely.by".to_string()
     }
 }

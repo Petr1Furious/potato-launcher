@@ -1,27 +1,29 @@
+use async_trait::async_trait;
 use egui::ComboBox;
 use egui::RichText;
 use egui::Window;
 use image::Luma;
+use launcher_auth::AccountData;
+use launcher_auth::flow::{AuthMessage, AuthMessageProvider, perform_auth};
+use launcher_auth::providers::{
+    AuthProviderConfig, AuthProviderType, ElyByAuthProvider, MicrosoftAuthProvider,
+    OfflineAuthProvider, TGAuthProvider,
+};
+use launcher_auth::storage::{AccountDataSource, AuthStorage, StorageEntry};
 use log::error;
 use qrcode::QrCode;
+use shared::paths::get_auth_data_path;
 use shared::utils::is_connect_error;
-use shared::version::extra_version_metadata::AuthBackend;
-use shared::version::extra_version_metadata::ElyByAuthBackend;
-use shared::version::extra_version_metadata::TelegramAuthBackend;
 use std::hash::DefaultHasher;
 use std::hash::Hash as _;
 use std::hash::Hasher as _;
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
+use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
-use crate::auth::auth_flow::AuthMessageProvider;
-use crate::auth::auth_flow::perform_auth;
-use crate::auth::auth_storage::AuthDataSource;
-use crate::auth::auth_storage::AuthStorage;
-use crate::auth::auth_storage::StorageEntry;
-use crate::auth::base::get_auth_provider;
-use crate::auth::user_info::AuthData;
+use crate::config::build_config;
 use crate::config::runtime_config::AuthProfile;
 use crate::config::runtime_config::Config;
 use crate::lang::{Lang, LangMessage};
@@ -40,28 +42,26 @@ enum AuthStatus {
 }
 
 struct AuthResult {
-    auth_backend: AuthBackend,
+    auth_provider: AuthProviderConfig,
     status: AuthStatus,
-    auth_data: Option<AuthData>,
+    account_data: Option<AccountData>,
 }
 
 fn authenticate(
     runtime: &Runtime,
-    auth_data: Option<AuthData>,
-    auth_backend: &AuthBackend,
-    auth_message_provider: Arc<AuthMessageProvider>,
+    account_data: Option<AccountData>,
+    auth_provider: AuthProviderConfig,
+    auth_message_provider: Arc<EguiAuthMessageProvider>,
     ctx: &egui::Context,
 ) -> BackgroundTask<AuthResult> {
     let ctx = ctx.clone();
-    let auth_backend = auth_backend.clone();
-    let auth_provider = get_auth_provider(&auth_backend);
 
     let fut = async move {
-        match perform_auth(auth_data, auth_provider, auth_message_provider).await {
+        match perform_auth(account_data, auth_provider.clone(), auth_message_provider).await {
             Ok(data) => AuthResult {
-                auth_backend,
+                auth_provider: auth_provider.clone(),
                 status: AuthStatus::Authorized,
-                auth_data: Some(data),
+                account_data: Some(data),
             },
 
             Err(e) => {
@@ -77,7 +77,7 @@ fn authenticate(
                 }
 
                 AuthResult {
-                    auth_backend,
+                    auth_provider,
                     status: if connect_error {
                         AuthStatus::AuthorizeErrorOffline
                     } else if timeout_error {
@@ -86,7 +86,7 @@ fn authenticate(
                         error!("Auth error:\n{e:?}");
                         AuthStatus::AuthorizeError
                     },
-                    auth_data: None,
+                    account_data: None,
                 }
             }
         }
@@ -101,23 +101,15 @@ fn authenticate(
     )
 }
 
-#[derive(Clone, Copy, PartialEq)]
-enum NewAccountType {
-    Microsoft,
-    ElyBy,
-    Telegram,
-    Offline,
-}
-
 pub struct AuthState {
     auth_status: AuthStatus,
     auth_task: Option<BackgroundTask<AuthResult>>,
-    auth_message_provider: Arc<AuthMessageProvider>,
+    auth_message_provider: Arc<EguiAuthMessageProvider>,
     auth_storage: AuthStorage,
 
     show_add_account: bool,
 
-    new_account_type: NewAccountType,
+    new_account_type: AuthProviderType,
 
     ely_by_client_id: String,
     ely_by_client_secret: String,
@@ -131,15 +123,16 @@ pub struct AuthState {
 
 impl AuthState {
     pub fn new(ctx: &egui::Context, config: &Config) -> Self {
+        let auth_data_path = get_auth_data_path(&config.get_launcher_dir());
         AuthState {
             auth_status: AuthStatus::NotAuthorized,
             auth_task: None,
-            auth_message_provider: Arc::new(AuthMessageProvider::new(ctx)),
-            auth_storage: AuthStorage::load(config),
+            auth_message_provider: Arc::new(EguiAuthMessageProvider::new(ctx)),
+            auth_storage: AuthStorage::load(auth_data_path),
 
             show_add_account: false,
 
-            new_account_type: NewAccountType::Microsoft,
+            new_account_type: AuthProviderType::Microsoft,
 
             ely_by_client_id: String::new(),
             ely_by_client_secret: String::new(),
@@ -162,15 +155,14 @@ impl AuthState {
             match result {
                 BackgroundTaskResult::Finished(result) => {
                     if result.status == AuthStatus::Authorized
-                        && let Some(auth_data) = result.auth_data
+                        && let Some(auth_data) = result.account_data
                     {
                         config.set_selected_auth_profile(AuthProfile {
-                            auth_backend_id: result.auth_backend.get_id(),
+                            auth_backend_id: result.auth_provider.get_id(),
                             username: auth_data.user_info.username.clone(),
                         });
 
-                        self.auth_storage
-                            .insert(config, &result.auth_backend, auth_data);
+                        self.auth_storage.insert(&result.auth_provider, auth_data);
                         self.show_add_account = false;
                     }
 
@@ -189,7 +181,7 @@ impl AuthState {
     }
 
     fn render_auth_window(&mut self, config: &mut Config, runtime: &Runtime, ui: &mut egui::Ui) {
-        if let Some(message) = runtime.block_on(self.auth_message_provider.get_message()) {
+        if let Some(message) = runtime.block_on(self.auth_message_provider.get_lang_message()) {
             let lang = config.lang;
             let ctx = ui.ctx();
 
@@ -219,7 +211,7 @@ impl AuthState {
                 if ui.button(LangMessage::Cancel.to_string(lang)).clicked() {
                     self.auth_status = AuthStatus::NotAuthorized;
                     self.auth_task = None;
-                    self.auth_message_provider = Arc::new(AuthMessageProvider::new(ctx));
+                    self.auth_message_provider = Arc::new(EguiAuthMessageProvider::new(ctx));
                     self.on_instance_changed(config, runtime, ctx);
                 }
             });
@@ -256,18 +248,18 @@ impl AuthState {
             if !open {
                 self.auth_status = AuthStatus::NotAuthorized;
                 self.auth_task = None;
-                self.auth_message_provider = Arc::new(AuthMessageProvider::new(ctx));
+                self.auth_message_provider = Arc::new(EguiAuthMessageProvider::new(ctx));
                 self.on_instance_changed(config, runtime, ctx);
             }
         }
     }
 
-    fn get_type_display_name(lang: Lang, new_account_type: NewAccountType) -> String {
+    fn get_type_display_name(lang: Lang, new_account_type: AuthProviderType) -> String {
         match new_account_type {
-            NewAccountType::Microsoft => "Microsoft".to_string(),
-            NewAccountType::ElyBy => "Ely.by".to_string(),
-            NewAccountType::Telegram => "Telegram".to_string(),
-            NewAccountType::Offline => LangMessage::Offline.to_string(lang),
+            AuthProviderType::Microsoft => "Microsoft".to_string(),
+            AuthProviderType::ElyBy => "Ely.by".to_string(),
+            AuthProviderType::Telegram => "Telegram".to_string(),
+            AuthProviderType::Offline => LangMessage::Offline.to_string(lang),
         }
     }
 
@@ -286,12 +278,7 @@ impl AuthState {
                 ComboBox::from_id_salt("new_account_type")
                     .selected_text(Self::get_type_display_name(lang, self.new_account_type))
                     .show_ui(ui, |ui| {
-                        for account_type in [
-                            NewAccountType::Microsoft,
-                            NewAccountType::ElyBy,
-                            NewAccountType::Telegram,
-                            NewAccountType::Offline,
-                        ] {
+                        for account_type in AuthProviderType::iter() {
                             ui.selectable_value(
                                 &mut self.new_account_type,
                                 account_type,
@@ -301,8 +288,8 @@ impl AuthState {
                     });
 
                 match self.new_account_type {
-                    NewAccountType::Microsoft => {}
-                    NewAccountType::ElyBy => {
+                    AuthProviderType::Microsoft => {}
+                    AuthProviderType::ElyBy => {
                         ui.horizontal(|ui| {
                             ui.label("Client ID:");
                             ui.text_edit_singleline(&mut self.ely_by_client_id);
@@ -312,37 +299,44 @@ impl AuthState {
                             ui.text_edit_singleline(&mut self.ely_by_client_secret);
                         });
                     }
-                    NewAccountType::Telegram => {
+                    AuthProviderType::Telegram => {
                         ui.horizontal(|ui| {
                             ui.label("Auth Base URL:");
                             ui.text_edit_singleline(&mut self.telegram_auth_base_url);
                         });
                     }
-                    NewAccountType::Offline => {}
+                    AuthProviderType::Offline => {}
                 }
 
                 if ui
                     .button(LangMessage::AddAndAuthenticate.to_string(lang))
                     .clicked()
                 {
-                    let new_auth_backend = match self.new_account_type {
-                        NewAccountType::Microsoft => AuthBackend::Microsoft,
-                        NewAccountType::ElyBy => AuthBackend::ElyBy(ElyByAuthBackend {
+                    let new_auth_provider = match self.new_account_type {
+                        AuthProviderType::Microsoft => {
+                            AuthProviderConfig::Microsoft(MicrosoftAuthProvider {})
+                        }
+                        AuthProviderType::ElyBy => AuthProviderConfig::ElyBy(ElyByAuthProvider {
                             client_id: self.ely_by_client_id.clone(),
                             client_secret: self.ely_by_client_secret.clone(),
+                            launcher_name: build_config::get_launcher_name(),
                         }),
-                        NewAccountType::Telegram => AuthBackend::Telegram(TelegramAuthBackend {
-                            auth_base_url: self.telegram_auth_base_url.clone(),
-                        }),
-                        NewAccountType::Offline => AuthBackend::Offline,
+                        AuthProviderType::Telegram => {
+                            AuthProviderConfig::Telegram(TGAuthProvider {
+                                auth_base_url: self.telegram_auth_base_url.clone(),
+                            })
+                        }
+                        AuthProviderType::Offline => {
+                            AuthProviderConfig::Offline(OfflineAuthProvider {})
+                        }
                     };
 
                     self.auth_status = AuthStatus::NotAuthorized;
-                    self.auth_message_provider = Arc::new(AuthMessageProvider::new(ctx));
+                    self.auth_message_provider = Arc::new(EguiAuthMessageProvider::new(ctx));
                     self.auth_task = Some(authenticate(
                         runtime,
                         None,
-                        &new_auth_backend,
+                        new_auth_provider,
                         self.auth_message_provider.clone(),
                         ctx,
                     ));
@@ -376,17 +370,17 @@ impl AuthState {
 
         let storage_entry = self.get_selected_storage_entry(config);
         if let Some(storage_entry) = &storage_entry {
-            if storage_entry.source == AuthDataSource::Persistent && self.auth_task.is_none() {
-                self.auth_message_provider = Arc::new(AuthMessageProvider::new(ctx));
+            if storage_entry.source == AccountDataSource::Persistent && self.auth_task.is_none() {
+                self.auth_message_provider = Arc::new(EguiAuthMessageProvider::new(ctx));
                 self.auth_task = Some(authenticate(
                     runtime,
                     Some(storage_entry.auth_data.clone()),
-                    &AuthBackend::from_id(&auth_profile.as_ref().unwrap().auth_backend_id),
+                    AuthProviderConfig::from_id(&auth_profile.as_ref().unwrap().auth_backend_id),
                     self.auth_message_provider.clone(),
                     ctx,
                 ));
             }
-            if storage_entry.source == AuthDataSource::Runtime {
+            if storage_entry.source == AccountDataSource::Runtime {
                 self.auth_status = AuthStatus::Authorized;
             }
         }
@@ -397,7 +391,7 @@ impl AuthState {
         ui: &mut egui::Ui,
         config: &mut Config,
         runtime: &Runtime,
-        instance_auth_backend: Option<&AuthBackend>,
+        instance_auth_provider: Option<AuthProviderConfig>,
     ) {
         let mut auth_profile = config.get_selected_auth_profile().cloned();
 
@@ -406,31 +400,28 @@ impl AuthState {
             .clicked()
             && let Some(auth_profile) = auth_profile.take()
         {
-            self.auth_storage.delete_by_id(
-                config,
-                &auth_profile.auth_backend_id,
-                &auth_profile.username,
-            );
+            self.auth_storage
+                .delete_by_id(&auth_profile.auth_backend_id, &auth_profile.username);
             config.clear_selected_auth_profile();
         }
 
         if ui.button("+").clicked() {
-            if let Some(instance_auth_backend) = instance_auth_backend {
+            if let Some(instance_auth_provider) = instance_auth_provider {
                 let ctx = ui.ctx();
 
                 self.auth_status = AuthStatus::NotAuthorized;
-                self.auth_message_provider = Arc::new(AuthMessageProvider::new(ctx));
+                self.auth_message_provider = Arc::new(EguiAuthMessageProvider::new(ctx));
                 self.auth_task = Some(authenticate(
                     runtime,
                     None,
-                    instance_auth_backend,
+                    instance_auth_provider,
                     self.auth_message_provider.clone(),
                     ctx,
                 ));
             } else {
                 self.show_add_account = true;
 
-                self.new_account_type = NewAccountType::Microsoft;
+                self.new_account_type = AuthProviderType::Microsoft;
 
                 self.ely_by_client_id = String::new();
                 self.ely_by_client_secret = String::new();
@@ -442,10 +433,9 @@ impl AuthState {
         }
     }
 
-    fn get_account_display_name((id, username): &(String, String)) -> String {
-        let backend = AuthBackend::from_id(id);
-        let provider = get_auth_provider(&backend);
-        let provider_name = provider.get_name();
+    fn get_account_display_name(lang: Lang, id: &String, username: &String) -> String {
+        let provider_config = AuthProviderConfig::from_id(id);
+        let provider_name = AuthState::get_type_display_name(lang, provider_config.get_type());
 
         let mut hasher = DefaultHasher::new();
         id.hash(&mut hasher);
@@ -496,13 +486,13 @@ impl AuthState {
         config: &mut Config,
         runtime: &Runtime,
         ctx: &egui::Context,
-        instance_auth_backend: Option<&AuthBackend>,
+        instance_auth_provider: Option<AuthProviderConfig>,
     ) {
         let lang = config.lang;
 
         let auth_profile = config.get_selected_auth_profile().cloned();
         if auth_profile.is_none()
-            && let Some(instance_auth_backend) = instance_auth_backend
+            && let Some(instance_auth_backend) = instance_auth_provider.clone()
         {
             let entries = self
                 .auth_storage
@@ -524,13 +514,13 @@ impl AuthState {
         let dark_mode = ui.style().visuals.dark_mode;
 
         let auth_profile = config.get_selected_auth_profile().cloned();
-        if let Some(instance_auth_backend) = instance_auth_backend {
+        if let Some(instance_auth_provider) = instance_auth_provider {
             let mut entries = self
                 .auth_storage
-                .get_id_nicknames(&instance_auth_backend.get_id());
+                .get_id_nicknames(&instance_auth_provider.get_id());
 
             if !entries.is_empty() {
-                self.render_buttons(ui, config, runtime, Some(instance_auth_backend));
+                self.render_buttons(ui, config, runtime, Some(instance_auth_provider.clone()));
 
                 let mut selected_username = auth_profile.as_ref().map(|x| x.username.to_string());
                 ComboBox::from_id_salt("select_account")
@@ -560,22 +550,26 @@ impl AuthState {
                     && auth_profile.as_ref().map(|x| &x.username) != Some(&selected_username)
                 {
                     let auth_profile_value = AuthProfile {
-                        auth_backend_id: instance_auth_backend.get_id(),
+                        auth_backend_id: instance_auth_provider.get_id(),
                         username: selected_username.clone(),
                     };
                     config.set_selected_auth_profile(auth_profile_value.clone());
                 }
             } else {
                 ui.add_enabled_ui(self.auth_task.is_none(), |ui| {
-                    let auth_provider = get_auth_provider(instance_auth_backend);
-                    let button_text = if !matches!(instance_auth_backend, AuthBackend::Offline) {
-                        egui::RichText::new(
-                            LangMessage::AuthorizeUsing(auth_provider.get_name()).to_string(lang),
-                        )
-                    } else {
-                        egui::RichText::new(LangMessage::AddOfflineAccount.to_string(lang))
-                    }
-                    .size(20.0);
+                    let button_text =
+                        if !matches!(instance_auth_provider, AuthProviderConfig::Offline(_)) {
+                            egui::RichText::new(
+                                LangMessage::AuthorizeUsing(AuthState::get_type_display_name(
+                                    lang,
+                                    instance_auth_provider.get_type(),
+                                ))
+                                .to_string(lang),
+                            )
+                        } else {
+                            egui::RichText::new(LangMessage::AddOfflineAccount.to_string(lang))
+                        }
+                        .size(20.0);
 
                     if ui
                         .add_sized([ui.available_width(), 50.0], egui::Button::new(button_text))
@@ -584,11 +578,11 @@ impl AuthState {
                         let storage_entry = self.get_selected_storage_entry(config);
 
                         self.auth_status = AuthStatus::NotAuthorized;
-                        self.auth_message_provider = Arc::new(AuthMessageProvider::new(ctx));
+                        self.auth_message_provider = Arc::new(EguiAuthMessageProvider::new(ctx));
                         self.auth_task = Some(authenticate(
                             runtime,
                             storage_entry.as_ref().map(|x| x.auth_data.clone()),
-                            instance_auth_backend,
+                            instance_auth_provider,
                             self.auth_message_provider.clone(),
                             ctx,
                         ));
@@ -596,7 +590,7 @@ impl AuthState {
                 });
             }
         } else {
-            self.render_buttons(ui, config, runtime, instance_auth_backend);
+            self.render_buttons(ui, config, runtime, instance_auth_provider);
 
             let mut all_entries = self.auth_storage.get_all_entries();
 
@@ -622,7 +616,7 @@ impl AuthState {
                         ui.selectable_value(
                             &mut selected_account,
                             Some((id.clone(), username.clone())),
-                            Self::get_account_display_name(&(id, username)),
+                            Self::get_account_display_name(lang, &id, &username),
                         );
                     }
                 });
@@ -644,17 +638,17 @@ impl AuthState {
         self.render_auth_window(config, runtime, ui);
     }
 
-    pub fn get_auth_data(&self, config: &Config) -> Option<AuthData> {
+    pub fn get_auth_data(&self, config: &Config) -> Option<AccountData> {
         let profile = config.get_selected_auth_profile()?;
         if let Some(storage_entry) = self
             .auth_storage
             .get_by_id(&profile.auth_backend_id, &profile.username)
         {
             match storage_entry.source {
-                AuthDataSource::Runtime => {
+                AccountDataSource::Runtime => {
                     return Some(storage_entry.auth_data);
                 }
-                AuthDataSource::Persistent => {
+                AccountDataSource::Persistent => {
                     if self.auth_status == AuthStatus::AuthorizeErrorOffline {
                         return Some(storage_entry.auth_data); // allow playing with an existing account when offline
                     }
@@ -676,5 +670,86 @@ impl AuthState {
 
     pub fn reset(&mut self, config: &mut Config, runtime: &Runtime, ctx: &egui::Context) {
         self.on_instance_changed(config, runtime, ctx);
+    }
+}
+
+struct AuthMessageState {
+    auth_message: Option<AuthMessage>,
+    need_offline_nickname: u32,
+}
+
+struct EguiAuthMessageProvider {
+    state: Arc<Mutex<AuthMessageState>>,
+    offline_nickname_sender: mpsc::UnboundedSender<String>,
+    offline_nickname_receiver: Arc<Mutex<mpsc::UnboundedReceiver<String>>>,
+    ctx: egui::Context,
+}
+
+impl EguiAuthMessageProvider {
+    fn new(ctx: &egui::Context) -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        Self {
+            state: Arc::new(Mutex::new(AuthMessageState {
+                auth_message: None,
+                need_offline_nickname: 0,
+            })),
+            offline_nickname_sender: sender,
+            offline_nickname_receiver: Arc::new(Mutex::new(receiver)),
+            ctx: ctx.clone(),
+        }
+    }
+
+    async fn get_lang_message(&self) -> Option<LangMessage> {
+        self.get_message()
+            .await
+            .map(|auth_message| match auth_message {
+                AuthMessage::Link { url } => LangMessage::AuthMessage { url },
+                AuthMessage::LinkCode { url, code } => LangMessage::DeviceAuthMessage { url, code },
+            })
+    }
+}
+
+#[async_trait]
+impl AuthMessageProvider for EguiAuthMessageProvider {
+    async fn set_message(&self, message: AuthMessage) {
+        let mut state = self.state.lock().await;
+        state.auth_message = Some(message);
+        self.ctx.request_repaint();
+    }
+
+    async fn get_message(&self) -> Option<AuthMessage> {
+        let state = self.state.lock().await;
+        state.auth_message.clone()
+    }
+
+    async fn clear(&self) {
+        let mut state = self.state.lock().await;
+        state.auth_message = None;
+        self.ctx.request_repaint();
+    }
+
+    async fn request_offline_nickname(&self) -> String {
+        {
+            let mut state = self.state.lock().await;
+            state.need_offline_nickname += 1;
+        }
+
+        self.offline_nickname_receiver
+            .lock()
+            .await
+            .recv()
+            .await
+            .unwrap()
+    }
+
+    async fn need_offline_nickname(&self) -> bool {
+        let state = self.state.lock().await;
+        state.need_offline_nickname > 0
+    }
+
+    async fn set_offline_nickname(&self, nickname: String) {
+        let mut state = self.state.lock().await;
+        state.need_offline_nickname -= 1;
+        self.offline_nickname_sender.send(nickname).unwrap();
     }
 }

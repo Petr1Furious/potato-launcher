@@ -1,24 +1,23 @@
-use super::{
-    auth_flow::AuthMessageProvider,
-    base::{AuthProvider, AuthResultData, AuthState},
-    user_info::UserInfo,
-};
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub struct OfflineAuthProvider {}
+use crate::{
+    UserInfo,
+    flow::{AuthMessageProvider, AuthResultData, AuthState},
+    providers::AuthProvider,
+};
 
-impl OfflineAuthProvider {
-    pub fn new() -> Self {
-        OfflineAuthProvider {}
-    }
-}
+#[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
+pub struct OfflineAuthProvider {}
 
 #[async_trait]
 impl AuthProvider for OfflineAuthProvider {
     async fn authenticate(
         &self,
-        message_provider: &AuthMessageProvider,
+        message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
     ) -> anyhow::Result<AuthState> {
         Ok(AuthState::UserInfo(AuthResultData {
             access_token: message_provider.request_offline_nickname().await,
@@ -41,11 +40,7 @@ impl AuthProvider for OfflineAuthProvider {
         }))
     }
 
-    fn get_auth_url(&self) -> Option<String> {
+    fn get_injector_url(&self) -> Option<String> {
         None
-    }
-
-    fn get_name(&self) -> String {
-        "Offline".to_string()
     }
 }

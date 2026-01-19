@@ -231,15 +231,10 @@ impl LauncherApp {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                 let version_metadata = self.metadata_state.get_version_metadata(&self.config);
-                let auth_backend =
-                    version_metadata.and_then(|metadata| metadata.get_auth_backend().cloned());
-                self.auth_state.render_ui(
-                    ui,
-                    &mut self.config,
-                    &self.runtime,
-                    ctx,
-                    auth_backend.as_ref(),
-                );
+                let auth_provider =
+                    version_metadata.and_then(|metadata| metadata.get_auth_provider().cloned());
+                self.auth_state
+                    .render_ui(ui, &mut self.config, &self.runtime, ctx, auth_provider);
             });
         });
 
@@ -297,7 +292,7 @@ impl LauncherApp {
                     .get_selected_instance(&self.config)
                     .is_some_and(|instance| instance.status == InstanceStatus::UpToDate)
             {
-                let auth_data = self.auth_state.get_auth_data(&self.config);
+                let account_data = self.auth_state.get_auth_data(&self.config);
                 let selected_instance = self.metadata_state.get_version_metadata(&self.config);
 
                 let params = RenderUiParams {
@@ -311,7 +306,7 @@ impl LauncherApp {
                     ui,
                     &mut self.config,
                     selected_instance,
-                    auth_data,
+                    account_data,
                     params,
                 );
             } else {

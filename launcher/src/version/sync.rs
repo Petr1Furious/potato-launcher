@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures::stream::StreamExt;
+use launcher_auth::providers::AuthProviderConfig;
 use log::{debug, info, warn};
 use rand::SeedableRng as _;
 use rand::rngs::StdRng;
@@ -18,7 +19,7 @@ use zip::ZipArchive;
 
 use shared::files::{self, CheckEntry};
 use shared::progress::ProgressBar;
-use shared::version::extra_version_metadata::{AuthBackend, ExtraVersionMetadata};
+use shared::version::extra_version_metadata::ExtraVersionMetadata;
 use shared::version::version_metadata;
 
 use crate::lang::LangMessage;
@@ -238,8 +239,8 @@ fn get_authlib_injector_entry(
     version_metadata: &CompleteVersionMetadata,
     launcher_dir: &Path,
 ) -> Option<CheckEntry> {
-    if let Some(auth_backend) = version_metadata.get_auth_backend()
-        && auth_backend == &AuthBackend::Microsoft
+    if let Some(auth_provider) = version_metadata.get_auth_provider()
+        && matches!(auth_provider, AuthProviderConfig::Microsoft(_))
     {
         None
     } else {

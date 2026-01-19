@@ -1,10 +1,6 @@
 [workspace]
-members = [
-    "launcher",
-    "instance_builder",
-    "shared"
-]
-resolver = "2"
+members = ["launcher", "instance_builder", "shared", "crates/auth"]
+resolver = "3"
 
 [profile.release-lto]
 inherits = "release"

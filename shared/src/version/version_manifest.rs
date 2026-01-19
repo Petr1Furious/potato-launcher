@@ -64,12 +64,6 @@ pub struct VersionManifest {
 }
 
 impl VersionManifest {
-    pub fn empty() -> Self {
-        Self {
-            versions: Vec::new(),
-        }
-    }
-
     pub async fn fetch(url: &str) -> anyhow::Result<Self> {
         let client = Client::new();
         let res = client
@@ -82,39 +76,9 @@ impl VersionManifest {
         Ok(res)
     }
 
-    pub async fn read_local(manifest_path: &Path) -> anyhow::Result<Self> {
-        let manifest_file = tokio::fs::read(manifest_path).await?;
-        let manifest: Self = serde_json::from_slice(&manifest_file)?;
-        Ok(manifest)
-    }
-
-    pub async fn read_local_safe(manifest_path: &Path) -> Self {
-        match Self::read_local(manifest_path).await {
-            Ok(manifest) => manifest,
-            Err(_) => Self {
-                versions: Vec::new(),
-            },
-        }
-    }
-
     pub async fn save_to_file(&self, manifest_path: &Path) -> anyhow::Result<()> {
         let manifest_str = serde_json::to_string(self)?;
         tokio::fs::write(manifest_path, manifest_str).await?;
         Ok(())
-    }
-
-    pub fn is_up_to_date(&self, version_info: &VersionInfo) -> bool {
-        self.versions.iter().any(|i| i == version_info)
-    }
-
-    pub async fn add_version_and_save(
-        &mut self,
-        version_info: VersionInfo,
-        manifest_path: &Path,
-    ) -> anyhow::Result<()> {
-        self.versions
-            .retain(|i| i.get_name() != version_info.get_name());
-        self.versions.push(version_info);
-        self.save_to_file(manifest_path).await
     }
 }

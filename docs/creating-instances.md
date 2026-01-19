@@ -144,4 +144,4 @@ Currently, the following authentication backends/providers are supported:
 
 - `"mojang"`: The official authentication server. Requires no parameters
 - `"telegram"`: [tgauth](https://foxlab.dev/minecraft/tgauth-backend). Requires `"auth_base_url"` parameter to be set to the base URL of the tgauth server, e.g. `"https://your.auth.server"`
-- `"ely.by"`: [ely.by](https://ely.by). To use this provider, you need to create a "Web site" application at https://account.ely.by/dev/applications. Parameters: `"client_id"`, `"client_secret"`
+- `"ely.by"`: [ely.by](https://ely.by). To use this provider, you need to create a "Web site" application at https://account.ely.by/dev/applications. Parameters: `"client_id"`, `"client_secret"`, `"launcher_name"` (human-readable string shown after successful login)

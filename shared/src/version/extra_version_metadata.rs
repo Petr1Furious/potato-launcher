@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use log::warn;
+use launcher_auth::providers::AuthProviderConfig;
 use serde::{Deserialize, Serialize};
 
 use crate::{files::CheckEntry, paths::get_extra_metadata_path};
@@ -12,60 +12,6 @@ pub struct Object {
     pub path: String,
     pub sha1: String,
     pub url: String,
-}
-
-#[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
-pub struct TelegramAuthBackend {
-    pub auth_base_url: String,
-}
-
-#[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
-pub struct ElyByAuthBackend {
-    pub client_id: String,
-    pub client_secret: String,
-}
-
-#[derive(Deserialize, Serialize, Clone, PartialEq, Default, Debug)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum AuthBackend {
-    Telegram(TelegramAuthBackend),
-    #[serde(rename = "ely.by")]
-    ElyBy(ElyByAuthBackend),
-    #[default]
-    Microsoft,
-    Offline,
-}
-
-impl AuthBackend {
-    pub fn get_id(&self) -> String {
-        match self {
-            AuthBackend::Telegram(auth_data) => format!("telegram_{}", auth_data.auth_base_url),
-            AuthBackend::ElyBy(auth_data) => {
-                format!("elyby_{}_{}", auth_data.client_id, auth_data.client_secret)
-            }
-            AuthBackend::Microsoft => "microsoft".to_string(),
-            AuthBackend::Offline => "offline".to_string(),
-        }
-    }
-
-    pub fn from_id(id: &str) -> Self {
-        let parts: Vec<&str> = id.split('_').collect();
-        match parts[0] {
-            "telegram" => AuthBackend::Telegram(TelegramAuthBackend {
-                auth_base_url: parts[1].to_string(),
-            }),
-            "elyby" => AuthBackend::ElyBy(ElyByAuthBackend {
-                client_id: parts[1].to_string(),
-                client_secret: parts[2].to_string(),
-            }),
-            "microsoft" => AuthBackend::Microsoft,
-            "offline" => AuthBackend::Offline,
-            _ => {
-                warn!("Unknown auth backend id: {id}");
-                AuthBackend::Microsoft
-            }
-        }
-    }
 }
 
 fn yes() -> bool {
@@ -92,7 +38,7 @@ pub struct Include {
 #[derive(Deserialize, Serialize)]
 pub struct ExtraVersionMetadata {
     #[serde(default)]
-    pub auth_backend: Option<AuthBackend>,
+    pub auth_backend: Option<AuthProviderConfig>,
 
     #[serde(default)]
     pub include: Vec<Include>,
