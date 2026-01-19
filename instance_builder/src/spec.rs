@@ -1,3 +1,4 @@
+use launcher_auth::providers::AuthProviderConfig;
 use log::{debug, error, info, warn};
 use serde::Deserialize;
 use std::{
@@ -24,10 +25,7 @@ use shared::{
         get_versions_extra_dir,
     },
     utils::{VANILLA_MANIFEST_URL, get_vanilla_version_info},
-    version::{
-        asset_metadata::AssetsMetadata, extra_version_metadata::AuthBackend,
-        version_manifest::VersionManifest,
-    },
+    version::{asset_metadata::AssetsMetadata, version_manifest::VersionManifest},
 };
 
 use crate::{
@@ -55,7 +53,7 @@ pub struct Instances {
 
     pub include_from: Option<String>,
 
-    pub auth_backend: Option<AuthBackend>,
+    pub auth_backend: Option<AuthProviderConfig>,
 
     pub recommended_xmx: Option<String>,
 

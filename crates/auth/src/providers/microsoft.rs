@@ -1,7 +1,6 @@
-use super::auth_flow::AuthMessageProvider;
-use super::base::{AuthProvider, AuthResultData, AuthState};
-use super::user_info::UserInfo;
-use crate::lang::LangMessage;
+use crate::UserInfo;
+use crate::flow::{AuthMessage, AuthMessageProvider, AuthResultData, AuthState};
+use crate::providers::AuthProvider;
 use crate::vendor::minecraft_msa_auth::MinecraftAuthorizationFlow;
 use async_trait::async_trait;
 use oauth2::basic::BasicClient;
@@ -11,7 +10,8 @@ use oauth2::{
     TokenResponse, TokenUrl,
 };
 use reqwest::{Client, Url};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 
 const MSA_DEVICE_CODE_URL: &str = "https://login.live.com/oauth20_connect.srf";
@@ -25,6 +25,7 @@ pub enum AuthError {
     AuthTimeout,
 }
 
+#[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
 pub struct MicrosoftAuthProvider {}
 
 #[derive(Deserialize)]
@@ -49,7 +50,9 @@ fn get_oauth_client()
         )
 }
 
-async fn get_ms_token(message_provider: &AuthMessageProvider) -> anyhow::Result<AuthResultData> {
+async fn get_ms_token(
+    message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
+) -> anyhow::Result<AuthResultData> {
     let client = get_oauth_client();
 
     let details: StandardDeviceAuthorizationResponse = client
@@ -65,7 +68,7 @@ async fn get_ms_token(message_provider: &AuthMessageProvider) -> anyhow::Result<
 
     let _ = open::that(&url);
     message_provider
-        .set_message(LangMessage::DeviceAuthMessage { url, code })
+        .set_message(AuthMessage::LinkCode { url, code })
         .await;
 
     let token = client
@@ -93,19 +96,13 @@ async fn get_ms_token(message_provider: &AuthMessageProvider) -> anyhow::Result<
     })
 }
 
-impl MicrosoftAuthProvider {
-    pub fn new() -> Self {
-        MicrosoftAuthProvider {}
-    }
-}
-
 #[async_trait]
 impl AuthProvider for MicrosoftAuthProvider {
     async fn authenticate(
         &self,
-        message_provider: &AuthMessageProvider,
+        message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
     ) -> anyhow::Result<AuthState> {
-        let ms_token = get_ms_token(message_provider).await?;
+        let ms_token = get_ms_token(message_provider.clone()).await?;
         message_provider.clear().await;
         let mc_flow = MinecraftAuthorizationFlow::new(Client::new());
         let mc_token = mc_flow
@@ -162,11 +159,7 @@ impl AuthProvider for MicrosoftAuthProvider {
         }))
     }
 
-    fn get_auth_url(&self) -> Option<String> {
+    fn get_injector_url(&self) -> Option<String> {
         None
-    }
-
-    fn get_name(&self) -> String {
-        "Microsoft".to_string()
     }
 }

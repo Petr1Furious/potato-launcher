@@ -1,17 +1,16 @@
+use launcher_auth::AccountData;
+use launcher_auth::providers::AuthProviderConfig;
 use log::{debug, warn};
 use maplit::hashmap;
 use shared::paths::{
     get_authlib_injector_path, get_client_jar_path, get_libraries_dir, get_logs_dir,
     get_minecraft_dir, get_natives_dir,
 };
-use shared::version::extra_version_metadata::AuthBackend;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tokio::process::{Child, Command as TokioCommand};
 
 use super::compat;
-use crate::auth::base::get_auth_provider;
-use crate::auth::user_info::AuthData;
 use crate::config::runtime_config::Config;
 use crate::constants;
 use crate::version::complete_version_metadata::CompleteVersionMetadata;
@@ -72,14 +71,9 @@ pub enum LaunchError {
 pub async fn launch(
     version_metadata: &CompleteVersionMetadata,
     config: &Config,
-    auth_data: &AuthData,
+    account_data: &AccountData,
     online: bool,
 ) -> anyhow::Result<Child> {
-    let auth_backend = &config
-        .get_selected_auth_profile()
-        .map(|p| AuthBackend::from_id(&p.auth_backend_id));
-    let auth_provider = auth_backend.as_ref().map(|x| get_auth_provider(x));
-
     let launcher_dir = config.get_launcher_dir();
     let mut minecraft_dir = get_minecraft_dir(&launcher_dir, version_metadata.get_name());
     let libraries_dir = get_libraries_dir(&launcher_dir);
@@ -128,13 +122,13 @@ pub async fn launch(
         "classpath".to_string() => classpath_str,
         "classpath_separator".to_string() => PATHSEP.to_string(),
         "library_directory".to_string() => libraries_dir.to_str().unwrap().to_string(),
-        "auth_player_name".to_string() => auth_data.user_info.username.clone(),
+        "auth_player_name".to_string() => account_data.user_info.username.clone(),
         "version_name".to_string() => version_metadata.get_id().to_string(),
         "game_directory".to_string() => minecraft_dir.to_str().unwrap().to_string(),
         "assets_root".to_string() => config.get_assets_dir().to_str().unwrap().to_string(),
         "assets_index_name".to_string() => version_metadata.get_asset_index()?.id.to_string(),
-        "auth_uuid".to_string() => auth_data.user_info.uuid.replace("-", ""),
-        "auth_access_token".to_string() => auth_data.access_token.clone(),
+        "auth_uuid".to_string() => account_data.user_info.uuid.replace("-", ""),
+        "auth_access_token".to_string() => account_data.access_token.clone(),
         "clientid".to_string() => "".to_string(),
         "auth_xuid".to_string() => "".to_string(),
         "user_type".to_string() => if online { "mojang" } else { "offline" }.to_string(),
@@ -169,7 +163,11 @@ pub async fn launch(
     ]
     .concat();
 
-    if online && let Some(auth_url) = auth_provider.and_then(|x| x.get_auth_url()) {
+    let auth_provider = &config
+        .get_selected_auth_profile()
+        .map(|p| AuthProviderConfig::from_id(&p.auth_backend_id));
+    if online && let Some(injector_url) = auth_provider.as_ref().and_then(|x| x.get_injector_url())
+    {
         let authlib_injector_path = get_authlib_injector_path(&launcher_dir);
         if !authlib_injector_path.exists() {
             return Err(LaunchError::MissingAuthlibInjector.into());
@@ -179,7 +177,7 @@ pub async fn launch(
             format!(
                 "-javaagent:{}={}",
                 authlib_injector_path.to_str().unwrap(),
-                auth_url,
+                injector_url,
             ),
         );
     }

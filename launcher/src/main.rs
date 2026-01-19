@@ -1,14 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
-mod auth;
 mod config;
 mod constants;
 mod lang;
 mod launcher;
 mod update_app;
 mod utils;
-mod vendor;
 mod version;
 
 use clap::{Arg, ArgAction, Command};

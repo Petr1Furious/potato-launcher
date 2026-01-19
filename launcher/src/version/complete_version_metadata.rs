@@ -1,10 +1,11 @@
+use launcher_auth::providers::AuthProviderConfig;
 use shared::{
     adaptive_download::download_files,
     files::{self, CheckEntry},
     paths::{get_client_jar_path, get_versions_dir, get_versions_extra_dir},
     progress,
     version::{
-        extra_version_metadata::{AuthBackend, ExtraVersionMetadata},
+        extra_version_metadata::ExtraVersionMetadata,
         version_manifest::VersionInfo,
         version_metadata::{Arguments, AssetIndex, Library, VersionMetadata},
     },
@@ -119,7 +120,7 @@ impl CompleteVersionMetadata {
         }
     }
 
-    pub fn get_auth_backend(&self) -> Option<&AuthBackend> {
+    pub fn get_auth_provider(&self) -> Option<&AuthProviderConfig> {
         self.extra.as_ref()?.auth_backend.as_ref()
     }
 

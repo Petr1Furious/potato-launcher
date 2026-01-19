@@ -3,12 +3,13 @@ use std::{
     sync::Arc,
 };
 
+use launcher_auth::AccountData;
 use log::error;
 use shared::paths::get_logs_dir;
 use tokio::{process::Child, runtime::Runtime, sync::Mutex};
 
 use crate::{
-    auth::user_info::AuthData, config::runtime_config::Config, lang::LangMessage, launcher::launch,
+    config::runtime_config::Config, lang::LangMessage, launcher::launch,
     version::complete_version_metadata::CompleteVersionMetadata,
 };
 
@@ -79,10 +80,15 @@ impl LaunchState {
         runtime: &Runtime,
         config: &Config,
         selected_instance: &CompleteVersionMetadata,
-        auth_data: &AuthData,
+        account_data: &AccountData,
         online: bool,
     ) {
-        match runtime.block_on(launch::launch(selected_instance, config, auth_data, online)) {
+        match runtime.block_on(launch::launch(
+            selected_instance,
+            config,
+            account_data,
+            online,
+        )) {
             Ok(child) => {
                 let arc_child = Arc::new(Mutex::new(child));
                 if config.hide_launcher_after_launch {
@@ -142,7 +148,7 @@ impl LaunchState {
         ui: &mut egui::Ui,
         config: &mut Config,
         selected_instance: Option<Arc<CompleteVersionMetadata>>,
-        auth_data: Option<AuthData>,
+        account_data: Option<AccountData>,
         params: RenderUiParams,
     ) {
         let RenderUiParams { online, disabled } = params;
@@ -170,7 +176,7 @@ impl LaunchState {
                         LangMessage::Offline.to_string(lang)
                     )
                 };
-                let enabled = selected_instance.is_some() && auth_data.is_some() && !disabled;
+                let enabled = selected_instance.is_some() && account_data.is_some() && !disabled;
                 ui.add_enabled_ui(enabled, |ui| {
                     if Self::big_button_clicked(ui, &button_text)
                         || (enabled && (self.force_launch || self.launch_from_start))
@@ -182,7 +188,7 @@ impl LaunchState {
                             runtime,
                             config,
                             &selected_instance.unwrap(),
-                            &auth_data.unwrap(),
+                            &account_data.unwrap(),
                             online,
                         );
                     }
