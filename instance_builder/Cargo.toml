@@ -4,21 +4,21 @@ version = "1.0.0"
 edition = "2024"
 
 [dependencies]
-anyhow = { version = "1.0.100", features = ["backtrace"] }
-clap = "4.5.51"
-env_logger = "0.11.8"
+anyhow.workspace = true
+clap.workspace = true
+env_logger.workspace = true
 indicatif = "0.18.3"
-log = "0.4.28"
-rand = "0.9.2"
-reqwest = { version = "0.12.24", features = ["rustls-tls", "json", "stream"], default-features = false }
-serde = "1.0.228"
-serde_json = "1.0.145"
+log.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 shared = { path = "../shared" }
 launcher-auth = { path = "../crates/auth" }
-shell-words = "1.1.0"
-thiserror = "2.0.17"
-tokio = "1.48.0"
+shell-words = "1.1.1"
+thiserror.workspace = true
+tokio.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3.9", features = ["fileapi", "winbase"] }
-winreg = "0.55.0"
+winapi.workspace = true
+winreg.workspace = true

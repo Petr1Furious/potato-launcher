@@ -4,6 +4,7 @@ use crate::providers::AuthProvider;
 use crate::vendor::minecraft_msa_auth::MinecraftAuthorizationFlow;
 use async_trait::async_trait;
 use oauth2::basic::BasicClient;
+use oauth2::reqwest as oauth2_reqwest;
 use oauth2::{
     AuthUrl, ClientId, DeviceAuthorizationUrl, DeviceCodeErrorResponseType, EndpointNotSet,
     EndpointSet, RefreshToken, RequestTokenError, Scope, StandardDeviceAuthorizationResponse,
@@ -34,9 +35,9 @@ struct MinecraftProfileResponse {
     name: String,
 }
 
-fn async_http_client() -> Result<reqwest::Client, reqwest::Error> {
-    reqwest::ClientBuilder::new()
-        .redirect(reqwest::redirect::Policy::none())
+fn async_http_client() -> Result<oauth2_reqwest::Client, oauth2_reqwest::Error> {
+    oauth2_reqwest::ClientBuilder::new()
+        .redirect(oauth2_reqwest::redirect::Policy::none())
         .build()
 }
 
