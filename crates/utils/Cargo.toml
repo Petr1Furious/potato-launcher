@@ -1,0 +1,17 @@
+[package]
+name = "utils"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+futures.workspace = true
+anyhow.workspace = true
+log.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+sha1.workspace = true
+walkdir = "2.5.0"
+num_cpus.workspace = true
+thiserror.workspace = true
+url.workspace = true
+relative-path.workspace = true

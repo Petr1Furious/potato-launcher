@@ -3,15 +3,15 @@ use log::{debug, warn};
 use reqwest::Client;
 use std::collections::VecDeque;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use crate::files::{self, DownloadEntry};
-use crate::progress::ProgressBar;
+use crate::files::{self, DownloadTask};
+use crate::progress::ProgressTracker;
 use crate::utils::is_connect_error;
 
 const MAX_CONCURRENCY: usize = 50;
@@ -96,18 +96,22 @@ impl SlidingWindow {
     }
 }
 
-async fn download_file(client: &Client, entry: &DownloadEntry) -> anyhow::Result<u128> {
+async fn download_file(client: &Client, task: &DownloadTask) -> anyhow::Result<u128> {
     let start = Instant::now();
 
-    let response = client.get(&entry.url).send().await?.error_for_status()?;
+    let response = client
+        .get(task.url.as_str())
+        .send()
+        .await?
+        .error_for_status()?;
     let mut stream = response.bytes_stream();
 
-    if let Some(parent_dir) = entry.path.parent() {
+    if let Some(parent_dir) = task.path.parent() {
         tokio::fs::create_dir_all(parent_dir).await?;
     }
 
     // write to a temporary file first
-    let mut tmp_path = entry.path.as_os_str().to_owned();
+    let mut tmp_path = task.path.as_os_str().to_owned();
     tmp_path.push(".tmp");
     let tmp_path = std::path::PathBuf::from(tmp_path);
 
@@ -134,14 +138,14 @@ async fn download_file(client: &Client, entry: &DownloadEntry) -> anyhow::Result
     }
 
     // then atomically rename it to the target path
-    if entry.path.exists() {
-        files::remove_file_or_dir(&entry.path).await?;
+    if task.path.exists() {
+        files::remove_file_or_dir(&task.path).await?;
     }
 
-    tokio::fs::rename(&tmp_path, &entry.path)
+    tokio::fs::rename(&tmp_path, &task.path)
         .await
         .map_err(|e| {
-            anyhow::anyhow!("Failed to rename {:?} to {:?}: {}", tmp_path, entry.path, e)
+            anyhow::anyhow!("Failed to rename {:?} to {:?}: {}", tmp_path, task.path, e)
         })?;
 
     let latency_ms = start.elapsed().as_millis();
@@ -160,16 +164,16 @@ fn is_timeout_error(e: &anyhow::Error) -> bool {
 /// Download a single file, returning (success, latency_ms).
 /// On success, we return Ok(Some(latency_ms)).
 /// If it's a timeout, we return Ok(None). If it's another error, we return Err(e).
-async fn do_download(client: &Client, entry: &DownloadEntry) -> anyhow::Result<Option<u128>> {
-    let latency_ms = match download_file(client, entry).await {
+async fn do_download(client: &Client, task: &DownloadTask) -> anyhow::Result<Option<u128>> {
+    let latency_ms = match download_file(client, task).await {
         Ok(r) => r,
         Err(e) => {
             // If it's a timeout, we return Ok(None), else Err
             if is_timeout_error(&e) || is_connect_error(&e) {
-                debug!("Timeout downloading {}", entry.url);
+                debug!("Timeout downloading {}", task.url);
                 return Ok(None);
             } else {
-                debug!("Error downloading {}: {:?}", entry.url, e);
+                debug!("Error downloading {}: {:?}", task.url, e);
                 return Err(e);
             }
         }
@@ -184,11 +188,11 @@ pub enum AdaptiveDownloadError {
     ConnectionTimeout,
 }
 
-pub async fn download_files<M>(
-    download_entries: Vec<DownloadEntry>,
-    progress_bar: Arc<dyn ProgressBar<M> + Send + Sync>,
+pub async fn download_files(
+    download_tasks: Vec<DownloadTask>,
+    progress_bar: Arc<dyn ProgressTracker + Send + Sync>,
 ) -> anyhow::Result<()> {
-    progress_bar.set_length(download_entries.len() as u64);
+    progress_bar.set_length(download_tasks.len() as u64);
 
     let client = Client::builder().connect_timeout(REQUEST_TIMEOUT).build()?;
 
@@ -196,19 +200,19 @@ pub async fn download_files<M>(
 
     let sliding_window = Arc::new(Mutex::new(SlidingWindow::new()));
 
-    let mut cur_entries = download_entries;
+    let mut cur_tasks = download_tasks;
     let mut active = FuturesUnordered::new();
 
     fn can_spawn_more(active_count: usize, concurrency: &Arc<AtomicUsize>) -> bool {
         active_count < concurrency.load(Ordering::SeqCst)
     }
 
-    let spawn_if_possible = |active: &mut FuturesUnordered<_>, cur_entries: &mut Vec<_>| {
+    let spawn_if_possible = |active: &mut FuturesUnordered<_>, cur_tasks: &mut Vec<_>| {
         while can_spawn_more(active.len(), &desired_concurrency) {
-            if let Some(entry) = cur_entries.pop() {
+            if let Some(task) = cur_tasks.pop() {
                 let fut = async {
-                    let result = do_download(&client, &entry).await;
-                    (result, entry)
+                    let result = do_download(&client, &task).await;
+                    (result, task)
                 };
                 active.push(fut);
             } else {
@@ -217,13 +221,13 @@ pub async fn download_files<M>(
         }
     };
 
-    spawn_if_possible(&mut active, &mut cur_entries);
+    spawn_if_possible(&mut active, &mut cur_tasks);
 
     let mut timeouts_at_min_concurrency = 0;
 
     let mut next_concurrency_update = UPDATE_CONCURRENCY_EVERY;
     loop {
-        let Some((result, entry)) = active.next().await else {
+        let Some((result, task)) = active.next().await else {
             break;
         };
 
@@ -233,7 +237,7 @@ pub async fn download_files<M>(
                 (true, latency_ms)
             }
             Ok(None) => {
-                cur_entries.push(entry);
+                cur_tasks.push(task);
                 (false, 0)
             }
             Err(e) => {
@@ -275,7 +279,7 @@ pub async fn download_files<M>(
             }
         }
 
-        spawn_if_possible(&mut active, &mut cur_entries);
+        spawn_if_possible(&mut active, &mut cur_tasks);
     }
 
     Ok(())

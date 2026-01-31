@@ -1,9 +1,13 @@
+use super::version_metadata::{Library, LibraryDownloads, Rule};
 use log::info;
 use serde::Deserialize;
-use shared::version::version_metadata::{Library, LibraryDownloads, Rule};
 use std::collections::{HashMap, HashSet};
 
-use crate::config::build_config;
+pub const LIBRARY_OVERRIDES_JSON: &str = include_str!("../meta/library-overrides.json");
+
+pub const MOJANG_LIBRARY_PATCHES_JSON: &str = include_str!("../meta/mojang-library-patches.json");
+
+pub const LWJGL_VERSION_MATCHES_JSON: &str = include_str!("../meta/lwjgl-version-matches.json");
 
 #[derive(Deserialize)]
 pub struct Replacement {
@@ -19,7 +23,7 @@ pub struct LibraryOverrides {
 
 lazy_static::lazy_static! {
     static ref LIBRARY_OVERRIDES: LibraryOverrides = {
-        let overrides = build_config::LIBRARY_OVERRIDES;
+        let overrides = LIBRARY_OVERRIDES_JSON;
         serde_json::from_str(overrides).expect("Failed to parse library patches")
     };
 }
@@ -45,14 +49,14 @@ pub struct LibraryPatches {
 
 lazy_static::lazy_static! {
     static ref LIBRARY_PATCHES: Vec<LibraryPatches> = {
-        let overrides = build_config::MOJANG_LIBRARY_PATCHES;
+        let overrides = MOJANG_LIBRARY_PATCHES_JSON;
         serde_json::from_str(overrides).expect("Failed to parse library overrides")
     };
 }
 
 lazy_static::lazy_static! {
     static ref LWJGL_VERSION_MATCHES: HashMap<String, String> = {
-        let matches = build_config::LWJGL_VERSION_MATCHES;
+        let matches = LWJGL_VERSION_MATCHES_JSON;
         serde_json::from_str(matches).expect("Failed to parse lwjgl version matches")
     };
 }

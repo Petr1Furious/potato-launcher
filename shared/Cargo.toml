@@ -26,7 +26,6 @@ tar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-walkdir = "2.5.0"
 which = "8.0.0"
 zip.workspace = true
 

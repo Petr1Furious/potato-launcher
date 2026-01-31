@@ -5,15 +5,15 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use tokio::{fs, io::AsyncReadExt as _};
+use url::Url;
 
-use crate::{
-    adaptive_download::download_files,
-    files::{self, CheckEntry},
-    paths::get_metadata_path,
+use utils::{
+    files::{self, CheckTask},
+    paths::{DataDir, LibrariesDir, VersionsDir},
     progress,
 };
 
-use super::version_manifest::MetadataInfo;
+use super::manifest::VersionMetadataInfo;
 
 fn get_arch_os_name(os_name: &str, arch: &str) -> String {
     os_name.to_string()
@@ -155,7 +155,7 @@ pub struct Arguments {
 pub struct AssetIndex {
     pub id: String,
     pub sha1: String,
-    pub url: String,
+    pub url: Url,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -167,12 +167,12 @@ pub struct JavaVersion {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Download {
     pub sha1: String,
-    pub url: String,
+    pub url: Url,
 }
 
 impl Download {
-    pub fn get_check_entry(&self, path: &Path) -> CheckEntry {
-        CheckEntry {
+    pub fn get_check_task(&self, path: &Path) -> CheckTask {
+        CheckTask {
             url: self.url.clone(),
             remote_sha1: Some(self.sha1.clone()),
             path: path.to_path_buf(),
@@ -180,7 +180,11 @@ impl Download {
     }
 
     pub fn get_filename(&self) -> &str {
-        self.url.split('/').next_back().unwrap_or(&self.url)
+        self.url
+            .path()
+            .rsplit('/')
+            .next()
+            .unwrap_or(self.url.path())
     }
 }
 
@@ -190,20 +194,22 @@ pub struct LibraryDownloads {
     pub classifiers: Option<HashMap<String, Download>>,
 }
 
-const MOJANG_LIBRARIES_URL: &str = "https://libraries.minecraft.net/";
+lazy_static::lazy_static! {
+    static ref MOJANG_LIBRARIES_URL: Url = Url::parse("https://libraries.minecraft.net/").expect("valid url");
+}
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Library {
     name: String,
-    pub downloads: Option<LibraryDownloads>,
-    pub rules: Option<Vec<Rule>>,
-    pub url: Option<String>,
-    pub sha1: Option<String>,
-    pub natives: Option<HashMap<String, String>>,
+    pub(crate) downloads: Option<LibraryDownloads>,
+    pub(crate) rules: Option<Vec<Rule>>,
+    url: Option<Url>,
+    sha1: Option<String>,
+    pub(crate) natives: Option<HashMap<String, String>>,
 }
 
 impl Library {
-    pub fn from_download(name: String, url: String, sha1: String) -> Self {
+    pub fn from_download(name: String, url: Url, sha1: String) -> Self {
         Library {
             name,
             downloads: Some(LibraryDownloads {
@@ -217,7 +223,7 @@ impl Library {
         }
     }
 
-    pub fn get_path_from_name(&self) -> String {
+    fn get_rel_path_from_name(&self) -> String {
         let full_name = self.name.clone();
         let mut parts: Vec<&str> = full_name.split(':').collect();
         if parts.len() != 4 {
@@ -235,107 +241,122 @@ impl Library {
         format!("{pkg_path}/{name}/{version}/{name}-{version}{suffix}.jar")
     }
 
-    pub fn get_library_path(&self, libraries_dir: &Path) -> Option<PathBuf> {
+    fn get_path_from_name(&self, data_dir: &DataDir) -> PathBuf {
+        return LibrariesDir::root()
+            .to_fs(data_dir)
+            .join(self.get_rel_path_from_name());
+    }
+
+    pub fn get_library_path(&self, data_dir: &DataDir) -> Option<PathBuf> {
         if let Some(downloads) = &self.downloads {
             if downloads.artifact.is_some() {
-                Some(libraries_dir.join(self.get_path_from_name()))
+                Some(self.get_path_from_name(data_dir))
             } else {
                 None
             }
         } else {
-            Some(libraries_dir.join(self.get_path_from_name()))
+            Some(self.get_path_from_name(data_dir))
         }
     }
 
-    pub fn get_url(&self) -> String {
-        self.url.clone().unwrap_or(MOJANG_LIBRARIES_URL.to_string())
+    pub fn get_url(&self) -> Url {
+        self.url.clone().unwrap_or(MOJANG_LIBRARIES_URL.clone())
     }
 
-    fn get_library_dir(&self, libraries_dir: &Path) -> PathBuf {
-        let path = libraries_dir.join(self.get_path_from_name());
-        path.parent().unwrap_or(libraries_dir).to_path_buf()
+    fn get_library_dir(&self, data_dir: &DataDir) -> PathBuf {
+        self.get_path_from_name(data_dir)
+            .parent()
+            .expect("valid path")
+            .to_path_buf()
     }
 
     fn get_native_name(&self, os_arch: &str) -> Option<&str> {
         self.natives.as_ref()?.get(os_arch).map(|x| x.as_str())
     }
 
-    pub fn get_native_download(&self, natives_name: &str) -> Option<&Download> {
+    pub fn get_native_download(&self, native_name: &str) -> Option<&Download> {
         let downloads = self.downloads.as_ref()?;
         let classifiers = downloads.classifiers.as_ref()?;
-        let download = classifiers.get(natives_name)?;
+        let download = classifiers.get(native_name)?;
         Some(download)
     }
 
     pub fn get_native_path(
         &self,
-        libraries_dir: &Path,
+        data_dir: &DataDir,
         native_name: &str,
         native_download: &Download,
     ) -> PathBuf {
-        self.get_library_dir(libraries_dir)
+        self.get_library_dir(data_dir)
             .join(native_name)
             .join(native_download.get_filename())
     }
 
     pub fn get_os_native_path(
         &self,
-        libraries_dir: &Path,
+        data_dir: &DataDir,
         os_name: &str,
         arch: &str,
     ) -> Option<PathBuf> {
         if let Some(native_name) = self.get_native_name(&get_arch_os_name(os_name, arch)) {
             if let Some(download) = self.get_native_download(native_name) {
-                return Some(self.get_native_path(libraries_dir, native_name, download));
+                return Some(self.get_native_path(data_dir, native_name, download));
             }
         }
         None
     }
 
-    fn get_library_check_entry(&self, libraries_dir: &Path) -> Option<CheckEntry> {
+    fn get_library_check_task(&self, data_dir: &DataDir) -> anyhow::Result<Option<CheckTask>> {
         if let Some(downloads) = &self.downloads {
-            if let Some(artifact) = &downloads.artifact {
-                let path = self.get_library_path(libraries_dir)?;
-                Some(artifact.get_check_entry(&path))
+            if let Some(artifact) = &downloads.artifact
+                && let Some(path) = self.get_library_path(data_dir)
+            {
+                // if the library has an artifact, we return its check task
+                Ok(Some(artifact.get_check_task(&path)))
             } else {
-                None
+                // if it has "downloads" but not an artifact, we don't return anything
+                // since "downloads" also includes natives (classifiers)
+                Ok(None)
             }
         } else {
-            Some(CheckEntry {
-                url: format!("{}/{}", self.get_url(), self.get_path_from_name()),
+            // else infer it from the library name
+            Ok(Some(CheckTask {
+                url: self.get_url().join(&self.get_rel_path_from_name())?,
                 remote_sha1: self.sha1.clone(),
-                path: libraries_dir.join(self.get_path_from_name()),
-            })
+                path: self.get_path_from_name(data_dir),
+            }))
         }
     }
 
-    // [os_with_arch = None] means all natives
-    pub fn get_check_entries(
+    /// Get all check_tasks, including both the library
+    /// and its natives matching the given OS and arch
+    /// [os_with_arch = None] means all natives
+    pub fn get_check_tasks(
         &self,
-        libraries_dir: &Path,
+        data_dir: &DataDir,
         os_with_arch: Option<(&str, &str)>,
-    ) -> Vec<CheckEntry> {
-        let mut entries = vec![];
-        if let Some(entry) = self.get_library_check_entry(libraries_dir) {
-            entries.push(entry);
+    ) -> anyhow::Result<Vec<CheckTask>> {
+        let mut tasks = vec![];
+        if let Some(task) = self.get_library_check_task(data_dir)? {
+            tasks.push(task);
         }
         if let Some((os_name, arch)) = os_with_arch {
             if let Some(native_name) = self.get_native_name(&get_arch_os_name(os_name, arch)) {
                 if let Some(download) = self.get_native_download(native_name) {
-                    let path = self.get_native_path(libraries_dir, native_name, download);
-                    entries.push(download.get_check_entry(&path));
+                    let path = self.get_native_path(data_dir, native_name, download);
+                    tasks.push(download.get_check_task(&path));
                 }
             }
         } else if let Some(natives) = &self.natives {
             for native_name in natives.values() {
                 if let Some(download) = self.get_native_download(native_name) {
-                    let path = self.get_native_path(libraries_dir, native_name, download);
-                    entries.push(download.get_check_entry(&path));
+                    let path = self.get_native_path(data_dir, native_name, download);
+                    tasks.push(download.get_check_task(&path));
                 }
             }
         }
 
-        entries
+        Ok(tasks)
     }
 
     pub fn applies_to_os(&self, os_name: &str, arch: &str) -> bool {
@@ -346,8 +367,10 @@ impl Library {
         }
     }
 
-    pub fn get_sha1_url(&self) -> String {
-        self.get_url() + &self.get_path_from_name() + ".sha1"
+    pub fn get_sha1_url(&self) -> anyhow::Result<Url> {
+        let mut path = self.get_rel_path_from_name();
+        path.push_str(".sha1");
+        Ok(self.get_url().join(&path)?)
     }
 
     pub fn get_group_id(&self) -> String {
@@ -375,6 +398,10 @@ pub struct Downloads {
     pub client: Option<Download>,
 }
 
+/// VersionMetadata is the metadata for a Minecraft version.
+/// Note that version != instance, since an instance may contain multiple versions.
+/// For example, a 1.21.11 Fabric instance may contain versions such as
+/// "fabric-loader-0.18.4-1.21.11" and "1.21.11"
 #[derive(Deserialize, Serialize)]
 pub struct VersionMetadata {
     pub arguments: Option<Arguments>,
@@ -395,6 +422,7 @@ pub struct VersionMetadata {
     #[serde(rename = "inheritsFrom")]
     pub inherits_from: Option<String>,
 
+    // legacy field used by old Minecraft versions
     #[serde(rename = "minecraftArguments")]
     pub minecraft_arguments: Option<String>,
 }
@@ -432,8 +460,10 @@ lazy_static::lazy_static! {
 }
 
 impl VersionMetadata {
-    pub async fn read_local(versions_dir: &Path, version_id: &str) -> anyhow::Result<Self> {
-        let version_path = get_metadata_path(versions_dir, version_id);
+    pub async fn read_local(data_dir: &DataDir, version_id: &str) -> anyhow::Result<Self> {
+        let version_path = VersionsDir::root()
+            .metadata_path(version_id)
+            .to_fs(data_dir);
         let mut file = fs::File::open(version_path).await?;
         let mut content = String::new();
         file.read_to_string(&mut content).await?;
@@ -441,18 +471,19 @@ impl VersionMetadata {
         Ok(metadata)
     }
 
-    pub async fn fetch(url: &str) -> anyhow::Result<Self> {
-        let client = reqwest::Client::new();
+    pub async fn fetch(client: &reqwest::Client, url: &str) -> anyhow::Result<Self> {
         let response = client.get(url).send().await?.error_for_status()?;
         let metadata = response.json().await?;
         Ok(metadata)
     }
 
-    pub fn get_check_entry(metadata_info: &MetadataInfo, versions_dir: &Path) -> CheckEntry {
+    pub fn get_check_task(metadata_info: &VersionMetadataInfo, data_dir: &DataDir) -> CheckTask {
         let url = metadata_info.url.clone();
         let sha1 = metadata_info.sha1.clone();
-        let path = get_metadata_path(versions_dir, &metadata_info.id);
-        CheckEntry {
+        let path = VersionsDir::root()
+            .metadata_path(&metadata_info.id)
+            .to_fs(data_dir);
+        CheckTask {
             url,
             remote_sha1: Some(sha1),
             path,
@@ -460,15 +491,16 @@ impl VersionMetadata {
     }
 
     pub async fn read_or_download(
-        metadata_info: &MetadataInfo,
-        versions_dir: &Path,
+        client: &reqwest::Client,
+        metadata_info: &VersionMetadataInfo,
+        data_dir: &DataDir,
     ) -> anyhow::Result<Self> {
-        let check_entry = Self::get_check_entry(metadata_info, versions_dir);
-        let check_entries = vec![check_entry];
+        let check_task = Self::get_check_task(metadata_info, data_dir);
+        let check_tasks = vec![check_task];
         let download_entries =
-            files::get_download_entries(check_entries, progress::no_progress_bar()).await?;
-        download_files(download_entries, progress::no_progress_bar()).await?;
-        Self::read_local(versions_dir, &metadata_info.id).await
+            files::get_download_tasks(check_tasks, progress::no_progress_bar()).await?;
+        files::download_files(client, download_entries, progress::no_progress_bar()).await?;
+        Self::read_local(data_dir, &metadata_info.id).await
     }
 
     pub fn get_arguments(&self) -> anyhow::Result<Arguments> {
@@ -487,8 +519,10 @@ impl VersionMetadata {
         }
     }
 
-    pub async fn save(&self, versions_dir: &Path) -> anyhow::Result<()> {
-        let version_path = get_metadata_path(versions_dir, &self.id);
+    pub async fn save(&self, data_dir: &DataDir) -> anyhow::Result<()> {
+        let version_path = VersionsDir::root()
+            .metadata_path(&self.id)
+            .to_fs_safe(data_dir);
         let content = serde_json::to_string(self)?;
         fs::write(version_path, content).await?;
         Ok(())

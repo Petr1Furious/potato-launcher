@@ -4,6 +4,7 @@ use std::{
 };
 
 use log::{debug, info};
+use url::Url;
 use rand::{SeedableRng as _, rngs::StdRng, seq::SliceRandom as _};
 use shared::{
     adaptive_download::download_files,
@@ -53,8 +54,9 @@ pub async fn sync_version(
     if let Some(asset_index) = &version_metadata.asset_index {
         let assets_dir = get_assets_dir(output_dir);
         let assets_metadata = AssetsMetadata::read_or_download(asset_index, &assets_dir).await?;
+        let resources_url_base = Url::parse(RESOURCES_URL_BASE)?;
         let asset_check_entries =
-            assets_metadata.get_check_entries(&assets_dir, RESOURCES_URL_BASE, true)?;
+            assets_metadata.get_check_entries(&assets_dir, &resources_url_base, true)?;
 
         let mut already_have = 0;
         for entry in &asset_check_entries {

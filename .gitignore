@@ -5,7 +5,7 @@
 
 .DS_Store
 
-*.json
+/*.json
 instance_builder/*.json
 !instance_builder/spec.example.json
 instance_builder/generated/
