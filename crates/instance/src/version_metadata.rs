@@ -13,6 +13,8 @@ use utils::{
     progress,
 };
 
+use crate::instance_metadata::InstanceMetadata;
+
 use super::manifest::VersionMetadataInfo;
 
 fn get_arch_os_name(os_name: &str, arch: &str) -> String {
@@ -526,5 +528,19 @@ impl VersionMetadata {
         let content = serde_json::to_string(self)?;
         fs::write(version_path, content).await?;
         Ok(())
+    }
+
+    /// Convert vanilla version metadata into instance metadata
+    pub fn to_instance_metadata(self) -> InstanceMetadata {
+        InstanceMetadata {
+            name: self.id.clone(),
+            auth_backend: None,
+            include: vec![],
+            resources_url_base: None,
+            extra_forge_libs: vec![],
+            default_xmx: None,
+            versions: vec![self],
+            overrides_applied: false,
+        }
     }
 }

@@ -9,10 +9,8 @@ use url::Url;
 const AUTHLIB_INJECTOR_NAME: &str = "authlib-injector.jar";
 const INSTANCES_DIR_NAME: &str = "instances";
 const VERSIONS_DIR_NAME: &str = "versions";
-const VERSIONS_EXTRA_DIR_NAME: &str = "versions_extra";
 const MINECRAFT_DIR_NAME: &str = "minecraft";
 const META_FILE_NAME: &str = "meta.json";
-const LOCAL_INSTANCES_FILE_NAME: &str = "local_instances.json";
 const AUTH_DATA_FILE_NAME: &str = "auth_data.json";
 const JAVA_DIR_NAME: &str = "java";
 const LOGS_DIR_NAME: &str = "logs";
@@ -135,19 +133,18 @@ path_type!(InstancesDir, dir);
 path_type!(InstanceDir, dir);
 path_type!(MinecraftDir, dir);
 path_type!(JavaDir, dir);
+path_type!(JavaVersionDir, dir);
 path_type!(LogsDir, dir);
 path_type!(LibrariesDir, dir);
 path_type!(NativesDir, dir);
 path_type!(VersionsDir, dir);
-path_type!(VersionsExtraDir, dir);
 path_type!(AssetsDir, dir);
 path_type!(AssetsObjectsDir, dir);
-path_type!(LocalInstancesPath, file);
 path_type!(InstanceMetaPath, file);
+path_type!(JavaBinPath, file);
 path_type!(AuthDataPath, file);
 path_type!(MetadataPath, file);
 path_type!(ClientJarPath, file);
-path_type!(ExtraMetadataPath, file);
 path_type!(AssetIndexPath, file);
 path_type!(AuthlibInjectorPath, file);
 
@@ -252,12 +249,6 @@ impl InstanceDir {
     }
 }
 
-impl LocalInstancesPath {
-    pub fn root() -> Self {
-        Self(Rel::new(LOCAL_INSTANCES_FILE_NAME))
-    }
-}
-
 impl AuthDataPath {
     pub fn root() -> Self {
         Self(Rel::new(AUTH_DATA_FILE_NAME))
@@ -267,6 +258,16 @@ impl AuthDataPath {
 impl JavaDir {
     pub fn root() -> Self {
         Self(Rel::new(JAVA_DIR_NAME))
+    }
+
+    pub fn java_version_dir(&self, version: &str) -> JavaVersionDir {
+        JavaVersionDir(self.0.join(version))
+    }
+}
+
+impl JavaVersionDir {
+    pub fn bin_path(&self, binary_name: &str) -> JavaBinPath {
+        JavaBinPath(self.0.join("bin").join(binary_name))
     }
 }
 
@@ -303,16 +304,6 @@ impl VersionsDir {
 
     pub fn client_jar_path(&self, id: &str) -> ClientJarPath {
         ClientJarPath(self.0.join(id).join(format!("{id}.jar")))
-    }
-}
-
-impl VersionsExtraDir {
-    pub fn root() -> Self {
-        Self(Rel::new(VERSIONS_EXTRA_DIR_NAME))
-    }
-
-    pub fn extra_metadata_path(&self, version_name: &str) -> ExtraMetadataPath {
-        ExtraMetadataPath(self.0.join(format!("{version_name}.json")))
     }
 }
 

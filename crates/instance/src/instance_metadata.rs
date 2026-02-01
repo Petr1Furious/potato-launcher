@@ -60,35 +60,40 @@ pub struct Include {
 pub struct InstanceMetadata {
     /// instance name
     #[serde(default)]
-    name: String,
+    pub(crate) name: String,
 
     /// auth backend to use for this instance
     #[serde(default)]
-    auth_backend: Option<AuthProviderConfig>,
+    pub(crate) auth_backend: Option<AuthProviderConfig>,
 
     /// additional files to include with the instance
     /// (e.g. mods, configs, server.dat, etc.)
     /// and rules for what to do when file/directory contents differ from the remote
     #[serde(default)]
-    include: Vec<Include>,
+    pub(crate) include: Vec<Include>,
 
     /// base URL for assets
     /// if not set, the launcher will download assets from Mojang servers
     #[serde(default)]
-    resources_url_base: Option<String>,
+    pub(crate) resources_url_base: Option<String>,
 
     /// extra (neo)forge libraries to include with the instance
+    /// should be empty when not using (neo)forge
     #[serde(default)]
-    extra_forge_libs: Vec<Library>,
+    pub(crate) extra_forge_libs: Vec<Library>,
 
     /// default JVM RAM limit (`-Xmx`) for this version
     /// e.g. "8192M"
-    default_xmx: Option<String>,
+    pub(crate) default_xmx: Option<String>,
 
     // used minecraft versions (client.json) ordered from parent to child
     // e.g. ["1.21.11", "fabric-loader-0.18.4-1.21.11"] since fabric-loader-0.18.4-1.21.11 inherits from 1.21.11
     #[serde(default)]
-    versions: Vec<VersionMetadata>,
+    pub(crate) versions: Vec<VersionMetadata>,
+
+    // whether the overrides were already applied to the libraries (e.g. on instance_builder build)
+    // this should be false for mojang's vanilla versions
+    pub(crate) overrides_applied: bool,
 }
 
 const DEFAULT_RESOURCES_URL_BASE: &str = "https://resources.download.minecraft.net";
@@ -204,7 +209,13 @@ impl InstanceMetadata {
             .versions
             .iter()
             .rev() // prioritize child libraries
-            .flat_map(|metadata| with_overrides(&metadata.libraries, &metadata.id));
+            .flat_map(|metadata| {
+                if self.overrides_applied {
+                    metadata.libraries.clone()
+                } else {
+                    with_overrides(metadata.libraries.clone(), &metadata.id)
+                }
+            });
 
         let mut existing_names = HashMap::new();
         all_libraries

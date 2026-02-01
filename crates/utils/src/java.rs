@@ -12,11 +12,12 @@ use tokio::process::Command;
 
 use serde_json::Value;
 #[cfg(target_os = "windows")]
-use winreg::enums::*;
-#[cfg(target_os = "windows")]
 use winreg::RegKey;
+#[cfg(target_os = "windows")]
+use winreg::enums::*;
 
-use crate::progress::ProgressBar;
+use crate::paths::{DataDir, JavaDir};
+use crate::progress::ProgressTracker;
 
 #[derive(Debug, Deserialize)]
 pub struct JavaInstallation {
@@ -276,11 +277,12 @@ pub fn get_temp_dir() -> PathBuf {
     temp_dir
 }
 
-pub async fn download_java<M>(
+pub async fn download_java(
     required_version: &str,
-    java_dir: &Path,
-    progress_bar: Arc<dyn ProgressBar<M> + Send + Sync>,
+    data_dir: &DataDir,
+    progress_tracker: Arc<dyn ProgressTracker + Send + Sync>,
 ) -> anyhow::Result<JavaInstallation> {
+    let java_dir = JavaDir::root().to_fs(data_dir);
     let client = Client::new();
 
     for archive_type in ["tar.gz", "zip"] {
@@ -309,17 +311,19 @@ pub async fn download_java<M>(
         let mut file = fs::File::create(&java_download_path)?;
 
         let total_size = response.content_length().unwrap_or(0);
-        progress_bar.set_length(total_size);
+        progress_tracker.set_length(total_size);
 
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             file.write_all(&chunk)?;
-            progress_bar.inc(chunk.len() as u64);
+            progress_tracker.inc(chunk.len() as u64);
         }
-        progress_bar.finish();
+        progress_tracker.finish();
 
-        let target_dir = java_dir.join(required_version);
+        let target_dir = JavaDir::root()
+            .java_version_dir(required_version)
+            .to_fs(data_dir);
         if target_dir.exists() {
             fs::remove_dir_all(&target_dir)?;
         }
@@ -328,10 +332,10 @@ pub async fn download_java<M>(
         if archive_type == "tar.gz" {
             let tar = GzDecoder::new(archive);
             let mut archive = Archive::new(tar);
-            archive.unpack(java_dir)?;
+            archive.unpack(&java_dir)?;
         } else {
             let mut archive = zip::ZipArchive::new(archive)?;
-            archive.extract(java_dir)?;
+            archive.extract(&java_dir)?;
         }
 
         let url = Url::parse(version_url)?;
@@ -343,7 +347,10 @@ pub async fn download_java<M>(
             .ok_or(JavaDownloadError::NoFileExtensionInURL)?;
         fs::rename(java_dir.join(filename), &target_dir)?;
 
-        let java_path = target_dir.join("bin").join(JAVA_BINARY_NAME);
+        let java_path = JavaDir::root()
+            .java_version_dir(required_version)
+            .bin_path(JAVA_BINARY_NAME)
+            .to_fs(data_dir);
         if !check_java(required_version, &java_path).await {
             return Err(JavaDownloadError::InvalidDownloadedJava.into());
         }
@@ -355,16 +362,18 @@ pub async fn download_java<M>(
     Err(JavaDownloadError::NoJavaVersionsAvailable.into())
 }
 
-pub async fn get_java(required_version: &str, java_dir: &Path) -> Option<JavaInstallation> {
+pub async fn get_java(required_version: &str, data_dir: &DataDir) -> Option<JavaInstallation> {
+    let java_dir = JavaDir::root()
+        .java_version_dir(required_version)
+        .bin_path(JAVA_BINARY_NAME)
+        .to_fs(data_dir);
     let mut installations = find_java_installations().await;
 
     if let Some(default_installation) = get_installation(Path::new(JAVA_BINARY_NAME)).await {
         installations.push(default_installation);
     }
 
-    let java_dir = java_dir.join(required_version);
-    if let Some(installation) = get_installation(&java_dir.join("bin").join(JAVA_BINARY_NAME)).await
-    {
+    if let Some(installation) = get_installation(&java_dir).await {
         installations.push(installation);
     }
 

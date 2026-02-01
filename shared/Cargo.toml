@@ -16,7 +16,6 @@ log.workspace = true
 maplit.workspace = true
 num_cpus.workspace = true
 rand.workspace = true
-regex = "1.12.2"
 reqwest.workspace = true
 serde.workspace = true
 serde-xml-rs = "0.8.2"
@@ -26,7 +25,6 @@ tar.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-which = "8.0.0"
 zip.workspace = true
 
 [target.'cfg(windows)'.dependencies]

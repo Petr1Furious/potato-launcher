@@ -3992,7 +3992,6 @@ dependencies = [
  "maplit",
  "num_cpus",
  "rand 0.9.2",
- "regex",
  "reqwest 0.13.1",
  "serde",
  "serde-xml-rs",
@@ -4002,7 +4001,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
- "which",
  "winapi",
  "winreg",
  "zip",
@@ -4660,16 +4658,25 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "env_logger",
+ "flate2",
  "futures",
+ "lazy_static",
  "log",
  "num_cpus",
+ "regex",
  "relative-path",
  "reqwest 0.13.1",
+ "serde",
+ "serde_json",
  "sha1",
+ "tar",
  "thiserror 2.0.18",
  "tokio",
  "url",
  "walkdir",
+ "which",
+ "zip",
 ]
 
 [[package]]
