@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::io::AsyncReadExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::{fs, io};
 use url::Url;
 use walkdir::WalkDir;
@@ -129,6 +129,27 @@ pub struct DownloadTask {
     pub path: PathBuf,
 }
 
+pub async fn get_download_task(check_task: &CheckTask) -> anyhow::Result<Option<DownloadTask>> {
+    match fs::metadata(&check_task.path).await {
+        Ok(metadata) => {
+            if metadata.is_file() {
+                if let Some(remote_sha1) = &check_task.remote_sha1
+                    && remote_sha1 != &hash_file(&check_task.path).await?
+                {
+                    return Ok(Some(DownloadTask {
+                        url: check_task.url.clone(),
+                        path: check_task.path.clone(),
+                    }));
+                }
+            }
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+
+    Ok(None)
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum CheckTasksError {
     #[error("Hash of file {0} is missing")]
@@ -195,6 +216,36 @@ pub async fn get_download_tasks(
         .collect())
 }
 
+pub async fn download_file(client: &reqwest::Client, task: &DownloadTask) -> anyhow::Result<()> {
+    if let Some(parent) = task.path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    let response = client
+        .get(task.url.as_str())
+        .send()
+        .await?
+        .error_for_status()?;
+    let mut file = fs::File::create(&task.path).await?;
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+    }
+    Ok(())
+}
+
+pub async fn download_file_parsed<T>(
+    client: &reqwest::Client,
+    task: &DownloadTask,
+) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let response = client.get(task.url.as_str()).send().await?;
+    let bytes = response.bytes().await?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
 pub async fn download_files(
     client: &reqwest::Client,
     download_tasks: Vec<DownloadTask>,
@@ -206,20 +257,7 @@ pub async fn download_files(
 
     let mut tasks = stream::iter(download_tasks.into_iter().map(|task| {
         let client = client.clone();
-        async move {
-            if let Some(parent) = task.path.parent() {
-                fs::create_dir_all(parent).await?;
-            }
-            let bytes = client
-                .get(task.url.clone())
-                .send()
-                .await?
-                .error_for_status()?
-                .bytes()
-                .await?;
-            fs::write(&task.path, &bytes).await?;
-            Ok::<_, anyhow::Error>(())
-        }
+        async move { download_file(&client, &task).await }
     }))
     .buffer_unordered(MAX_CONCURRENT_TASKS);
 
@@ -237,4 +275,12 @@ pub async fn download_files(
 
     progress_bar.finish();
     Ok(())
+}
+
+pub async fn read_file_parsed<T>(path: &Path) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let bytes = fs::read(path).await?;
+    Ok(serde_json::from_slice(&bytes)?)
 }

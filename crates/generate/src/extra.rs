@@ -4,19 +4,20 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    files,
-    paths::{get_libraries_dir, get_rel_minecraft_dir, get_versions_extra_dir},
-    progress::{self, NoProgressBar, ProgressBar as _},
-    utils::{url_from_path, url_from_rel_path},
-    version::{
-        extra_version_metadata::{ExtraVersionMetadata, Include, Object},
-        version_metadata::Library,
-    },
+use crate::url::{url_from_path, url_from_rel_path};
+use instance::{
+    instance_metadata::{Include, InstanceMetadata, Object},
+    version_metadata::Library,
 };
 use launcher_auth::providers::AuthProviderConfig;
 use log::info;
+use relative_path::RelativePathBuf;
 use serde::Deserialize;
+use utils::{
+    files,
+    paths::{DataDir, InstancesDir, LibrariesDir},
+    progress::{self, NoProgressBar, ProgressBar as _},
+};
 
 async fn get_objects(
     copy_from: &Path,
@@ -35,14 +36,14 @@ async fn get_objects(
 
     let mut objects = vec![];
     for (rel_path, hash) in rel_paths.iter().zip(hashes.iter()) {
-        let url = url_from_rel_path(
-            &get_rel_minecraft_dir(version_name).join(rel_path),
-            download_server_base,
-        )?;
+        let rel_minecraft_dir = InstancesDir::root().instance_dir(version_name).minecraft_dir();
+        let rel_minecraft_path =
+            Path::new(rel_minecraft_dir.rel().as_str()).join(rel_path);
+        let url = url_from_rel_path(&rel_minecraft_path, download_server_base)?;
         objects.push(Object {
-            path: rel_path.to_string_lossy().to_string().replace('\\', "/"),
+            path: RelativePathBuf::from(rel_path.to_string_lossy().replace('\\', "/")),
             sha1: hash.clone(),
-            url,
+            url: url.to_string(),
         });
     }
 
@@ -57,21 +58,21 @@ pub enum ExtraForgeLibsError {
 
 async fn get_extra_forge_libs(
     extra_forge_libs_paths: &[PathBuf],
-    data_dir: &Path,
+    data_dir: &DataDir,
     download_server_base: &str,
 ) -> anyhow::Result<Vec<Library>> {
-    let libraries_dir = get_libraries_dir(data_dir);
+    let libraries_dir = LibrariesDir::root().to_fs(data_dir);
 
     let progress_bar = Arc::new(NoProgressBar);
     progress_bar.set_message("Hashing extra forge libraries");
-    let hashes = files::hash_files::<&str>(extra_forge_libs_paths.to_vec(), progress_bar).await?;
+    let hashes = files::hash_files(extra_forge_libs_paths, progress_bar).await?;
 
     let libraries = extra_forge_libs_paths
         .iter()
         .zip(hashes.iter())
         .filter(|(path, _)| path.is_file() && path.extension().is_some_and(|ext| ext == "jar"))
         .map(|(path, hash)| {
-            let url = url_from_path(path, data_dir, download_server_base)?;
+            let url = url_from_path(path, data_dir.as_path(), download_server_base)?;
 
             let parts = path
                 .strip_prefix(&libraries_dir)?
@@ -113,7 +114,7 @@ pub struct GeneratorResult {
     // relative include path -> absolute source path
     pub include_mapping: HashMap<String, PathBuf>,
 
-    pub extra_metadata: ExtraVersionMetadata,
+    pub instance_metadata: InstanceMetadata,
 }
 
 fn yes() -> bool {
@@ -172,27 +173,23 @@ impl ExtraMetadataGenerator {
             self.version_name
         );
 
-        let mut extra_metadata = ExtraVersionMetadata {
-            include: vec![],
-            resources_url_base: None,
-            auth_backend: self.auth_backend,
-            extra_forge_libs: vec![],
-            recommended_xmx: self.recommended_xmx,
-        };
+        let data_dir = DataDir::new(work_dir.to_path_buf());
+        let mut include = vec![];
+        let mut resources_url_base = None;
+        let mut extra_forge_libs = vec![];
 
         let mut include_mapping = HashMap::new();
 
         if let Some(include_config) = self.include_config {
-            let extra_forge_libs = get_extra_forge_libs(
+            extra_forge_libs = get_extra_forge_libs(
                 &self.extra_forge_libs_paths,
-                work_dir,
+                &data_dir,
                 &include_config.download_server_base,
             )
             .await?;
 
             let copy_from = PathBuf::from(&include_config.include_from);
 
-            let mut include = vec![];
             let mut existing_paths = HashSet::new();
             for rule in include_config.include.iter() {
                 let from = copy_from.join(Path::new(&rule.path));
@@ -208,7 +205,7 @@ impl ExtraMetadataGenerator {
                 include_mapping.insert(rule.path.clone(), from.clone());
 
                 include.push(Include {
-                    path: rule.path.clone(),
+                    path: RelativePathBuf::from(rule.path.as_str()),
                     overwrite: rule.overwrite,
                     delete_extra: rule.delete_extra,
                     recursive: rule.recursive,
@@ -217,15 +214,24 @@ impl ExtraMetadataGenerator {
                 existing_paths.insert(from);
             }
 
-            extra_metadata.include = include;
-            extra_metadata.resources_url_base = include_config.resources_url_base;
-            extra_metadata.extra_forge_libs = extra_forge_libs;
+            resources_url_base = include_config.resources_url_base;
         }
 
-        let versions_extra_dir = get_versions_extra_dir(work_dir);
-        extra_metadata
-            .save(&self.version_name, &versions_extra_dir)
-            .await?;
+        let instance_metadata = InstanceMetadata::new(
+            self.version_name.clone(),
+            self.auth_backend,
+            include,
+            resources_url_base,
+            extra_forge_libs,
+            self.recommended_xmx,
+            vec![],
+            false,
+        );
+
+        let instance_dir = InstancesDir::root()
+            .instance_dir(&self.version_name)
+            .with_data_dir(DataDir::new(work_dir.to_path_buf()));
+        instance_metadata.save(&instance_dir).await?;
 
         info!(
             "Extra metadata for instance {} generated",
@@ -234,7 +240,7 @@ impl ExtraMetadataGenerator {
 
         Ok(GeneratorResult {
             include_mapping,
-            extra_metadata,
+            instance_metadata,
         })
     }
 }

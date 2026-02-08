@@ -5,7 +5,6 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
-shared = { path = "../shared" }
 launcher-auth = { path = "../crates/auth" }
 ctrlc = "3.5.1"
 dirs.workspace = true

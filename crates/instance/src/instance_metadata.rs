@@ -109,6 +109,28 @@ pub enum InstanceMetadataError {
 }
 
 impl InstanceMetadata {
+    pub fn new(
+        name: String,
+        auth_backend: Option<AuthProviderConfig>,
+        include: Vec<Include>,
+        resources_url_base: Option<String>,
+        extra_forge_libs: Vec<Library>,
+        default_xmx: Option<String>,
+        versions: Vec<VersionMetadata>,
+        overrides_applied: bool,
+    ) -> Self {
+        Self {
+            name,
+            auth_backend,
+            include,
+            resources_url_base,
+            extra_forge_libs,
+            default_xmx,
+            versions,
+            overrides_applied,
+        }
+    }
+
     pub async fn read_local(
         entry: &InstanceManifestEntry,
         instance_dir: &InstanceDirFS,

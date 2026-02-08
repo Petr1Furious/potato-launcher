@@ -33,6 +33,14 @@ impl VanillaManifestEntry {
             path,
         }
     }
+
+    pub fn to_metadata_info(&self) -> VersionMetadataInfo {
+        VersionMetadataInfo {
+            id: self.id.clone(),
+            url: self.url.clone(),
+            sha1: self.sha1.clone(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -61,11 +69,8 @@ impl VanillaVersionManifest {
         Ok(res)
     }
 
-    pub fn get_check_task(&self, data_dir: &DataDir, minecraft_version: &str) -> Option<CheckTask> {
-        self.versions
-            .iter()
-            .find(|v| v.id == minecraft_version)
-            .map(|v| v.get_check_task(data_dir))
+    pub fn get_entry(&self, minecraft_version: &str) -> Option<&VanillaManifestEntry> {
+        self.versions.iter().find(|v| v.id == minecraft_version)
     }
 
     pub async fn save_to_file(&self, manifest_path: &Path) -> anyhow::Result<()> {
@@ -76,7 +81,7 @@ impl VanillaVersionManifest {
 }
 
 /// Used minecraft versions to allow avoiding extra round trip.
-/// (manifest -> versions + instance instead of manifest -> instance -> versions)
+/// (manifest -> versions + instance) instead of (manifest -> instance -> versions)
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct VersionMetadataInfo {
     pub id: String,

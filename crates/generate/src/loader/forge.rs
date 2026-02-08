@@ -3,23 +3,19 @@ use std::{
     fmt::{Debug, Display},
     io::Write as _,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
-use crate::{
-    files,
-    java::{download_java, get_java},
-    paths::{get_java_dir, get_libraries_dir, get_metadata_path, get_versions_dir},
-    progress::ProgressBar,
-    version::{version_manifest::VersionInfo, version_metadata::VersionMetadata},
-};
-use async_trait::async_trait;
+use instance::version_metadata::VersionMetadata;
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;
-
-use super::generator::{GeneratorResult, VersionGenerator};
+use utils::{
+    files,
+    java::{download_java, get_java},
+    paths::{DataDir, LibrariesDir, VersionsDir},
+    progress,
+};
 
 const FORGE_MAVEN_METADATA_URL: &str =
     "https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json";
@@ -236,32 +232,6 @@ impl Debug for Loader {
     }
 }
 
-pub struct ForgeGenerator {
-    version_name: String,
-    vanilla_version_info: VersionInfo,
-    loader: Loader,
-    loader_version: Option<String>,
-    progress_bar: Arc<dyn ProgressBar<&'static str>>,
-}
-
-impl ForgeGenerator {
-    pub fn new(
-        version_name: String,
-        vanilla_version_info: VersionInfo,
-        loader: Loader,
-        loader_version: Option<String>,
-        progress_bar: Arc<dyn ProgressBar<&'static str>>,
-    ) -> Self {
-        Self {
-            version_name,
-            vanilla_version_info,
-            loader,
-            loader_version,
-            progress_bar,
-        }
-    }
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum ForgeError {
     #[error("Forge version {0} not found for minecraft {1}")]
@@ -332,20 +302,13 @@ pub async fn get_forge_version(
     )
 }
 
-pub async fn get_vanilla_java_version(
-    vanilla_metadata: &VersionMetadata,
-) -> anyhow::Result<Option<String>> {
-    Ok(vanilla_metadata
-        .java_version
-        .as_ref()
-        .map(|v| v.major_version.to_string()))
-}
-
 // trick forge installer into thinking that the folder is actually a minecraft instance folder
 pub fn trick_forge(forge_work_dir: &Path, minecraft_version: &str) -> anyhow::Result<()> {
-    std::fs::create_dir_all(forge_work_dir.join("versions").join(minecraft_version))?;
+    let data_dir = DataDir::new(forge_work_dir.to_path_buf());
+    let versions_dir = VersionsDir::root().to_fs(&data_dir);
+    std::fs::create_dir_all(versions_dir.join(minecraft_version))?;
     let mut file = std::fs::File::create(forge_work_dir.join("launcher_profiles.json"))?;
-    let _ = file.write(b"{\"profiles\":{}}")?;
+    file.write(b"{\"profiles\":{}}")?;
     Ok(())
 }
 
@@ -413,36 +376,39 @@ async fn run_forge_command(
     Ok(())
 }
 
-pub async fn install_forge<M>(
+pub async fn install_forge(
     forge_work_dir: &Path,
-    java_dir: &Path,
     forge_version: &str,
     vanilla_metadata: &VersionMetadata,
     loader: &Loader,
-    progress_bar: Arc<dyn ProgressBar<M>>,
 ) -> anyhow::Result<String> {
     std::fs::create_dir_all(forge_work_dir)?;
+
+    let data_dir = DataDir::new(forge_work_dir.to_path_buf());
 
     let minecraft_version = &vanilla_metadata.id;
 
     let lock_file = forge_work_dir.join("forge.lock");
 
     if !lock_file.exists() {
-        let java_version = get_vanilla_java_version(vanilla_metadata)
-            .await?
+        let java_version = vanilla_metadata
+            .java_version
+            .as_ref()
+            .map(|v| v.major_version.to_string())
             .unwrap_or_else(|| {
-                warn!("Java version not found, using default");
+                warn!("Java version not found, using default (8)");
                 "8".to_string()
             });
 
         info!("Getting java {}", &java_version);
         let java_installation;
-        if let Some(existing_java_installation) = get_java(&java_version, java_dir).await {
+        if let Some(existing_java_installation) = get_java(&java_version, &data_dir).await {
             java_installation = existing_java_installation;
         } else {
             info!("Java installation not found, downloading");
 
-            java_installation = download_java(&java_version, java_dir, progress_bar).await?;
+            java_installation =
+                download_java(&java_version, &data_dir, progress::no_progress_bar()).await?;
         }
 
         info!("Downloading forge installer");
@@ -484,22 +450,49 @@ pub async fn install_forge<M>(
     Ok(id)
 }
 
-#[async_trait]
-impl VersionGenerator for ForgeGenerator {
-    async fn generate(&self, work_dir: &Path) -> anyhow::Result<GeneratorResult> {
-        let minecraft_version = self.vanilla_version_info.id.clone();
+pub struct ForgeGenerator {
+    version_name: String,
+    vanilla_metadata: VersionMetadata,
+    loader: Loader,
+    loader_version: Option<String>,
+}
+
+pub struct GeneratorResult {
+    metadata: VersionMetadata,
+    extra_libs_paths: Vec<PathBuf>,
+}
+
+impl ForgeGenerator {
+    pub fn new(
+        version_name: String,
+        vanilla_metadata: VersionMetadata,
+        loader: Loader,
+        loader_version: Option<String>,
+    ) -> Self {
+        Self {
+            version_name,
+            vanilla_metadata,
+            loader,
+            loader_version,
+        }
+    }
+}
+
+impl ForgeGenerator {
+    pub async fn generate(
+        &self,
+        client: &Client,
+        output_dir: &DataDir,
+        work_dir: &Path,
+    ) -> anyhow::Result<GeneratorResult> {
+        let minecraft_version = self.vanilla_metadata.id.clone();
+
+        let work_data_dir = DataDir::new(work_dir.to_path_buf());
 
         info!(
             "Generating {} instance \"{}\", minecraft version {}",
             self.loader, self.version_name, minecraft_version
         );
-
-        info!("Downloading vanilla version metadata");
-        let vanilla_metadata = VersionMetadata::read_or_download(
-            &self.vanilla_version_info.get_parent_metadata_info(),
-            &get_versions_dir(work_dir),
-        )
-        .await?;
 
         let forge_version =
             get_forge_version(&minecraft_version, &self.loader_version, &self.loader).await?;
@@ -511,26 +504,19 @@ impl VersionGenerator for ForgeGenerator {
             .join(get_full_version(&minecraft_version, &forge_version));
         let id = install_forge(
             &installer_work_dir,
-            &get_java_dir(work_dir),
             &forge_version,
-            &vanilla_metadata,
+            &self.vanilla_metadata,
             &self.loader,
-            self.progress_bar.clone(),
         )
         .await?;
 
-        let versions_dir_from = installer_work_dir.join("versions");
-        let versions_dir_to = get_versions_dir(work_dir);
+        let installer_data_dir = DataDir::new(installer_work_dir.to_path_buf());
 
         info!("Copying version metadata");
-        let metadata_from = versions_dir_from.join(&id).join(format!("{id}.json"));
-        let metadata_to = get_metadata_path(&versions_dir_to, &id);
-        std::fs::copy(metadata_from, metadata_to)?;
+        let forge_metadata = VersionMetadata::read_local(&installer_data_dir, &id).await?;
+        forge_metadata.save(&work_data_dir).await?;
 
-        let forge_metadata = VersionMetadata::read_local(&versions_dir_to, &id).await?;
-
-        let installer_libraries_dir = installer_work_dir.join("libraries");
-
+        let installer_libraries_dir = LibrariesDir::root().to_fs(&installer_data_dir);
         let extra_libs_paths = files::get_files_in_dir(&installer_libraries_dir)?
             .into_iter()
             .filter_map(|path| {
@@ -555,19 +541,16 @@ impl VersionGenerator for ForgeGenerator {
         debug!("Extra {} libs: {:?}", self.loader, extra_libs_paths);
 
         // copy extra forge libs to work dir
-        let forge_installer_libraries_dir = installer_work_dir.join("libraries");
-        let libraries_dir = get_libraries_dir(work_dir);
+        let libraries_dir = LibrariesDir::root().to_fs(&work_data_dir);
         let extra_libs_paths = extra_libs_paths
             .into_iter()
             .map(|lib_path| {
                 let lib_dest = libraries_dir.join(&lib_path);
                 std::fs::create_dir_all(lib_dest.parent().unwrap())?;
-                std::fs::copy(forge_installer_libraries_dir.join(&lib_path), &lib_dest)?;
+                std::fs::copy(installer_libraries_dir.join(&lib_path), &lib_dest)?;
                 Ok(lib_dest)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-
-        forge_metadata.save(&versions_dir_to).await?;
 
         info!(
             "{} version \"{}\" generated",
@@ -575,7 +558,7 @@ impl VersionGenerator for ForgeGenerator {
         );
 
         Ok(GeneratorResult {
-            metadata: vec![vanilla_metadata, forge_metadata],
+            metadata: forge_metadata,
             extra_libs_paths,
         })
     }

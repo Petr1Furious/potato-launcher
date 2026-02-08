@@ -4,13 +4,12 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tokio::{fs, io::AsyncReadExt as _};
+use tokio::fs;
 use url::Url;
 
 use utils::{
     files::{self, CheckTask},
     paths::{DataDir, LibrariesDir, VersionsDir},
-    progress,
 };
 
 use crate::instance_metadata::InstanceMetadata;
@@ -466,11 +465,7 @@ impl VersionMetadata {
         let version_path = VersionsDir::root()
             .metadata_path(version_id)
             .to_fs(data_dir);
-        let mut file = fs::File::open(version_path).await?;
-        let mut content = String::new();
-        file.read_to_string(&mut content).await?;
-        let metadata = serde_json::from_str(&content)?;
-        Ok(metadata)
+        files::read_file_parsed(&version_path).await
     }
 
     pub async fn fetch(client: &reqwest::Client, url: &str) -> anyhow::Result<Self> {
@@ -479,30 +474,17 @@ impl VersionMetadata {
         Ok(metadata)
     }
 
-    pub fn get_check_task(metadata_info: &VersionMetadataInfo, data_dir: &DataDir) -> CheckTask {
-        let url = metadata_info.url.clone();
-        let sha1 = metadata_info.sha1.clone();
-        let path = VersionsDir::root()
-            .metadata_path(&metadata_info.id)
-            .to_fs(data_dir);
-        CheckTask {
-            url,
-            remote_sha1: Some(sha1),
-            path,
-        }
-    }
-
     pub async fn read_or_download(
         client: &reqwest::Client,
         metadata_info: &VersionMetadataInfo,
         data_dir: &DataDir,
     ) -> anyhow::Result<Self> {
-        let check_task = Self::get_check_task(metadata_info, data_dir);
-        let check_tasks = vec![check_task];
-        let download_entries =
-            files::get_download_tasks(check_tasks, progress::no_progress_bar()).await?;
-        files::download_files(client, download_entries, progress::no_progress_bar()).await?;
-        Self::read_local(data_dir, &metadata_info.id).await
+        let check_task = metadata_info.to_check_task(data_dir);
+        if let Some(download_task) = files::get_download_task(&check_task).await? {
+            files::download_file_parsed(client, &download_task).await
+        } else {
+            Self::read_local(data_dir, &metadata_info.id).await
+        }
     }
 
     pub fn get_arguments(&self) -> anyhow::Result<Arguments> {

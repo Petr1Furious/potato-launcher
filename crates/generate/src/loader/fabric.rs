@@ -1,15 +1,8 @@
-use std::path::Path;
-
-use crate::{
-    paths::get_versions_dir,
-    version::{version_manifest::VersionInfo, version_metadata::VersionMetadata},
-};
-use async_trait::async_trait;
+use instance::version_metadata::VersionMetadata;
 use log::info;
 use reqwest::Client;
 use serde::Deserialize;
-
-use super::generator::{GeneratorResult, VersionGenerator};
+use utils::paths::DataDir;
 
 const FABRIC_META_BASE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader/";
 
@@ -55,33 +48,33 @@ impl FabricVersionsMeta {
 }
 
 async fn download_fabric_metadata(
+    client: &Client,
     minecraft_version: &str,
     loader_version: &str,
-    output_dir: &Path,
+    data_dir: &DataDir,
 ) -> anyhow::Result<VersionMetadata> {
     let fabric_metadata_url =
         format!("{FABRIC_META_BASE_URL}{minecraft_version}/{loader_version}/profile/json");
-    let version_metadata = VersionMetadata::fetch(&fabric_metadata_url).await?;
-    let versions_dir = get_versions_dir(output_dir);
-    version_metadata.save(&versions_dir).await?;
+    let version_metadata = VersionMetadata::fetch(client, &fabric_metadata_url).await?;
+    version_metadata.save(&data_dir).await?;
     Ok(version_metadata)
 }
 
 pub struct FabricGenerator {
     version_name: String,
-    vanilla_version_info: VersionInfo,
+    minecraft_version: String,
     loader_version: Option<String>,
 }
 
 impl FabricGenerator {
     pub fn new(
         version_name: String,
-        vanilla_version_info: VersionInfo,
+        minecraft_version: String,
         loader_version: Option<String>,
     ) -> Self {
         Self {
             version_name,
-            vanilla_version_info,
+            minecraft_version,
             loader_version,
         }
     }
@@ -93,31 +86,25 @@ pub enum FabricGeneratorError {
     NoVersionsFound(String),
 }
 
-#[async_trait]
-impl VersionGenerator for FabricGenerator {
-    async fn generate(&self, work_dir: &Path) -> anyhow::Result<GeneratorResult> {
-        let minecraft_version = self.vanilla_version_info.id.clone();
-
+impl FabricGenerator {
+    pub async fn generate(
+        &self,
+        client: &Client,
+        output_dir: &DataDir,
+    ) -> anyhow::Result<VersionMetadata> {
         info!(
             "Generating Fabric instance \"{}\", minecraft version {}",
-            self.version_name, minecraft_version
+            self.version_name, self.minecraft_version
         );
-
-        info!("Downloading vanilla version metadata");
-        let vanilla_metadata = VersionMetadata::read_or_download(
-            &self.vanilla_version_info.get_parent_metadata_info(),
-            &get_versions_dir(work_dir),
-        )
-        .await?;
 
         let fabric_version = match &self.loader_version {
             Some(loader_version) => loader_version.clone(),
             None => {
-                let meta = FabricVersionsMeta::fetch(&minecraft_version).await?;
+                let meta = FabricVersionsMeta::fetch(&self.minecraft_version).await?;
                 let version =
                     meta.get_latest_version()
                         .ok_or(FabricGeneratorError::NoVersionsFound(
-                            minecraft_version.to_string(),
+                            self.minecraft_version.clone(),
                         ))?;
                 info!("Loader version not specified, using latest version: {version}");
                 version.to_string()
@@ -125,14 +112,16 @@ impl VersionGenerator for FabricGenerator {
         };
 
         info!("Downloading Fabric version metadata");
-        let fabric_metadata =
-            download_fabric_metadata(&minecraft_version, &fabric_version, work_dir).await?;
+        let fabric_metadata = download_fabric_metadata(
+            &client,
+            &self.minecraft_version,
+            &fabric_version,
+            output_dir,
+        )
+        .await?;
 
         info!("Fabric version \"{}\" generated", self.version_name);
 
-        Ok(GeneratorResult {
-            metadata: vec![vanilla_metadata, fabric_metadata],
-            extra_libs_paths: vec![],
-        })
+        Ok(fabric_metadata)
     }
 }

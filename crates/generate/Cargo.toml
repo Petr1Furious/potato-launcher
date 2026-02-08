@@ -1,0 +1,20 @@
+[package]
+name = "generate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+utils = { path = "../utils" }
+launcher-auth = { path = "../auth" }
+instance = { path = "../instance" }
+serde.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+reqwest.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+url.workspace = true
+relative-path.workspace = true
+log.workspace = true
+serde-xml-rs = "0.8.2"
