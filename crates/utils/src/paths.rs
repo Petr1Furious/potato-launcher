@@ -3,12 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use relative_path::RelativePathBuf;
+use relative_path::{RelativePath, RelativePathBuf};
 use url::Url;
 
 const AUTHLIB_INJECTOR_NAME: &str = "authlib-injector.jar";
 const INSTANCES_DIR_NAME: &str = "instances";
 const VERSIONS_DIR_NAME: &str = "versions";
+const VERSIONS_REPLACED_DIR_NAME: &str = "versions_replaced";
 const MINECRAFT_DIR_NAME: &str = "minecraft";
 const META_FILE_NAME: &str = "meta.json";
 const AUTH_DATA_FILE_NAME: &str = "auth_data.json";
@@ -33,6 +34,10 @@ impl Rel {
         let mut p = self.0.clone();
         p.push(seg.as_ref());
         Self(p)
+    }
+
+    pub fn parent(&self) -> Option<Self> {
+        self.0.parent().map(|p| Self(p.into()))
     }
 
     pub fn to_fs(&self, base: &Path) -> PathBuf {
@@ -138,15 +143,19 @@ path_type!(LogsDir, dir);
 path_type!(LibrariesDir, dir);
 path_type!(NativesDir, dir);
 path_type!(VersionsDir, dir);
+path_type!(VersionsReplacedDir, dir);
 path_type!(AssetsDir, dir);
 path_type!(AssetsObjectsDir, dir);
 path_type!(InstanceMetaPath, file);
 path_type!(JavaBinPath, file);
 path_type!(AuthDataPath, file);
 path_type!(MetadataPath, file);
+path_type!(LibraryPath, file);
+path_type!(NativePath, file);
 path_type!(ClientJarPath, file);
 path_type!(AssetIndexPath, file);
 path_type!(AuthlibInjectorPath, file);
+path_type!(AssetObjectPath, file);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DataDir(PathBuf);
@@ -285,6 +294,32 @@ impl LibrariesDir {
     pub fn authlib_injector_path(&self) -> AuthlibInjectorPath {
         AuthlibInjectorPath(self.0.join(AUTHLIB_INJECTOR_NAME))
     }
+
+    pub fn library_path(&self, rel_library_path: &RelativePath) -> LibraryPath {
+        LibraryPath(self.0.join(rel_library_path))
+    }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum LibraryError {
+    #[error("Invalid library path")]
+    InvalidLibraryPath,
+}
+
+impl LibraryPath {
+    pub fn native_path(
+        &self,
+        native_name: &str,
+        filename: &str,
+    ) -> Result<NativePath, LibraryError> {
+        Ok(NativePath(
+            self.0
+                .parent()
+                .ok_or(LibraryError::InvalidLibraryPath)?
+                .join(native_name)
+                .join(filename),
+        ))
+    }
 }
 
 impl NativesDir {
@@ -307,6 +342,16 @@ impl VersionsDir {
     }
 }
 
+impl VersionsReplacedDir {
+    pub fn root() -> Self {
+        Self(Rel::new(VERSIONS_REPLACED_DIR_NAME))
+    }
+
+    pub fn metadata_path(&self, version_id: &str) -> MetadataPath {
+        MetadataPath(self.0.join(version_id).join(format!("{version_id}.json")))
+    }
+}
+
 impl AssetsDir {
     pub fn root() -> Self {
         Self(Rel::new(ASSETS_DIR_NAME))
@@ -326,5 +371,11 @@ impl AssetsDir {
 
     pub fn assets_object_dir(&self) -> AssetsObjectsDir {
         AssetsObjectsDir(self.0.join(OBJECTS_DIR_NAME))
+    }
+}
+
+impl AssetsObjectsDir {
+    pub fn object_path(&self, object_hash: &str) -> AssetObjectPath {
+        AssetObjectPath(self.0.join(&object_hash[..2]).join(object_hash))
     }
 }

@@ -1,4 +1,4 @@
-pub mod asset_metadata;
+pub mod assets;
 pub mod instance_metadata;
 pub mod manifest;
 pub mod version_metadata;

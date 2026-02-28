@@ -61,20 +61,14 @@ async fn download_fabric_metadata(
 }
 
 pub struct FabricGenerator {
-    version_name: String,
     minecraft_version: String,
     loader_version: Option<String>,
 }
 
 impl FabricGenerator {
-    pub fn new(
-        version_name: String,
-        minecraft_version: String,
-        loader_version: Option<String>,
-    ) -> Self {
+    pub fn new(minecraft_version: &str, loader_version: Option<String>) -> Self {
         Self {
-            version_name,
-            minecraft_version,
+            minecraft_version: minecraft_version.to_string(),
             loader_version,
         }
     }
@@ -93,8 +87,12 @@ impl FabricGenerator {
         output_dir: &DataDir,
     ) -> anyhow::Result<VersionMetadata> {
         info!(
-            "Generating Fabric instance \"{}\", minecraft version {}",
-            self.version_name, self.minecraft_version
+            "Generating Fabric {}, minecraft version {}",
+            self.loader_version
+                .as_ref()
+                .map(|version| version.as_str())
+                .unwrap_or("<auto>"),
+            self.minecraft_version
         );
 
         let fabric_version = match &self.loader_version {
@@ -120,7 +118,7 @@ impl FabricGenerator {
         )
         .await?;
 
-        info!("Fabric version \"{}\" generated", self.version_name);
+        info!("Fabric \"{}\" generated", &fabric_version);
 
         Ok(fabric_metadata)
     }

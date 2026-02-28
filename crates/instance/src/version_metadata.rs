@@ -3,27 +3,22 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use relative_path::RelativePathBuf;
 use serde::{Deserialize, Serialize};
-use tokio::fs;
 use url::Url;
 
 use utils::{
     files::{self, CheckTask},
-    paths::{DataDir, LibrariesDir, VersionsDir},
+    paths::{AssetsDir, BaseUrl, DataDir, LibrariesDir, NativePath, VersionsDir},
+    utils::hash_struct,
 };
 
-use crate::instance_metadata::InstanceMetadata;
+use crate::{
+    assets::{AssetIndex, AssetsMetadata},
+    instance_metadata::InstanceMetadata,
+};
 
 use super::manifest::VersionMetadataInfo;
-
-fn get_arch_os_name(os_name: &str, arch: &str) -> String {
-    os_name.to_string()
-        + match arch {
-            "arm32" => "-arm32",
-            "arm64" => "-arm64",
-            _ => "",
-        }
-}
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Os {
@@ -46,6 +41,13 @@ impl Os {
 
         true
     }
+}
+
+/// Target OS/arch selection for native libraries
+#[derive(Clone, Debug)]
+pub enum OsArch {
+    All,
+    Specific { os: String, arch: String },
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -152,14 +154,7 @@ pub struct Arguments {
     pub jvm: Vec<VariableArgument>,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct AssetIndex {
-    pub id: String,
-    pub sha1: String,
-    pub url: Url,
-}
-
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct JavaVersion {
     #[serde(rename = "majorVersion")]
     pub major_version: u64,
@@ -180,12 +175,8 @@ impl Download {
         }
     }
 
-    pub fn get_filename(&self) -> &str {
-        self.url
-            .path()
-            .rsplit('/')
-            .next()
-            .unwrap_or(self.url.path())
+    pub fn get_filename(&self) -> Option<&str> {
+        self.url.path().rsplit('/').next()
     }
 }
 
@@ -195,8 +186,16 @@ pub struct LibraryDownloads {
     pub classifiers: Option<HashMap<String, Download>>,
 }
 
-lazy_static::lazy_static! {
-    static ref MOJANG_LIBRARIES_URL: Url = Url::parse("https://libraries.minecraft.net/").expect("valid url");
+#[derive(thiserror::Error, Debug)]
+pub enum LibraryError {
+    #[error("Invalid library path")]
+    InvalidLibraryPath,
+    #[error("Invalid library name")]
+    InvalidLibraryName,
+    #[error("Missing library URL")]
+    MissingLibraryUrl,
+    #[error("Invalid native URL")]
+    InvalidNativeUrl,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -204,12 +203,30 @@ pub struct Library {
     name: String,
     pub(crate) downloads: Option<LibraryDownloads>,
     pub(crate) rules: Option<Vec<Rule>>,
+
+    // This is probably supposed to be a base URL for the libraries
+    // e.g. it is equal to https://maven.fabricmc.net/
+    // here: https://meta.fabricmc.net/v2/versions/loader/1.16.5/0.18.4/profile/json
     url: Option<Url>,
+
+    // fabric doesn't have sha1 for some libraries (why)
     sha1: Option<String>,
+
     pub(crate) natives: Option<HashMap<String, String>>,
 }
 
 impl Library {
+    pub fn empty(name: String) -> Self {
+        Library {
+            name,
+            downloads: None,
+            rules: None,
+            url: None,
+            sha1: None,
+            natives: None,
+        }
+    }
+
     pub fn from_download(name: String, url: Url, sha1: String) -> Self {
         Library {
             name,
@@ -224,13 +241,14 @@ impl Library {
         }
     }
 
-    fn get_rel_path_from_name(&self) -> String {
+    fn get_rel_path(&self) -> anyhow::Result<RelativePathBuf> {
         let full_name = self.name.clone();
-        let mut parts: Vec<&str> = full_name.split(':').collect();
-        if parts.len() != 4 {
-            parts.push("");
+        let parts: Vec<&str> = full_name.split(':').collect();
+        if parts.len() != 3 && parts.len() != 4 {
+            return Err(LibraryError::InvalidLibraryName.into());
         }
-        let (pkg, name, version, suffix) = (parts[0], parts[1], parts[2], parts[3]);
+        let (pkg, name, version) = (parts[0], parts[1], parts[2]);
+        let suffix = *parts.get(3).unwrap_or(&"");
         // neoforge adds "@jar" to the version, so we need to remove it
         let version = version.split("@jar").next().unwrap();
         let pkg_path = pkg.replace('.', "/");
@@ -239,36 +257,21 @@ impl Library {
         } else {
             format!("-{suffix}")
         };
-        format!("{pkg_path}/{name}/{version}/{name}-{version}{suffix}.jar")
+        Ok(RelativePathBuf::from(format!(
+            "{pkg_path}/{name}/{version}/{name}-{version}{suffix}.jar"
+        )))
     }
 
-    fn get_path_from_name(&self, data_dir: &DataDir) -> PathBuf {
-        return LibrariesDir::root()
-            .to_fs(data_dir)
-            .join(self.get_rel_path_from_name());
+    fn get_path(&self, data_dir: &DataDir) -> anyhow::Result<PathBuf> {
+        Ok(LibrariesDir::root()
+            .library_path(&self.get_rel_path()?)
+            .to_fs(data_dir))
     }
 
-    pub fn get_library_path(&self, data_dir: &DataDir) -> Option<PathBuf> {
-        if let Some(downloads) = &self.downloads {
-            if downloads.artifact.is_some() {
-                Some(self.get_path_from_name(data_dir))
-            } else {
-                None
-            }
-        } else {
-            Some(self.get_path_from_name(data_dir))
-        }
-    }
-
-    pub fn get_url(&self) -> Url {
-        self.url.clone().unwrap_or(MOJANG_LIBRARIES_URL.clone())
-    }
-
-    fn get_library_dir(&self, data_dir: &DataDir) -> PathBuf {
-        self.get_path_from_name(data_dir)
-            .parent()
-            .expect("valid path")
-            .to_path_buf()
+    pub fn get_url(&self) -> anyhow::Result<Url> {
+        self.url
+            .clone()
+            .ok_or(LibraryError::MissingLibraryUrl.into())
     }
 
     fn get_native_name(&self, os_arch: &str) -> Option<&str> {
@@ -282,38 +285,62 @@ impl Library {
         Some(download)
     }
 
-    pub fn get_native_path(
+    pub fn get_native_rel_path(
         &self,
-        data_dir: &DataDir,
         native_name: &str,
         native_download: &Download,
-    ) -> PathBuf {
-        self.get_library_dir(data_dir)
-            .join(native_name)
-            .join(native_download.get_filename())
+    ) -> anyhow::Result<NativePath> {
+        Ok(LibrariesDir::root()
+            .library_path(&self.get_rel_path()?)
+            .native_path(
+                native_name,
+                native_download
+                    .get_filename()
+                    .ok_or(LibraryError::InvalidNativeUrl)?,
+            )?)
     }
 
-    pub fn get_os_native_path(
-        &self,
-        data_dir: &DataDir,
-        os_name: &str,
-        arch: &str,
-    ) -> Option<PathBuf> {
-        if let Some(native_name) = self.get_native_name(&get_arch_os_name(os_name, arch)) {
-            if let Some(download) = self.get_native_download(native_name) {
-                return Some(self.get_native_path(data_dir, native_name, download));
+    fn get_arch_os_name(os: &str, arch: &str) -> String {
+        os.to_string()
+            + match arch {
+                "arm32" => "-arm32",
+                "arm64" => "-arm64",
+                _ => "",
             }
+    }
+
+    /// Get the native path for the library, matching the given target OS/arch.
+    /// This function expects OsArch::Specific
+    pub fn get_os_native_path(&self, target: &OsArch) -> anyhow::Result<Option<NativePath>> {
+        if let OsArch::Specific { os, arch } = target
+            && let Some(native_name) = self.get_native_name(&Self::get_arch_os_name(os, arch))
+            && let Some(download) = self.get_native_download(native_name)
+        {
+            return Ok(Some(self.get_native_rel_path(native_name, download)?));
         }
-        None
+        Ok(None)
+    }
+
+    /// Check if the library has a library to download.
+    /// This may not be the case for libraries with only natives (classifiers).
+    pub fn has_artifact_to_download(&self) -> bool {
+        if let Some(downloads) = &self.downloads {
+            // if the library has an artifact, we return true
+            // otherwise we assume it's only for classifiers
+            downloads.artifact.is_some()
+        } else {
+            // if "downloads" is not set at all, the library can't have classifiers
+            // in this case we should always assume the library can be downloaded
+            // (by inferring from the library name)
+            true
+        }
     }
 
     fn get_library_check_task(&self, data_dir: &DataDir) -> anyhow::Result<Option<CheckTask>> {
         if let Some(downloads) = &self.downloads {
-            if let Some(artifact) = &downloads.artifact
-                && let Some(path) = self.get_library_path(data_dir)
-            {
+            if let Some(artifact) = &downloads.artifact {
                 // if the library has an artifact, we return its check task
-                Ok(Some(artifact.get_check_task(&path)))
+                Ok(Some(artifact.get_check_task(&self.get_path(data_dir)?)))
             } else {
                 // if it has "downloads" but not an artifact, we don't return anything
                 // since "downloads" also includes natives (classifiers)
@@ -322,36 +349,40 @@ impl Library {
         } else {
             // else infer it from the library name
             Ok(Some(CheckTask {
-                url: self.get_url().join(&self.get_rel_path_from_name())?,
+                url: self.get_url()?.join(self.get_rel_path()?.as_str())?,
                 remote_sha1: self.sha1.clone(),
-                path: self.get_path_from_name(data_dir),
+                path: self.get_path(data_dir)?,
             }))
         }
     }
 
     /// Get all check_tasks, including both the library
     /// and its natives matching the given OS and arch
-    /// [os_with_arch = None] means all natives
+    /// [target = OsArch::All] means all natives
     pub fn get_check_tasks(
         &self,
         data_dir: &DataDir,
-        os_with_arch: Option<(&str, &str)>,
+        target: &OsArch,
     ) -> anyhow::Result<Vec<CheckTask>> {
         let mut tasks = vec![];
         if let Some(task) = self.get_library_check_task(data_dir)? {
             tasks.push(task);
         }
-        if let Some((os_name, arch)) = os_with_arch {
-            if let Some(native_name) = self.get_native_name(&get_arch_os_name(os_name, arch)) {
+        if let OsArch::Specific { os, arch } = target {
+            if let Some(native_name) = self.get_native_name(&Self::get_arch_os_name(os, arch)) {
                 if let Some(download) = self.get_native_download(native_name) {
-                    let path = self.get_native_path(data_dir, native_name, download);
+                    let path = self
+                        .get_native_rel_path(native_name, download)?
+                        .to_fs(data_dir);
                     tasks.push(download.get_check_task(&path));
                 }
             }
         } else if let Some(natives) = &self.natives {
             for native_name in natives.values() {
                 if let Some(download) = self.get_native_download(native_name) {
-                    let path = self.get_native_path(data_dir, native_name, download);
+                    let path = self
+                        .get_native_rel_path(native_name, download)?
+                        .to_fs(data_dir);
                     tasks.push(download.get_check_task(&path));
                 }
             }
@@ -368,10 +399,17 @@ impl Library {
         }
     }
 
-    pub fn get_sha1_url(&self) -> anyhow::Result<Url> {
-        let mut path = self.get_rel_path_from_name();
-        path.push_str(".sha1");
-        Ok(self.get_url().join(&path)?)
+    /// Get the inferred sha1 url from the library name.
+    /// This should only be used for libraries that don't have a proper sha1 in the metadata.
+    pub fn get_inferred_sha1_url(&self) -> anyhow::Result<Url> {
+        let mut path = self.get_rel_path()?;
+        path.set_file_name(
+            path.file_name()
+                .ok_or(LibraryError::InvalidLibraryPath)?
+                .to_string()
+                + ".sha1",
+        );
+        Ok(self.get_url()?.join(path.as_str())?)
     }
 
     pub fn get_group_id(&self) -> String {
@@ -394,7 +432,7 @@ impl Library {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Downloads {
     pub client: Option<Download>,
 }
@@ -403,28 +441,19 @@ pub struct Downloads {
 /// Note that version != instance, since an instance may contain multiple versions.
 /// For example, a 1.21.11 Fabric instance may contain versions such as
 /// "fabric-loader-0.18.4-1.21.11" and "1.21.11"
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct VersionMetadata {
     pub arguments: Option<Arguments>,
-
-    #[serde(rename = "assetIndex")]
     pub asset_index: Option<AssetIndex>,
-
     pub downloads: Option<Downloads>,
     pub id: String,
-
-    #[serde(rename = "javaVersion")]
     pub java_version: Option<JavaVersion>,
     pub libraries: Vec<Library>,
-
-    #[serde(rename = "mainClass")]
     pub main_class: String,
-
-    #[serde(rename = "inheritsFrom")]
     pub inherits_from: Option<String>,
 
     // legacy field used by old Minecraft versions
-    #[serde(rename = "minecraftArguments")]
     pub minecraft_arguments: Option<String>,
 }
 
@@ -487,6 +516,14 @@ impl VersionMetadata {
         }
     }
 
+    pub fn get_metadata_info(&self, base_url: &BaseUrl) -> anyhow::Result<VersionMetadataInfo> {
+        Ok(VersionMetadataInfo {
+            id: self.id.clone(),
+            url: VersionsDir::root().metadata_path(&self.id).to_url(base_url),
+            sha1: hash_struct(&self)?,
+        })
+    }
+
     pub fn get_arguments(&self) -> anyhow::Result<Arguments> {
         match &self.arguments {
             Some(arguments) => Ok(arguments.clone()),
@@ -507,9 +544,7 @@ impl VersionMetadata {
         let version_path = VersionsDir::root()
             .metadata_path(&self.id)
             .to_fs_safe(data_dir);
-        let content = serde_json::to_string(self)?;
-        fs::write(version_path, content).await?;
-        Ok(())
+        files::write_file_json(&version_path, self).await
     }
 
     /// Convert vanilla version metadata into instance metadata
@@ -524,5 +559,150 @@ impl VersionMetadata {
             versions: vec![self],
             overrides_applied: false,
         }
+    }
+
+    pub async fn with_replaced_download_urls(
+        &self,
+        download_server_base: &BaseUrl,
+        data_dir: &DataDir,
+    ) -> anyhow::Result<VersionMetadata> {
+        let mut replaced_metadata = VersionMetadata {
+            arguments: self.arguments.clone(),
+            asset_index: self.asset_index.clone(),
+            downloads: self.downloads.clone(),
+            id: self.id.clone(),
+            java_version: self.java_version.clone(),
+            libraries: vec![],
+            main_class: self.main_class.clone(),
+            inherits_from: self.inherits_from.clone(),
+            minecraft_arguments: self.minecraft_arguments.clone(),
+        };
+        if let Some(downloads) = &mut replaced_metadata.downloads
+            && let Some(download) = &mut downloads.client
+        {
+            download.url = VersionsDir::root()
+                .client_jar_path(&self.id)
+                .to_url(download_server_base);
+        }
+        if let Some(asset_index) = &mut replaced_metadata.asset_index {
+            asset_index.url = AssetsDir::root()
+                .asset_index_path(&asset_index.id)
+                .to_url(download_server_base);
+        }
+
+        let mut replaced_libraries = Vec::with_capacity(self.libraries.len());
+
+        for library in &self.libraries {
+            let mut artifact_sha1 = None;
+            if let Some(downloads) = &library.downloads {
+                if let Some(artifact) = &downloads.artifact {
+                    artifact_sha1 = Some(artifact.sha1.clone());
+                }
+            } else if library.url.is_some() {
+                artifact_sha1 = Some(if let Some(sha1) = &library.sha1 {
+                    sha1.clone()
+                } else {
+                    files::hash_file(&library.get_path(data_dir)?).await?
+                });
+            }
+            let library_artifact = artifact_sha1
+                .map(|sha1| {
+                    Ok::<Download, anyhow::Error>(Download {
+                        url: LibrariesDir::root()
+                            .library_path(&library.get_rel_path()?)
+                            .to_url(download_server_base),
+                        sha1,
+                    })
+                })
+                .transpose()?;
+
+            let mut maybe_classifiers = None;
+            if let Some(downloads) = &library.downloads {
+                if let Some(classifiers) = &downloads.classifiers {
+                    let mut replaced_classifiers = HashMap::with_capacity(classifiers.len());
+                    for (native_name, download) in classifiers.clone() {
+                        let native_path = library.get_native_rel_path(&native_name, &download)?;
+                        replaced_classifiers.insert(
+                            native_name,
+                            Download {
+                                url: native_path.to_url(download_server_base),
+                                sha1: download.sha1.clone(),
+                            },
+                        );
+                    }
+                    maybe_classifiers = Some(replaced_classifiers);
+                }
+            }
+
+            replaced_libraries.push(Library {
+                name: library.name.clone(),
+                downloads: Some(LibraryDownloads {
+                    artifact: library_artifact,
+                    classifiers: maybe_classifiers,
+                }),
+                rules: library.rules.clone(),
+                url: None,
+                sha1: None,
+                natives: library.natives.clone(),
+            });
+        }
+
+        Ok(replaced_metadata)
+    }
+
+    /// Get all check tasks for the version, including assets.
+    /// This function will also read or download the asset metadata
+    /// if the version has an asset index.
+    pub async fn get_check_tasks(
+        &self,
+        client: &reqwest::Client,
+        data_dir: &DataDir,
+        download_server_base: &BaseUrl,
+        target: &OsArch,
+    ) -> anyhow::Result<Vec<CheckTask>> {
+        let asset_metadata = if let Some(asset_index) = &self.asset_index {
+            Some(AssetsMetadata::read_or_download(client, asset_index, data_dir).await?)
+        } else {
+            None
+        };
+        self.get_check_tasks_with_assets(
+            data_dir,
+            asset_metadata.as_ref(),
+            download_server_base,
+            target,
+        )
+    }
+
+    fn get_check_tasks_with_assets(
+        &self,
+        data_dir: &DataDir,
+        asset_metadata: Option<&AssetsMetadata>,
+        download_server_base: &BaseUrl,
+        target: &OsArch,
+    ) -> anyhow::Result<Vec<CheckTask>> {
+        let mut tasks = if let Some(asset_metadata) = asset_metadata {
+            asset_metadata.get_check_tasks(data_dir, download_server_base, false)?
+        } else {
+            vec![]
+        };
+
+        tasks.reserve(1 + self.libraries.len());
+        if let Some(downloads) = &self.downloads {
+            if let Some(download) = &downloads.client {
+                tasks.push(
+                    download.get_check_task(
+                        &VersionsDir::root()
+                            .client_jar_path(&self.id)
+                            .to_fs(data_dir),
+                    ),
+                );
+            }
+        }
+        for library in &self.libraries {
+            let check_tasks = library.get_check_tasks(data_dir, target)?;
+            tasks.extend(check_tasks);
+        }
+
+        Ok(tasks)
     }
 }

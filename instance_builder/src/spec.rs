@@ -1,45 +1,45 @@
+use generate::instance::{IncludeConfig, IncludeRule, InstanceGenerator, Loader};
+use instance::version_metadata::OsArch;
 use launcher_auth::providers::AuthProviderConfig;
-use log::{debug, error, info, warn};
+use log::{info, warn};
+use relative_path::RelativePathBuf;
 use serde::Deserialize;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 use tokio::fs;
-
-use shared::{
-    files::sync_mapping,
-    generate::{
-        extra::{ExtraMetadataGenerator, IncludeConfig, IncludeRule},
-        manifest::get_version_info,
-    },
-    loader_generator::{
-        fabric::FabricGenerator,
-        forge::{ForgeGenerator, Loader},
-        generator::VersionGenerator,
-        vanilla::VanillaGenerator,
-    },
-    paths::{
-        get_extra_metadata_path, get_metadata_path, get_minecraft_dir, get_versions_dir,
-        get_versions_extra_dir,
-    },
-    utils::{VANILLA_MANIFEST_URL, get_vanilla_version_info},
-    version::{asset_metadata::AssetsMetadata, version_manifest::VersionManifest},
+use url::Url;
+use utils::{
+    files::{self, CheckTask, CopyTask},
+    paths::{BaseUrl, DataDir, InstancesDir},
+    progress::ProgressTracker,
+    utils::get_unique_name,
 };
 
-use crate::{
-    generate::{mapping::get_mapping, patch::replace_download_urls, sync::sync_version},
-    progress::TerminalProgressBar,
-    utils::{exec_string_command, get_assets_dir, get_replaced_metadata_dir},
-};
+use crate::{progress::TerminalProgressBar, utils::exec_string_command};
 
 fn vanilla() -> String {
     "vanilla".to_string()
 }
 
 #[derive(Deserialize)]
-pub struct Instances {
+pub struct IncludeRuleSpec {
+    pub path: String,
+    #[serde(default = "yes")]
+    pub overwrite: bool,
+    #[serde(default = "yes")]
+    pub delete_extra: bool,
+    #[serde(default)]
+    pub recursive: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+pub struct InstanceSpec {
     pub name: String,
     pub minecraft_version: String,
 
@@ -49,7 +49,7 @@ pub struct Instances {
     pub loader_version: Option<String>,
 
     #[serde(default)]
-    pub include: Vec<IncludeRule>,
+    pub include: Vec<IncludeRuleSpec>,
 
     pub include_from: Option<String>,
 
@@ -63,21 +63,13 @@ pub struct Instances {
 
 #[derive(Deserialize)]
 pub struct Spec {
-    pub download_server_base: String,
-    pub resources_url_base: Option<String>,
+    pub download_server_base: Url,
 
     #[serde(default)]
     pub replace_download_urls: bool,
-
-    pub version_manifest_url: Option<String>,
-
-    pub instances: Vec<Instances>,
+    pub instances: Vec<InstanceSpec>,
     pub exec_before_all: Option<String>,
     pub exec_after_all: Option<String>,
-}
-
-pub fn get_manifest_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("version_manifest.json")
 }
 
 impl Spec {
@@ -91,226 +83,146 @@ impl Spec {
         self,
         output_dir: &Path,
         work_dir: &Path,
-        delete_remote_instances: Option<&HashSet<String>>,
+        _delete_remote_instances: Option<&HashSet<String>>,
     ) -> anyhow::Result<()> {
         if let Some(command) = &self.exec_before_all {
             exec_string_command(command).await?;
         }
 
-        info!("Fetching version manifest");
-        let vanilla_manifest = VersionManifest::fetch(VANILLA_MANIFEST_URL).await?;
+        let data_dir = DataDir::new(output_dir.to_path_buf());
+        let download_server_base = BaseUrl::new(self.download_server_base.clone());
+        let client = reqwest::Client::new();
+        let mut existing_instance_names = HashSet::new();
+        let mut all_check_tasks: Vec<CheckTask> = vec![];
+        let mut all_copy_tasks: Vec<CopyTask> = vec![];
+        let mut all_other_generated_files: Vec<PathBuf> = vec![];
 
-        if delete_remote_instances.is_some() && self.version_manifest_url.is_none() {
-            warn!(
-                "--delete-remote flag is set but version_manifest_url spec option is not; ignoring the flag"
-            );
-        }
-
-        let mut version_manifest = if let Some(version_manifest_url) = &self.version_manifest_url {
-            info!("Fetching remote version manifest from: {version_manifest_url}");
-            match VersionManifest::fetch(version_manifest_url).await {
-                Ok(mut manifest) => {
-                    info!(
-                        "Successfully fetched remote manifest with {} versions",
-                        manifest.versions.len()
-                    );
-                    if let Some(to_delete) = delete_remote_instances
-                        && !to_delete.is_empty()
-                    {
-                        let before = manifest.versions.len();
-                        manifest.versions.retain(|v| {
-                            let name = v.get_name();
-                            !to_delete.contains(name.as_str())
-                        });
-                        let removed = before - manifest.versions.len();
-                        if removed > 0 {
-                            info!("Removed {removed} remote instance(s) from fetched manifest");
-                        } else {
-                            warn!("No remote instances matched the provided delete list");
-                        }
-                    }
-                    manifest
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to fetch remote version manifest: {e}. Starting with empty manifest."
-                    );
-                    VersionManifest { versions: vec![] }
-                }
-            }
-        } else {
-            VersionManifest { versions: vec![] }
-        };
-        let mut synced_metadata = HashSet::new();
-        let mut mapping = HashMap::new();
-
-        for version in self.instances {
-            if let Some(command) = &version.exec_before {
+        for instance in self.instances {
+            if let Some(command) = &instance.exec_before {
                 exec_string_command(command).await?;
             }
 
-            let vanilla_version_info =
-                get_vanilla_version_info(&vanilla_manifest, &version.minecraft_version)?;
-
-            let progress_bar = Arc::new(TerminalProgressBar::new());
-
-            let generator: Box<dyn VersionGenerator> = match version.loader_name.as_str() {
-                "vanilla" => {
-                    if version.loader_version.is_some() {
-                        warn!("Ignoring loader version for vanilla version");
-                    }
-
-                    Box::new(VanillaGenerator::new(
-                        version.name.clone(),
-                        vanilla_version_info,
-                    ))
-                }
-
-                "fabric" => Box::new(FabricGenerator::new(
-                    version.name.clone(),
-                    vanilla_version_info,
-                    version.loader_version.clone(),
-                )),
-
-                "forge" => Box::new(ForgeGenerator::new(
-                    version.name.clone(),
-                    vanilla_version_info,
-                    Loader::Forge,
-                    version.loader_version.clone(),
-                    progress_bar.clone(),
-                )),
-
-                "neoforge" => Box::new(ForgeGenerator::new(
-                    version.name.clone(),
-                    vanilla_version_info,
-                    Loader::Neoforge,
-                    version.loader_version.clone(),
-                    progress_bar.clone(),
-                )),
-
-                _ => {
-                    error!("Unsupported loader name: {}", version.loader_name);
-                    continue;
-                }
-            };
-
-            let mut workdir_paths_to_copy = vec![];
-
-            let mut result = generator.generate(work_dir).await?;
-            let mut replaced_metadata = HashMap::new();
-            if self.replace_download_urls {
-                let versions_dir = get_versions_dir(output_dir);
-                let replaced_metadata_dir = get_replaced_metadata_dir(work_dir);
-
-                for metadata in result.metadata.iter_mut() {
-                    if synced_metadata.contains(&metadata.id) {
-                        info!("Skipping {}, it is already synced", &metadata.id);
-                        continue;
-                    }
-                    info!("Syncing {}", &metadata.id);
-
-                    let sync_result = sync_version(metadata, work_dir).await?;
-                    if let Some(asset_index) = &metadata.asset_index {
-                        let assets_dir = get_assets_dir(work_dir);
-                        let asset_index_path =
-                            AssetsMetadata::get_path(&assets_dir, &asset_index.id).await?;
-                        workdir_paths_to_copy.push(asset_index_path);
-                    }
-                    workdir_paths_to_copy.extend(sync_result.paths_to_copy);
-
-                    replace_download_urls(metadata, &self.download_server_base, work_dir).await?;
-                    metadata.save(&replaced_metadata_dir).await?;
-
-                    synced_metadata.insert(metadata.id.clone());
-
-                    let replaced_metadata_path =
-                        get_metadata_path(&replaced_metadata_dir, &metadata.id);
-                    replaced_metadata.insert(metadata.id.clone(), replaced_metadata_path.clone());
-                    mapping.insert(
-                        get_metadata_path(&versions_dir, &metadata.id),
-                        replaced_metadata_path,
-                    );
-                }
-            } else {
-                let versions_dir = get_versions_dir(work_dir);
-                for metadata in result.metadata.iter_mut() {
-                    workdir_paths_to_copy.push(get_metadata_path(&versions_dir, &metadata.id));
-                }
+            let unique_name = get_unique_name(&existing_instance_names, &instance.name);
+            if unique_name != instance.name {
+                warn!(
+                    "Duplicate instance name \"{}\"; using \"{}\"",
+                    instance.name, unique_name
+                );
             }
-            workdir_paths_to_copy.extend(result.extra_libs_paths.clone());
+            existing_instance_names.insert(unique_name.clone());
 
-            let resources_url_base = if self.replace_download_urls {
-                self.resources_url_base.clone()
-            } else {
-                None
+            let loader = match instance.loader_name.as_str() {
+                "vanilla" => Loader::Vanilla,
+                "fabric" => Loader::Fabric,
+                "forge" => Loader::Forge,
+                "neoforge" => Loader::Neoforge,
+                other => {
+                    return Err(anyhow::anyhow!("Unsupported loader name: {other}"));
+                }
             };
 
-            let include_config = if let Some(include_from) = version.include_from {
+            let include_rules = instance
+                .include
+                .iter()
+                .map(|rule| IncludeRule {
+                    path: RelativePathBuf::from(rule.path.as_str()),
+                    overwrite: rule.overwrite,
+                    delete_extra: rule.delete_extra,
+                    recursive: rule.recursive,
+                })
+                .collect::<Vec<_>>();
+
+            let include_config = if self.replace_download_urls
+                || instance.include_from.is_some()
+                || !include_rules.is_empty()
+            {
                 Some(IncludeConfig {
-                    include: version.include,
-                    include_from,
-                    download_server_base: self.download_server_base.clone(),
-                    resources_url_base,
+                    include_rules,
+                    include_from: instance.include_from.as_ref().map(PathBuf::from),
+                    download_server_base: download_server_base.clone(),
+                    replace_download_urls: self.replace_download_urls,
                 })
             } else {
-                if !version.include.is_empty() {
-                    warn!("Ignoring include, include_from is not set");
-                }
                 None
             };
 
-            let extra_generator = ExtraMetadataGenerator::new(
-                version.name.clone(),
+            if !self.replace_download_urls
+                && include_config.is_none()
+                && instance.include_from.is_some()
+            {
+                warn!("include_from set but include rules are empty");
+            }
+
+            let instance_rel = InstancesDir::root().instance_dir(&unique_name);
+            let instance_dir = instance_rel.with_data_dir(data_dir.clone());
+            instance_dir.ensure_dir();
+
+            let result = InstanceGenerator {
+                client: client.clone(),
+                instance_name: unique_name.clone(),
+                minecraft_version: instance.minecraft_version.clone(),
+                loader,
+                loader_version: instance.loader_version.clone(),
                 include_config,
-                result.extra_libs_paths,
-                version.auth_backend,
-                version.recommended_xmx,
-            );
-            let extra_generator_result = extra_generator.generate(work_dir).await?;
-            mapping.extend(extra_generator_result.include_mapping.into_iter().map(
-                |(include_entry, source_path)| {
-                    let minecraft_dir = get_minecraft_dir(output_dir, &version.name);
-                    (minecraft_dir.join(include_entry), source_path)
-                },
-            ));
-
-            let versions_extra_dir = get_versions_extra_dir(work_dir);
-            workdir_paths_to_copy.push(get_extra_metadata_path(&versions_extra_dir, &version.name));
-
-            info!("Getting version info for {}", &version.name);
-            let version_info = get_version_info(
-                work_dir,
-                &result.metadata,
-                &version.name,
-                Some(self.download_server_base.as_str()),
-                &replaced_metadata,
-            )
+                auth_backend: instance.auth_backend.clone(),
+                default_xmx: instance.recommended_xmx.clone(),
+            }
+            .generate(&instance_dir, work_dir, &OsArch::All)
             .await?;
 
-            version_manifest
-                .versions
-                .retain(|v| v.get_name() != version_info.get_name());
-            version_manifest.versions.push(version_info);
+            info!(
+                "Instance \"{}\": {} check tasks, {} copy tasks, {} generated files",
+                unique_name,
+                result.check_tasks.len(),
+                result.copy_tasks.len(),
+                result.other_generated_files.len()
+            );
 
-            mapping.extend(get_mapping(output_dir, work_dir, &workdir_paths_to_copy)?);
+            result.metadata.save(&instance_dir).await?;
+            all_other_generated_files.extend(result.other_generated_files);
+            all_other_generated_files.push(instance_dir.meta_path());
+            all_check_tasks.extend(result.check_tasks);
+            all_copy_tasks.extend(result.copy_tasks);
 
-            if let Some(command) = &version.exec_after {
+            if let Some(command) = &instance.exec_after {
                 exec_string_command(command).await?;
             }
 
-            info!("Finished generating version {}", &version.name);
+            info!("Finished generating instance {}", &unique_name);
         }
 
-        info!("Syncing {} entries", mapping.len());
-        debug!("Sync mapping (target->source): {mapping:?}");
-        let stats = sync_mapping(output_dir, &mapping).await?;
+        let deduped_check_tasks = files::dedup_check_tasks(all_check_tasks);
+        let deduped_copy_tasks = files::dedup_copy_tasks(all_copy_tasks);
         info!(
-            "Synced {} files (copied {}, deleted {})",
-            stats.total_files, stats.copied_files, stats.deleted_files
+            "Running {} deduplicated check tasks and {} deduplicated copy tasks",
+            deduped_check_tasks.len(),
+            deduped_copy_tasks.len()
         );
 
-        let manifest_path = get_manifest_path(output_dir);
-        version_manifest.save_to_file(&manifest_path).await?;
+        let mut keep_files: HashSet<PathBuf> = all_other_generated_files
+            .into_iter()
+            .collect::<HashSet<_>>();
+        keep_files.extend(deduped_check_tasks.iter().map(|task| task.path.clone()));
+        keep_files.extend(deduped_copy_tasks.iter().map(|task| task.target.clone()));
+
+        let check_progress: std::sync::Arc<dyn ProgressTracker> =
+            std::sync::Arc::new(TerminalProgressBar::new("Checking files"));
+        let download_tasks = files::get_download_tasks(deduped_check_tasks, check_progress).await?;
+
+        let download_progress = TerminalProgressBar::new("Downloading files");
+        download_progress.set_length(download_tasks.len() as u64);
+        files::download_files(
+            &client,
+            download_tasks,
+            std::sync::Arc::new(download_progress),
+        )
+        .await?;
+
+        let copy_progress: std::sync::Arc<dyn ProgressTracker> =
+            std::sync::Arc::new(TerminalProgressBar::new("Copying files"));
+        files::copy_files_if_different(deduped_copy_tasks, copy_progress).await?;
+
+        files::retain_only_files_and_parents(data_dir.as_path(), &keep_files).await?;
 
         if let Some(command) = &self.exec_after_all {
             exec_string_command(command).await?;

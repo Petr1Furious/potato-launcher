@@ -164,7 +164,7 @@ async fn get_libraries_entries(
                 }
                 check_download_entries.push(entry);
             } else {
-                sha1_urls.insert(entry.path.clone(), library.get_sha1_url());
+                sha1_urls.insert(entry.path.clone(), library.get_inferred_sha1_url()?);
                 check_download_entries.push(CheckEntry {
                     remote_sha1: None,
                     ..entry

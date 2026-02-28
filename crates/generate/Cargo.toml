@@ -17,4 +17,5 @@ async-trait.workspace = true
 url.workspace = true
 relative-path.workspace = true
 log.workspace = true
+rand.workspace = true
 serde-xml-rs = "0.8.2"

@@ -14,6 +14,11 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 launcher-auth = { path = "../crates/auth" }
+generate = { path = "../crates/generate" }
+instance = { path = "../crates/instance" }
+utils = { path = "../crates/utils" }
+url.workspace = true
+relative-path.workspace = true
 shell-words = "1.1.1"
 thiserror.workspace = true
 tokio.workspace = true

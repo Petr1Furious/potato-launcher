@@ -32,8 +32,7 @@ pub struct ForgeMavenMetadata {
 }
 
 impl ForgeMavenMetadata {
-    pub async fn fetch() -> anyhow::Result<Self> {
-        let client = Client::new();
+    pub async fn fetch(client: &Client) -> anyhow::Result<Self> {
         let response = client
             .get(FORGE_MAVEN_METADATA_URL)
             .send()
@@ -84,8 +83,7 @@ pub struct NeoforgeMavenMetadata {
 }
 
 impl NeoforgeMavenMetadata {
-    pub async fn fetch() -> anyhow::Result<Self> {
-        let client = Client::new();
+    pub async fn fetch(client: &Client) -> anyhow::Result<Self> {
         let response = client
             .get(NEOFORGE_MAVEN_METADATA_URL)
             .send()
@@ -145,8 +143,7 @@ pub struct ForgePromotions {
 }
 
 impl ForgePromotions {
-    pub async fn fetch() -> anyhow::Result<Self> {
-        let client = Client::new();
+    pub async fn fetch(client: &Client) -> anyhow::Result<Self> {
         let response = client
             .get(FORGE_PROMOTIONS_URL)
             .send()
@@ -241,13 +238,14 @@ pub enum ForgeError {
 }
 
 pub async fn get_forge_version(
+    client: &Client,
     minecraft_version: &str,
     loader_version: &Option<String>,
     loader: &Loader,
 ) -> anyhow::Result<String> {
     match loader {
         Loader::Forge => {
-            let forge_promotions = ForgePromotions::fetch().await?;
+            let forge_promotions = ForgePromotions::fetch(client).await?;
 
             let forge_version = match loader_version {
                 Some(version) => version.to_string(),
@@ -263,7 +261,7 @@ pub async fn get_forge_version(
                 }
             };
 
-            let forge_maven_metadata = ForgeMavenMetadata::fetch().await?;
+            let forge_maven_metadata = ForgeMavenMetadata::fetch(client).await?;
             if forge_maven_metadata.has_version(minecraft_version, &forge_version) {
                 return Ok(forge_version);
             }
@@ -273,7 +271,7 @@ pub async fn get_forge_version(
             }
         }
         Loader::Neoforge => {
-            let neoforge_maven_metadata = NeoforgeMavenMetadata::fetch().await?;
+            let neoforge_maven_metadata = NeoforgeMavenMetadata::fetch(client).await?;
 
             let neoforge_version = match loader_version {
                 Some(version) => version.to_string(),
@@ -450,35 +448,31 @@ pub async fn install_forge(
     Ok(id)
 }
 
-pub struct ForgeGenerator {
-    version_name: String,
-    vanilla_metadata: VersionMetadata,
+pub struct ForgeGenerator<'a> {
+    vanilla_metadata: &'a VersionMetadata,
     loader: Loader,
     loader_version: Option<String>,
 }
 
 pub struct GeneratorResult {
-    metadata: VersionMetadata,
-    extra_libs_paths: Vec<PathBuf>,
+    pub metadata: VersionMetadata,
+    pub extra_libs_copy_tasks: Vec<files::CopyTask>,
+    pub installer_work_dir: PathBuf,
 }
 
-impl ForgeGenerator {
+impl<'a> ForgeGenerator<'a> {
     pub fn new(
-        version_name: String,
-        vanilla_metadata: VersionMetadata,
+        vanilla_metadata: &'a VersionMetadata,
         loader: Loader,
         loader_version: Option<String>,
     ) -> Self {
         Self {
-            version_name,
             vanilla_metadata,
             loader,
             loader_version,
         }
     }
-}
 
-impl ForgeGenerator {
     pub async fn generate(
         &self,
         client: &Client,
@@ -490,12 +484,22 @@ impl ForgeGenerator {
         let work_data_dir = DataDir::new(work_dir.to_path_buf());
 
         info!(
-            "Generating {} instance \"{}\", minecraft version {}",
-            self.loader, self.version_name, minecraft_version
+            "Generating {} {}, minecraft version {}",
+            self.loader,
+            self.loader_version
+                .as_ref()
+                .map(|version| version.as_str())
+                .unwrap_or("<auto>"),
+            minecraft_version
         );
 
-        let forge_version =
-            get_forge_version(&minecraft_version, &self.loader_version, &self.loader).await?;
+        let forge_version = get_forge_version(
+            client,
+            &minecraft_version,
+            &self.loader_version,
+            &self.loader,
+        )
+        .await?;
 
         info!("Using {} version {}", self.loader, &forge_version);
 
@@ -517,7 +521,7 @@ impl ForgeGenerator {
         forge_metadata.save(&work_data_dir).await?;
 
         let installer_libraries_dir = LibrariesDir::root().to_fs(&installer_data_dir);
-        let extra_libs_paths = files::get_files_in_dir(&installer_libraries_dir)?
+        let installer_extra_libs_paths = files::get_files_in_dir(&installer_libraries_dir)?
             .into_iter()
             .filter_map(|path| {
                 let extension = path.extension().and_then(|ext| ext.to_str());
@@ -535,31 +539,33 @@ impl ForgeGenerator {
 
         info!(
             "Found {} extra {} libs",
-            extra_libs_paths.len(),
+            installer_extra_libs_paths.len(),
             self.loader
         );
-        debug!("Extra {} libs: {:?}", self.loader, extra_libs_paths);
+        debug!(
+            "Extra {} libs: {:?}",
+            self.loader, installer_extra_libs_paths
+        );
 
-        // copy extra forge libs to work dir
-        let libraries_dir = LibrariesDir::root().to_fs(&work_data_dir);
-        let extra_libs_paths = extra_libs_paths
-            .into_iter()
-            .map(|lib_path| {
-                let lib_dest = libraries_dir.join(&lib_path);
-                std::fs::create_dir_all(lib_dest.parent().unwrap())?;
-                std::fs::copy(installer_libraries_dir.join(&lib_path), &lib_dest)?;
-                Ok(lib_dest)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+        // collect extra forge libs copy tasks
+        let libraries_dir = LibrariesDir::root().to_fs(output_dir);
+        let mut extra_libs_copy_tasks = Vec::with_capacity(installer_extra_libs_paths.len());
+        for lib_path in installer_extra_libs_paths {
+            extra_libs_copy_tasks.push(files::CopyTask {
+                source: installer_libraries_dir.join(&lib_path),
+                target: libraries_dir.join(&lib_path),
+            });
+        }
 
         info!(
-            "{} version \"{}\" generated",
-            self.loader, self.version_name
+            "{} {} for {} generated",
+            self.loader, &forge_version, &minecraft_version
         );
 
         Ok(GeneratorResult {
             metadata: forge_metadata,
-            extra_libs_paths,
+            extra_libs_copy_tasks,
+            installer_work_dir,
         })
     }
 }

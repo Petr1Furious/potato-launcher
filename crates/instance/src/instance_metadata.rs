@@ -4,27 +4,30 @@ use relative_path::RelativePathBuf;
 use serde::{Deserialize, Serialize};
 
 use launcher_auth::providers::AuthProviderConfig;
+use url::Url;
 use utils::{
     files::{self, CheckTask},
-    paths::{DataDir, InstanceDirFS, VersionsDir},
+    paths::{BaseUrl, DataDir, InstanceDirFS, InstancesDir, VersionsDir},
     progress,
+    utils::hash_struct,
 };
 
 use crate::{
+    assets::AssetIndex,
     os::{get_os_name, get_system_arch},
     overrides::with_overrides,
 };
 
 use super::{
     manifest::InstanceManifestEntry,
-    version_metadata::{Arguments, AssetIndex, Library, VersionMetadata},
+    version_metadata::{Arguments, Library, VersionMetadata},
 };
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Object {
     pub path: RelativePathBuf,
     pub sha1: String,
-    pub url: String,
+    pub url: Url,
 }
 
 fn yes() -> bool {
@@ -75,7 +78,7 @@ pub struct InstanceMetadata {
     /// base URL for assets
     /// if not set, the launcher will download assets from Mojang servers
     #[serde(default)]
-    pub(crate) resources_url_base: Option<String>,
+    pub(crate) resources_url_base: Option<Url>,
 
     /// extra (neo)forge libraries to include with the instance
     /// should be empty when not using (neo)forge
@@ -96,7 +99,9 @@ pub struct InstanceMetadata {
     pub(crate) overrides_applied: bool,
 }
 
-const DEFAULT_RESOURCES_URL_BASE: &str = "https://resources.download.minecraft.net";
+lazy_static::lazy_static! {
+    static ref DEFAULT_RESOURCES_URL_BASE: Url = Url::parse("https://resources.download.minecraft.net").unwrap();
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum InstanceMetadataError {
@@ -113,7 +118,7 @@ impl InstanceMetadata {
         name: String,
         auth_backend: Option<AuthProviderConfig>,
         include: Vec<Include>,
-        resources_url_base: Option<String>,
+        resources_url_base: Option<Url>,
         extra_forge_libs: Vec<Library>,
         default_xmx: Option<String>,
         versions: Vec<VersionMetadata>,
@@ -174,6 +179,26 @@ impl InstanceMetadata {
             .ok_or_else(|| InstanceMetadataError::MissingVersionMetadata.into())
     }
 
+    pub fn get_manifest_entry(
+        &self,
+        unique_name: &str,
+        base_url: &BaseUrl,
+    ) -> anyhow::Result<InstanceManifestEntry> {
+        Ok(InstanceManifestEntry {
+            name: self.name.clone(),
+            url: InstancesDir::root()
+                .instance_dir(unique_name)
+                .meta_path()
+                .to_url(base_url),
+            sha1: hash_struct(&self)?,
+            versions: self
+                .versions
+                .iter()
+                .map(|metadata| metadata.get_metadata_info(base_url))
+                .collect::<Result<Vec<_>, anyhow::Error>>()?,
+        })
+    }
+
     pub async fn save(&self, instance_dir: &InstanceDirFS) -> anyhow::Result<()> {
         let path = instance_dir.meta_path();
         let serialized = serde_json::to_string(self)?;
@@ -182,10 +207,10 @@ impl InstanceMetadata {
         Ok(())
     }
 
-    pub fn get_resources_url_base(&self) -> &str {
+    pub fn get_resources_url_base(&self) -> &Url {
         self.resources_url_base
-            .as_deref()
-            .unwrap_or(DEFAULT_RESOURCES_URL_BASE)
+            .as_ref()
+            .unwrap_or(&DEFAULT_RESOURCES_URL_BASE)
     }
 
     pub fn get_java_version(&self) -> String {
@@ -201,17 +226,17 @@ impl InstanceMetadata {
     }
 
     pub fn get_client_check_task(&self, data_dir: &DataDir) -> anyhow::Result<CheckTask> {
-        let version = self
+        let metadata = self
             .versions
             .first()
             .ok_or(InstanceMetadataError::MissingVersionMetadata)?;
 
-        if let Some(downloads) = version.downloads.as_ref()
+        if let Some(downloads) = metadata.downloads.as_ref()
             && let Some(client) = downloads.client.as_ref()
         {
             Ok(client.get_check_task(
                 &VersionsDir::root()
-                    .client_jar_path(self.get_id())
+                    .client_jar_path(&metadata.id)
                     .to_fs(data_dir),
             ))
         } else {
@@ -235,7 +260,7 @@ impl InstanceMetadata {
                 if self.overrides_applied {
                     metadata.libraries.clone()
                 } else {
-                    with_overrides(metadata.libraries.clone(), &metadata.id)
+                    with_overrides(&metadata.libraries, &metadata.id)
                 }
             });
 
@@ -255,12 +280,20 @@ impl InstanceMetadata {
             .collect()
     }
 
-    pub fn get_id(&self) -> &str {
-        &self.versions.last().unwrap().id
+    pub fn get_id(&self) -> anyhow::Result<&str> {
+        Ok(&self
+            .versions
+            .last()
+            .ok_or(InstanceMetadataError::MissingVersionMetadata)?
+            .id)
     }
 
-    pub fn get_parent_id(&self) -> &str {
-        &self.versions.first().unwrap().id
+    pub fn get_parent_id(&self) -> anyhow::Result<&str> {
+        Ok(&self
+            .versions
+            .first()
+            .ok_or(InstanceMetadataError::MissingVersionMetadata)?
+            .id)
     }
 
     pub fn get_asset_index(&self) -> anyhow::Result<&AssetIndex> {

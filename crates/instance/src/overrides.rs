@@ -61,9 +61,10 @@ lazy_static::lazy_static! {
     };
 }
 
-fn with_mojang_patches(libraries: Vec<Library>) -> Vec<Library> {
+fn with_mojang_patches(libraries: &[Library]) -> Vec<Library> {
     let mut result = vec![];
-    for mut library in libraries {
+    for library in libraries {
+        let mut library = library.clone();
         for patches in &*LIBRARY_PATCHES {
             if patches.match_.contains(&library.get_full_name()) {
                 if let Some(patch) = &patches.override_ {
@@ -87,7 +88,7 @@ fn with_mojang_patches(libraries: Vec<Library>) -> Vec<Library> {
                 }
             }
         }
-        result.push(library.clone());
+        result.push(library);
     }
 
     info!("Processed {} libraries with mojang overrides", result.len());
@@ -97,7 +98,7 @@ fn with_mojang_patches(libraries: Vec<Library>) -> Vec<Library> {
 
 /// Apply overrides for the libraries.
 /// This is used to add compatibility for some systems (e.g. older minecraft versions on arm macos).
-pub fn with_overrides(libraries: Vec<Library>, version_id: &str) -> Vec<Library> {
+pub fn with_overrides(libraries: &[Library], version_id: &str) -> Vec<Library> {
     let main_version = LWJGL_VERSION_MATCHES.get(version_id);
     if let Some(main_version) = main_version {
         info!("Found main lwjgl version: {main_version}");

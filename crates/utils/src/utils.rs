@@ -1,7 +1,32 @@
+use std::collections::HashSet;
+
+use serde::Serialize;
+use sha1::Digest as _;
+use sha1::Sha1;
 use url::Url;
 
 lazy_static::lazy_static! {
     pub static ref VANILLA_MANIFEST_URL: Url = Url::parse("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").unwrap();
+}
+
+pub fn get_unique_name(existing_names: &HashSet<String>, name_base: &str) -> String {
+    if !existing_names.contains(name_base) {
+        return name_base.to_string();
+    }
+    let mut num = 1;
+    loop {
+        let candidate = format!("{name_base} ({num})");
+        if !existing_names.contains(&candidate) {
+            return candidate;
+        }
+        num += 1;
+    }
+}
+
+pub fn hash_struct(s: &impl Serialize) -> anyhow::Result<String> {
+    let mut hasher = Sha1::new();
+    hasher.update(serde_json::to_string(s)?);
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 pub fn is_connect_error(e: &anyhow::Error) -> bool {

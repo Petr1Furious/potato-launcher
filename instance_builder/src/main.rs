@@ -1,14 +1,31 @@
-mod generate;
 mod progress;
 mod spec;
 mod utils;
 
 use clap::{Arg, Command};
-use shared::logs::setup_logger;
+use env_logger::Env;
 use spec::Spec;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::fs::OpenOptions;
+use std::path::PathBuf;
 use tokio::runtime::Runtime;
+
+struct TeeWriter {
+    file: std::fs::File,
+}
+
+impl std::io::Write for TeeWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let _ = std::io::stderr().write_all(buf);
+        self.file.write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let _ = std::io::stderr().flush();
+        self.file.flush()
+    }
+}
 
 fn parse_path(v: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(v);
@@ -17,15 +34,6 @@ fn parse_path(v: &str) -> anyhow::Result<PathBuf> {
     } else {
         Err(anyhow::Error::msg("The specified file does not exist"))
     }
-}
-
-const LOGS_FILENAME: &str = "builder.log";
-
-pub fn get_logs_path(logs_dir: &Path) -> PathBuf {
-    if !logs_dir.exists() {
-        std::fs::create_dir_all(logs_dir).expect("Failed to create logs directory");
-    }
-    logs_dir.join(LOGS_FILENAME)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -73,7 +81,16 @@ fn main() -> anyhow::Result<()> {
     let output_dir_path = output_dir.clone();
     let work_dir_path = work_dir.clone();
 
-    setup_logger(&get_logs_path(&work_dir));
+    std::fs::create_dir_all(&work_dir_path)?;
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(work_dir_path.join("builder.log"))?;
+    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+        .target(env_logger::Target::Pipe(Box::new(TeeWriter {
+            file: log_file,
+        })))
+        .init();
 
     let rt = Runtime::new().unwrap();
     let spec = rt.block_on(Spec::from_file(&spec_file_path))?;

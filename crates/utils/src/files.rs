@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::{fs, io};
 use url::Url;
@@ -68,7 +69,7 @@ pub async fn hash_file(path: &Path) -> anyhow::Result<String> {
 
 pub async fn hash_files<P>(
     files: &[P],
-    progress_bar: Arc<dyn ProgressTracker + Send + Sync>,
+    progress_bar: Arc<dyn ProgressTracker>,
 ) -> anyhow::Result<Vec<String>>
 where
     P: AsRef<Path>,
@@ -129,6 +130,56 @@ pub struct DownloadTask {
     pub path: PathBuf,
 }
 
+#[derive(Debug)]
+pub struct CopyTask {
+    pub source: PathBuf,
+    pub target: PathBuf,
+}
+
+/// Deduplicate check tasks by destination path while preserving order.
+pub fn dedup_check_tasks(tasks: Vec<CheckTask>) -> Vec<CheckTask> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        if seen.insert(task.path.clone()) {
+            deduped.push(task);
+        }
+    }
+    deduped
+}
+
+/// Deduplicate copy tasks by destination path while preserving order.
+pub fn dedup_copy_tasks(tasks: Vec<CopyTask>) -> Vec<CopyTask> {
+    let mut seen = HashSet::new();
+    let mut deduped = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        if seen.insert(task.target.clone()) {
+            deduped.push(task);
+        }
+    }
+    deduped
+}
+
+fn temp_path_for(target_path: &Path) -> PathBuf {
+    let mut tmp_path = target_path.as_os_str().to_owned();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    tmp_path.push(format!(".tmp.{}.{}", std::process::id(), nonce));
+    PathBuf::from(tmp_path)
+}
+
+async fn atomic_replace_file(tmp_path: &Path, target_path: &Path) -> anyhow::Result<()> {
+    match fs::remove_file(target_path).await {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    fs::rename(tmp_path, target_path).await?;
+    Ok(())
+}
+
 pub async fn get_download_task(check_task: &CheckTask) -> anyhow::Result<Option<DownloadTask>> {
     match fs::metadata(&check_task.path).await {
         Ok(metadata) => {
@@ -158,7 +209,7 @@ pub enum CheckTasksError {
 
 pub async fn get_download_tasks(
     check_tasks: Vec<CheckTask>,
-    progress_bar: Arc<dyn ProgressTracker + Send + Sync>,
+    progress_bar: Arc<dyn ProgressTracker>,
 ) -> anyhow::Result<Vec<DownloadTask>> {
     let mut to_hash = Vec::new();
     for task in &check_tasks {
@@ -220,17 +271,26 @@ pub async fn download_file(client: &reqwest::Client, task: &DownloadTask) -> any
     if let Some(parent) = task.path.parent() {
         fs::create_dir_all(parent).await?;
     }
+    let tmp_path = temp_path_for(&task.path);
     let response = client
         .get(task.url.as_str())
         .send()
         .await?
         .error_for_status()?;
-    let mut file = fs::File::create(&task.path).await?;
+    let mut file = fs::File::create(&tmp_path).await?;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk).await?;
+        match chunk {
+            Ok(chunk) => file.write_all(&chunk).await?,
+            Err(err) => {
+                let _ = fs::remove_file(&tmp_path).await;
+                return Err(err.into());
+            }
+        }
     }
+    file.flush().await?;
+    drop(file);
+    atomic_replace_file(&tmp_path, &task.path).await?;
     Ok(())
 }
 
@@ -249,7 +309,7 @@ where
 pub async fn download_files(
     client: &reqwest::Client,
     download_tasks: Vec<DownloadTask>,
-    progress_bar: Arc<dyn ProgressTracker + Send + Sync>,
+    progress_bar: Arc<dyn ProgressTracker>,
 ) -> anyhow::Result<()> {
     progress_bar.set_length(download_tasks.len() as u64);
 
@@ -277,10 +337,184 @@ pub async fn download_files(
     Ok(())
 }
 
+pub async fn copy_files_if_different(
+    copy_tasks: Vec<CopyTask>,
+    progress_bar: Arc<dyn ProgressTracker>,
+) -> anyhow::Result<()> {
+    progress_bar.set_length(copy_tasks.len() as u64);
+
+    const MAX_CONCURRENT_TASKS: usize = 8;
+
+    let mut tasks = stream::iter(
+        copy_tasks
+            .into_iter()
+            .map(|task| async move { copy_file_if_different(&task.source, &task.target).await }),
+    )
+    .buffer_unordered(MAX_CONCURRENT_TASKS);
+
+    while let Some(result) = tasks.next().await {
+        match result {
+            Ok(_) => {
+                progress_bar.inc(1);
+            }
+            Err(e) => {
+                progress_bar.finish();
+                return Err(e);
+            }
+        }
+    }
+
+    progress_bar.finish();
+    Ok(())
+}
+
 pub async fn read_file_parsed<T>(path: &Path) -> anyhow::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
     let bytes = fs::read(path).await?;
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+pub async fn write_file_json<T>(path: &Path, value: &T) -> anyhow::Result<()>
+where
+    T: serde::Serialize,
+{
+    let content = serde_json::to_string(value)?;
+    fs::write(path, content).await?;
+    Ok(())
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum CopyFileError {
+    #[error("Source path is not a file: {0}")]
+    SourceNotFile(PathBuf),
+}
+
+/// Compare two files by size+sha1 and atomically replace target from source when different.
+/// Returns true when replacement happened.
+/// This function will return an error if target is a directory.
+pub async fn copy_file_if_different(source: &Path, target: &Path) -> anyhow::Result<bool> {
+    let source_meta = fs::metadata(source).await?;
+    if !source_meta.is_file() {
+        return Err(CopyFileError::SourceNotFile(source.to_path_buf()).into());
+    }
+
+    let same = match fs::metadata(target).await {
+        Ok(target_meta) => {
+            if !target_meta.is_file() || source_meta.len() != target_meta.len() {
+                false
+            } else {
+                let mut source_file = fs::File::open(source).await?;
+                let mut target_file = fs::File::open(target).await?;
+                let mut source_buf = [0u8; 64 * 1024];
+                let mut target_buf = [0u8; 64 * 1024];
+
+                loop {
+                    let source_n = source_file.read(&mut source_buf).await?;
+                    let target_n = target_file.read(&mut target_buf).await?;
+                    if source_n != target_n {
+                        break false;
+                    }
+                    if source_n == 0 {
+                        break true;
+                    }
+                    if source_buf[..source_n] != target_buf[..target_n] {
+                        break false;
+                    }
+                }
+            }
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => false,
+        Err(err) => return Err(err.into()),
+    };
+    if same {
+        return Ok(false);
+    }
+
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    let tmp_path = temp_path_for(target);
+    fs::copy(source, &tmp_path).await?;
+    atomic_replace_file(&tmp_path, target).await?;
+    Ok(true)
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum RetainPathsError {
+    #[error("Target path is not a directory: {0}")]
+    TargetNotDirectory(PathBuf),
+    #[error("Path is outside target dir: {0}")]
+    PathOutsideTargetDir(PathBuf),
+}
+
+/// Remove every file under target_dir not present in `keep_files`.
+/// Then remove directories that are not parents of any kept file.
+pub async fn retain_only_files_and_parents(
+    target_dir: &Path,
+    keep_files: &HashSet<PathBuf>,
+) -> anyhow::Result<()> {
+    if !target_dir.exists() {
+        return Ok(());
+    }
+    if !target_dir.is_dir() {
+        return Err(RetainPathsError::TargetNotDirectory(target_dir.to_path_buf()).into());
+    }
+
+    let mut keep_rel_files = HashSet::with_capacity(keep_files.len());
+    let mut keep_rel_dirs = HashSet::new();
+    keep_rel_dirs.insert(PathBuf::new());
+
+    for keep_file in keep_files {
+        let rel = keep_file
+            .strip_prefix(target_dir)
+            .map_err(|_| RetainPathsError::PathOutsideTargetDir(keep_file.clone()))?
+            .to_path_buf();
+        keep_rel_files.insert(rel.clone());
+
+        if let Some(parent) = rel.parent() {
+            let mut cur = parent;
+            loop {
+                keep_rel_dirs.insert(cur.to_path_buf());
+                if cur.as_os_str().is_empty() {
+                    break;
+                }
+                match cur.parent() {
+                    Some(next) => cur = next,
+                    None => break,
+                }
+            }
+        }
+    }
+
+    for entry in WalkDir::new(target_dir)
+        .contents_first(true)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        let path = entry.path();
+        if path == target_dir {
+            continue;
+        }
+
+        let rel = path.strip_prefix(target_dir)?.to_path_buf();
+        if entry.file_type().is_dir() {
+            if !keep_rel_dirs.contains(&rel) {
+                match fs::remove_dir(path).await {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == ErrorKind::NotFound => {}
+                    Err(err) => return Err(err.into()),
+                }
+            }
+        } else if !keep_rel_files.contains(&rel) {
+            match fs::remove_file(path).await {
+                Ok(()) => {}
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+        }
+    }
+
+    Ok(())
 }
