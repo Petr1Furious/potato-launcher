@@ -1,3 +1,4 @@
+use launcher_auth::{Username, storage::AuthProviderId};
 use log::warn;
 use serde::{Deserialize, Serialize};
 use shared::paths::get_logs_dir;
@@ -9,8 +10,8 @@ use crate::{constants, lang::Lang, utils::get_data_dir};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct AuthProfile {
-    pub auth_backend_id: String,
-    pub username: String,
+    pub auth_backend_id: AuthProviderId,
+    pub username: Username,
 }
 
 fn provide_default_version_manifest_url() -> String {

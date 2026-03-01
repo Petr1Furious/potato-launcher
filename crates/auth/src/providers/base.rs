@@ -72,23 +72,7 @@ impl Default for AuthProviderConfig {
 }
 
 impl AuthProviderConfig {
-    pub fn get_id(&self) -> String {
-        match self {
-            AuthProviderConfig::Telegram(auth_data) => {
-                format!("telegram_{}", auth_data.auth_base_url)
-            }
-            AuthProviderConfig::ElyBy(auth_data) => {
-                format!(
-                    "elyby_{}_{}_{}",
-                    auth_data.client_id, auth_data.client_secret, auth_data.launcher_name
-                )
-            }
-            AuthProviderConfig::Microsoft(_) => "microsoft".to_string(),
-            AuthProviderConfig::Offline(_) => "offline".to_string(),
-        }
-    }
-
-    pub fn from_id(id: &str) -> Self {
+    pub fn legacy_from_id(id: &str) -> Self {
         let mut iter = id.split('_');
         let provider_name = iter.next().unwrap_or("");
         let args: Vec<&str> = iter.collect();

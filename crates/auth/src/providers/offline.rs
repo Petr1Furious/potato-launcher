@@ -35,7 +35,7 @@ impl AuthProvider for OfflineAuthProvider {
         let generated_uuid = Uuid::new_v3(&namespace, nickname.as_bytes());
 
         Ok(AuthState::Success(UserInfo {
-            uuid: generated_uuid.to_string(),
+            uuid: generated_uuid,
             username: nickname.to_string(),
         }))
     }

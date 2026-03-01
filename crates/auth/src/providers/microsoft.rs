@@ -12,6 +12,7 @@ use oauth2::{
 };
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,7 +32,7 @@ pub struct MicrosoftAuthProvider {}
 
 #[derive(Deserialize)]
 struct MinecraftProfileResponse {
-    id: String,
+    id: Uuid,
     name: String,
 }
 

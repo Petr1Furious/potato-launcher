@@ -2,14 +2,19 @@ use async_trait::async_trait;
 use egui::ComboBox;
 use egui::RichText;
 use egui::Window;
+use egui::ahash::HashSet;
 use image::Luma;
 use launcher_auth::AccountData;
+use launcher_auth::Username;
 use launcher_auth::flow::{AuthMessage, AuthMessageProvider, perform_auth};
 use launcher_auth::providers::{
     AuthProviderConfig, AuthProviderType, ElyByAuthProvider, MicrosoftAuthProvider,
     OfflineAuthProvider, TGAuthProvider,
 };
-use launcher_auth::storage::{AccountDataSource, AuthStorage, StorageEntry};
+use launcher_auth::storage::AccountKey;
+use launcher_auth::storage::AuthProviderId;
+use launcher_auth::storage::StorageAccountEntry;
+use launcher_auth::storage::AuthStorage;
 use log::error;
 use qrcode::QrCode;
 use shared::paths::get_auth_data_path;
@@ -106,6 +111,7 @@ pub struct AuthState {
     auth_task: Option<BackgroundTask<AuthResult>>,
     auth_message_provider: Arc<EguiAuthMessageProvider>,
     auth_storage: AuthStorage,
+    fresh_accounts: HashSet<AccountKey>,
 
     show_add_account: bool,
 
@@ -129,6 +135,7 @@ impl AuthState {
             auth_task: None,
             auth_message_provider: Arc::new(EguiAuthMessageProvider::new(ctx)),
             auth_storage: AuthStorage::load(auth_data_path),
+            fresh_accounts: HashSet::new(),
 
             show_add_account: false,
 
@@ -157,12 +164,13 @@ impl AuthState {
                     if result.status == AuthStatus::Authorized
                         && let Some(auth_data) = result.account_data
                     {
+                        let (provider_id, username) =
+                            self.auth_storage.insert_account(&result.auth_provider, auth_data);
+                        self.fresh_accounts.insert((provider_id, username));
                         config.set_selected_auth_profile(AuthProfile {
-                            auth_backend_id: result.auth_provider.get_id(),
-                            username: auth_data.user_info.username.clone(),
+                            auth_backend_id: provider_id,
+                            username,
                         });
-
-                        self.auth_storage.insert(&result.auth_provider, auth_data);
                         self.show_add_account = false;
                     }
 
@@ -347,10 +355,17 @@ impl AuthState {
         self.show_add_account = show_add_account;
     }
 
-    fn get_selected_storage_entry(&self, config: &Config) -> Option<StorageEntry> {
+    fn get_selected_storage_entry(&self, config: &Config) -> Option<&StorageAccountEntry> {
         let auth_profile = config.get_selected_auth_profile()?;
         self.auth_storage
-            .get_by_id(&auth_profile.auth_backend_id, &auth_profile.username)
+            .get_account(auth_profile.auth_backend_id, &auth_profile.username)
+    }
+
+    fn is_account_fresh(&self, storage_entry: &StorageAccountEntry) -> bool {
+        self.fresh_accounts.contains(&(
+            storage_entry.provider_id,
+            storage_entry.auth_data.user_info.username,
+        ))
     }
 
     fn on_instance_changed(&mut self, config: &mut Config, runtime: &Runtime, ctx: &egui::Context) {
@@ -361,7 +376,7 @@ impl AuthState {
         if let Some(profile) = &auth_profile
             && self
                 .auth_storage
-                .get_by_id(&profile.auth_backend_id, &profile.username)
+                .get_account(profile.auth_backend_id, &profile.username)
                 .is_none()
         {
             config.clear_selected_auth_profile();
@@ -369,8 +384,9 @@ impl AuthState {
         }
 
         let storage_entry = self.get_selected_storage_entry(config);
-        if let Some(storage_entry) = &storage_entry {
-            if storage_entry.source == AccountDataSource::Persistent && self.auth_task.is_none() {
+        if let Some(storage_entry) = storage_entry {
+            let is_fresh = self.is_account_fresh(storage_entry);
+            if !is_fresh && self.auth_task.is_none() {
                 self.auth_message_provider = Arc::new(EguiAuthMessageProvider::new(ctx));
                 self.auth_task = Some(authenticate(
                     runtime,
@@ -380,7 +396,7 @@ impl AuthState {
                     ctx,
                 ));
             }
-            if storage_entry.source == AccountDataSource::Runtime {
+            if is_fresh {
                 self.auth_status = AuthStatus::Authorized;
             }
         }
@@ -401,7 +417,7 @@ impl AuthState {
             && let Some(auth_profile) = auth_profile.take()
         {
             self.auth_storage
-                .delete_by_id(&auth_profile.auth_backend_id, &auth_profile.username);
+                .delete_account(auth_profile.auth_backend_id, &auth_profile.username);
             config.clear_selected_auth_profile();
         }
 
@@ -433,12 +449,12 @@ impl AuthState {
         }
     }
 
-    fn get_account_display_name(lang: Lang, id: &String, username: &String) -> String {
-        let provider_config = AuthProviderConfig::from_id(id);
+    fn get_account_display_name(&self, lang: Lang, provider_id: AuthProviderId, username: &Username) -> String {
+        let provider_config = self.auth_storage.get_provider(provider_id).unwrap();
         let provider_name = AuthState::get_type_display_name(lang, provider_config.get_type());
 
         let mut hasher = DefaultHasher::new();
-        id.hash(&mut hasher);
+        provider_id.hash(&mut hasher);
         let hash = hasher.finish();
 
         let hex = format!("{hash:X}");
@@ -496,7 +512,7 @@ impl AuthState {
         {
             let entries = self
                 .auth_storage
-                .get_id_nicknames(&instance_auth_backend.get_id());
+                .get_provider_usernames(instance_auth_backend.get_id());
             if let Some(nickname) = entries.first() {
                 let auth_profile_value = AuthProfile {
                     auth_backend_id: instance_auth_backend.get_id(),
@@ -517,7 +533,7 @@ impl AuthState {
         if let Some(instance_auth_provider) = instance_auth_provider {
             let mut entries = self
                 .auth_storage
-                .get_id_nicknames(&instance_auth_provider.get_id());
+                .get_provider_usernames(instance_auth_provider.get_id());
 
             if !entries.is_empty() {
                 self.render_buttons(ui, config, runtime, Some(instance_auth_provider.clone()));
@@ -592,7 +608,7 @@ impl AuthState {
         } else {
             self.render_buttons(ui, config, runtime, instance_auth_provider);
 
-            let mut all_entries = self.auth_storage.get_all_entries();
+            let mut all_entries = self.auth_storage.account_keys();
 
             let mut selected_account = auth_profile
                 .as_ref()
@@ -612,11 +628,11 @@ impl AuthState {
                         return;
                     }
                     all_entries.sort();
-                    for (id, username) in all_entries {
+                    for (provider_id, username) in all_entries {
                         ui.selectable_value(
                             &mut selected_account,
-                            Some((id.clone(), username.clone())),
-                            Self::get_account_display_name(lang, &id, &username),
+                            Some((provider_id.clone(), username.clone())),
+                            self.get_account_display_name(lang, provider_id, &username),
                         );
                     }
                 });
@@ -642,18 +658,14 @@ impl AuthState {
         let profile = config.get_selected_auth_profile()?;
         if let Some(storage_entry) = self
             .auth_storage
-            .get_by_id(&profile.auth_backend_id, &profile.username)
+            .get_account(profile.auth_backend_id, &profile.username)
         {
-            match storage_entry.source {
-                AccountDataSource::Runtime => {
-                    return Some(storage_entry.auth_data);
-                }
-                AccountDataSource::Persistent => {
-                    if self.auth_status == AuthStatus::AuthorizeErrorOffline {
-                        return Some(storage_entry.auth_data); // allow playing with an existing account when offline
-                    }
-                    return None;
-                }
+            if self.is_account_fresh(storage_entry) {
+                return Some(storage_entry.auth_data);
+            } else if self.auth_status == AuthStatus::AuthorizeErrorOffline {
+                return Some(storage_entry.auth_data); // allow playing with an existing account when offline
+            } else {
+                return None;
             }
         }
         None

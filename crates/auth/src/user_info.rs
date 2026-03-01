@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+pub type Username = String;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct UserInfo {
-    pub uuid: String,
-    pub username: String,
+    pub uuid: Uuid,
+    pub username: Username,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
