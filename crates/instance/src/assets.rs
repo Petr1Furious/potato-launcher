@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use utils::{
     files::{self, CheckTask},
-    paths::{AssetsDir, BaseUrl, DataDir},
+    paths::{AssetsDir, DataDir, ResourcesUrlBase},
 };
 
 use reqwest::Client;
@@ -63,7 +63,7 @@ impl AssetsMetadata {
     pub fn get_check_tasks(
         &self,
         data_dir: &DataDir,
-        download_server_base: &BaseUrl,
+        resources_url_base: &ResourcesUrlBase,
         check_hashes: bool,
     ) -> anyhow::Result<Vec<CheckTask>> {
         let mut check_tasks = vec![];
@@ -76,7 +76,7 @@ impl AssetsMetadata {
                         .assets_object_dir()
                         .object_path(&object.hash);
                     Ok(CheckTask {
-                        url: rel_path.to_url(download_server_base),
+                        url: resources_url_base.object_url(&object.hash)?,
                         path: rel_path.to_fs(data_dir),
                         remote_sha1: if check_hashes {
                             Some(object.hash.clone())

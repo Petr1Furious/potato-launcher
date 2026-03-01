@@ -1,5 +1,5 @@
 use super::version_metadata::{Library, LibraryDownloads, Rule};
-use log::info;
+use log::debug;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
@@ -68,7 +68,7 @@ fn with_mojang_patches(libraries: &[Library]) -> Vec<Library> {
         for patches in &*LIBRARY_PATCHES {
             if patches.match_.contains(&library.get_full_name()) {
                 if let Some(patch) = &patches.override_ {
-                    info!("Modifying library: {}", library.get_full_name());
+                    debug!("Modifying library: {}", library.get_full_name());
                     if let Some(downloads) = &patch.downloads {
                         library.downloads = Some(downloads.clone());
                     }
@@ -80,7 +80,7 @@ fn with_mojang_patches(libraries: &[Library]) -> Vec<Library> {
                     }
                 }
                 if let Some(additional_libraries) = &patches.additional_libraries {
-                    info!(
+                    debug!(
                         "Adding additional libraries for {}",
                         library.get_full_name()
                     );
@@ -91,7 +91,7 @@ fn with_mojang_patches(libraries: &[Library]) -> Vec<Library> {
         result.push(library);
     }
 
-    info!("Processed {} libraries with mojang overrides", result.len());
+    debug!("Processed {} libraries with mojang overrides", result.len());
 
     result
 }
@@ -101,9 +101,9 @@ fn with_mojang_patches(libraries: &[Library]) -> Vec<Library> {
 pub fn with_overrides(libraries: &[Library], version_id: &str) -> Vec<Library> {
     let main_version = LWJGL_VERSION_MATCHES.get(version_id);
     if let Some(main_version) = main_version {
-        info!("Found main lwjgl version: {main_version}");
+        debug!("Found main lwjgl version: {main_version}");
     } else {
-        info!("No main lwjgl version found");
+        debug!("No main lwjgl version found");
     }
 
     let libraries = with_mojang_patches(libraries);
@@ -121,7 +121,7 @@ pub fn with_overrides(libraries: &[Library], version_id: &str) -> Vec<Library> {
 
         for override_ in &LIBRARY_OVERRIDES.overrides {
             if &override_.version == main_version {
-                info!("Adding override libraries for version {main_version}");
+                debug!("Adding override libraries for version {main_version}");
                 result.extend(override_.libraries.clone());
             }
         }
@@ -129,7 +129,7 @@ pub fn with_overrides(libraries: &[Library], version_id: &str) -> Vec<Library> {
         result = libraries;
     }
 
-    info!("Processed {} libraries with overrides", result.len());
+    debug!("Processed {} libraries with overrides", result.len());
 
     result
 }

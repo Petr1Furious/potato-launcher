@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;
 use utils::{
-    files,
+    files::{self, CopyTask},
     java::{download_java, get_java},
     paths::{DataDir, LibrariesDir, VersionsDir},
     progress,
@@ -456,7 +456,8 @@ pub struct ForgeGenerator<'a> {
 
 pub struct GeneratorResult {
     pub metadata: VersionMetadata,
-    pub extra_libs_copy_tasks: Vec<files::CopyTask>,
+    pub extra_libs_copy_tasks: Vec<CopyTask>,
+    pub metadata_copy_task: CopyTask,
     pub installer_work_dir: PathBuf,
 }
 
@@ -480,8 +481,6 @@ impl<'a> ForgeGenerator<'a> {
         work_dir: &Path,
     ) -> anyhow::Result<GeneratorResult> {
         let minecraft_version = self.vanilla_metadata.id.clone();
-
-        let work_data_dir = DataDir::new(work_dir.to_path_buf());
 
         info!(
             "Generating {} {}, minecraft version {}",
@@ -513,9 +512,14 @@ impl<'a> ForgeGenerator<'a> {
 
         let installer_data_dir = DataDir::new(installer_work_dir.to_path_buf());
 
-        info!("Copying version metadata");
+        info!("Reading forge version metadata");
         let forge_metadata = VersionMetadata::read_local(&installer_data_dir, &id).await?;
-        forge_metadata.save(&work_data_dir).await?;
+
+        let metadata_path = VersionsDir::root().metadata_path(&id);
+        let metadata_copy_task = CopyTask {
+            source: metadata_path.to_fs(&installer_data_dir),
+            target: metadata_path.to_fs(output_dir),
+        };
 
         let installer_libraries_dir = LibrariesDir::root().to_fs(&installer_data_dir);
         let installer_extra_libs_paths = files::get_files_in_dir(&installer_libraries_dir)?
@@ -548,7 +552,7 @@ impl<'a> ForgeGenerator<'a> {
         let libraries_dir = LibrariesDir::root().to_fs(output_dir);
         let mut extra_libs_copy_tasks = Vec::with_capacity(installer_extra_libs_paths.len());
         for lib_path in installer_extra_libs_paths {
-            extra_libs_copy_tasks.push(files::CopyTask {
+            extra_libs_copy_tasks.push(CopyTask {
                 source: installer_libraries_dir.join(&lib_path),
                 target: libraries_dir.join(&lib_path),
             });
@@ -562,6 +566,7 @@ impl<'a> ForgeGenerator<'a> {
         Ok(GeneratorResult {
             metadata: forge_metadata,
             extra_libs_copy_tasks,
+            metadata_copy_task,
             installer_work_dir,
         })
     }

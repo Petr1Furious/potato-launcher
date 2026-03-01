@@ -7,6 +7,7 @@ use url::Url;
 
 lazy_static::lazy_static! {
     pub static ref VANILLA_MANIFEST_URL: Url = Url::parse("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").unwrap();
+    pub static ref MOJANG_RESOURCES_URL_BASE: Url = Url::parse("https://resources.download.minecraft.net").unwrap();
 }
 
 pub fn get_unique_name(existing_names: &HashSet<String>, name_base: &str) -> String {

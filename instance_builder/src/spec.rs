@@ -11,13 +11,14 @@ use std::{
 };
 use tokio::fs;
 use url::Url;
+use utils::adaptive_download;
 use utils::{
     files::{self, CheckTask, CopyTask},
     paths::{BaseUrl, DataDir, InstancesDir, LibrariesDir},
     utils::get_unique_name,
 };
 
-use crate::{progress::TerminalProgressBar, utils::exec_string_command};
+use crate::progress::TerminalProgressBar;
 
 fn vanilla() -> String {
     "vanilla".to_string()
@@ -67,8 +68,6 @@ pub struct Spec {
     #[serde(default)]
     pub replace_download_urls: bool,
     pub instances: Vec<InstanceSpec>,
-    pub exec_before_all: Option<String>,
-    pub exec_after_all: Option<String>,
 }
 
 impl Spec {
@@ -84,10 +83,6 @@ impl Spec {
         work_dir: &Path,
         _delete_remote_instances: Option<&HashSet<String>>,
     ) -> anyhow::Result<()> {
-        if let Some(command) = &self.exec_before_all {
-            exec_string_command(command).await?;
-        }
-
         let data_dir = DataDir::new(output_dir.to_path_buf());
         let download_server_base = BaseUrl::new(self.download_server_base.clone());
         let client = reqwest::Client::new();
@@ -214,8 +209,10 @@ impl Spec {
         let check_progress = TerminalProgressBar::new("Checking files");
         let download_tasks = files::get_download_tasks(deduped_check_tasks, check_progress).await?;
 
+        info!("Got {} download tasks", download_tasks.len());
+
         let download_progress = TerminalProgressBar::new("Downloading files");
-        files::download_files(&client, download_tasks, download_progress).await?;
+        adaptive_download::download_files(download_tasks, download_progress).await?;
 
         let copy_progress = TerminalProgressBar::new("Copying files");
         files::copy_files_if_different(deduped_copy_tasks, copy_progress).await?;
@@ -245,13 +242,15 @@ impl Spec {
             public_manifest_base.set_path(&format!("{}/", public_manifest_base.path()));
         }
         let manifest_url = public_manifest_base.join(INSTANCE_MANIFEST_FILENAME)?;
-        info!("Instance manifest now should be available at {manifest_url}");
+        info!("Instance manifest now should be available at '{manifest_url}'");
 
-        files::retain_only_files_and_parents(data_dir.as_path(), &keep_files).await?;
+        let retain_stats =
+            files::retain_only_files_and_parents(data_dir.as_path(), &keep_files).await?;
+        info!(
+            "Cleanup done: removed {} files, {} dirs; kept {} files",
+            retain_stats.removed_files, retain_stats.removed_dirs, retain_stats.keep_files
+        );
 
-        if let Some(command) = &self.exec_after_all {
-            exec_string_command(command).await?;
-        }
         Ok(())
     }
 }

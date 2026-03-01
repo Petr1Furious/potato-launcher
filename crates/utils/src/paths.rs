@@ -374,8 +374,32 @@ impl AssetsDir {
     }
 }
 
+fn object_rel_path(object_hash: &str) -> RelativePathBuf {
+    RelativePathBuf::from(format!("{}/{}", &object_hash[..2], object_hash))
+}
+
+pub struct ResourcesUrlBase(Url);
+
+impl ResourcesUrlBase {
+    pub fn new(url: Url) -> Self {
+        Self(url)
+    }
+
+    pub fn as_url(&self) -> &Url {
+        &self.0
+    }
+
+    pub fn object_url(&self, object_hash: &str) -> Result<Url, url::ParseError> {
+        Ok(self.0.join(object_rel_path(object_hash).as_str())?)
+    }
+}
+
 impl AssetsObjectsDir {
+    pub fn to_resources_url_base(&self, base_url: &BaseUrl) -> ResourcesUrlBase {
+        ResourcesUrlBase(self.0.to_url(base_url.as_url()))
+    }
+
     pub fn object_path(&self, object_hash: &str) -> AssetObjectPath {
-        AssetObjectPath(self.0.join(&object_hash[..2]).join(object_hash))
+        AssetObjectPath(self.0.join(object_rel_path(object_hash)))
     }
 }

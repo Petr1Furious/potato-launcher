@@ -14,9 +14,12 @@ use std::{
 };
 use utils::{
     files::{self, CheckTask, CopyTask},
-    paths::{AssetsDir, BaseUrl, DataDir, InstanceDir, InstanceDirFS, LibrariesDir, VersionsDir},
+    paths::{
+        AssetsDir, BaseUrl, DataDir, InstanceDir, InstanceDirFS, LibrariesDir, ResourcesUrlBase,
+        VersionsDir,
+    },
     progress,
-    utils::VANILLA_MANIFEST_URL,
+    utils::{MOJANG_RESOURCES_URL_BASE, VANILLA_MANIFEST_URL},
 };
 
 use crate::loader::{
@@ -250,7 +253,7 @@ impl InstanceGenerator {
                 let extra_forge_libs_paths = result
                     .extra_libs_copy_tasks
                     .iter()
-                    .map(|task| task.target.clone())
+                    .map(|task| task.source.clone())
                     .collect::<Vec<_>>();
                 extra_forge_libs = get_extra_forge_libs(
                     &extra_forge_libs_paths,
@@ -261,6 +264,7 @@ impl InstanceGenerator {
                 )
                 .await?;
                 copy_tasks.extend(result.extra_libs_copy_tasks);
+                copy_tasks.push(result.metadata_copy_task);
             }
             Loader::Fabric => {
                 let result =
@@ -291,7 +295,7 @@ impl InstanceGenerator {
                             .get_check_tasks(
                                 &self.client,
                                 output_dir,
-                                &include_config.download_server_base,
+                                &ResourcesUrlBase::new(MOJANG_RESOURCES_URL_BASE.clone()),
                                 os_arch,
                             )
                             .await?,
@@ -319,9 +323,12 @@ impl InstanceGenerator {
                         &existing_paths,
                     )
                     .await?;
+                    if objects.is_empty() {
+                        warn!("No objects found for rule: {}", rule.path);
+                    }
                     copy_tasks.extend(objects.iter().map(|object| CopyTask {
                         source: object.path.to_path(from),
-                        target: object.path.to_path(instance_dir.to_fs()),
+                        target: object.path.to_path(instance_dir.minecraft_dir()),
                     }));
                     include.push(Include {
                         path: rule.path.clone(),
@@ -347,7 +354,9 @@ impl InstanceGenerator {
                         .get_check_tasks(
                             &self.client,
                             output_dir,
-                            &include_config.download_server_base,
+                            &AssetsDir::root()
+                                .assets_object_dir()
+                                .to_resources_url_base(&include_config.download_server_base),
                             &OsArch::All,
                         )
                         .await?,

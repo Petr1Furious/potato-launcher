@@ -1,6 +1,5 @@
 mod progress;
 mod spec;
-mod utils;
 
 use clap::{Arg, Command};
 use env_logger::Env;

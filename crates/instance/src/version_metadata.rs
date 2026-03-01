@@ -9,7 +9,7 @@ use url::Url;
 
 use utils::{
     files::{self, CheckTask},
-    paths::{AssetsDir, BaseUrl, DataDir, LibrariesDir, NativePath, VersionsDir},
+    paths::{AssetsDir, BaseUrl, DataDir, LibrariesDir, NativePath, ResourcesUrlBase, VersionsDir},
     utils::hash_struct,
 };
 
@@ -658,7 +658,7 @@ impl VersionMetadata {
         &self,
         client: &reqwest::Client,
         data_dir: &DataDir,
-        download_server_base: &BaseUrl,
+        resources_url_base: &ResourcesUrlBase,
         target: &OsArch,
     ) -> anyhow::Result<Vec<CheckTask>> {
         let asset_metadata = if let Some(asset_index) = &self.asset_index {
@@ -669,7 +669,7 @@ impl VersionMetadata {
         self.get_check_tasks_with_assets(
             data_dir,
             asset_metadata.as_ref(),
-            download_server_base,
+            resources_url_base,
             target,
         )
     }
@@ -678,11 +678,11 @@ impl VersionMetadata {
         &self,
         data_dir: &DataDir,
         asset_metadata: Option<&AssetsMetadata>,
-        download_server_base: &BaseUrl,
+        resources_url_base: &ResourcesUrlBase,
         target: &OsArch,
     ) -> anyhow::Result<Vec<CheckTask>> {
         let mut tasks = if let Some(asset_metadata) = asset_metadata {
-            asset_metadata.get_check_tasks(data_dir, download_server_base, false)?
+            asset_metadata.get_check_tasks(data_dir, resources_url_base, false)?
         } else {
             vec![]
         };

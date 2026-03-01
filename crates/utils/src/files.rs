@@ -182,25 +182,30 @@ async fn atomic_replace_file(tmp_path: &Path, target_path: &Path) -> anyhow::Res
 
 pub async fn get_download_task(check_task: &CheckTask) -> anyhow::Result<Option<DownloadTask>> {
     match fs::metadata(&check_task.path).await {
-        Ok(metadata) => {
-            let need_download = if metadata.is_file() {
-                if let Some(remote_sha1) = &check_task.remote_sha1 {
-                    remote_sha1 != &hash_file(&check_task.path).await?
-                } else {
-                    true
-                }
-            } else {
-                true
-            };
-            if need_download {
-                return Ok(Some(DownloadTask {
-                    url: check_task.url.clone(),
-                    path: check_task.path.clone(),
-                }));
-            }
+        Ok(metadata) if !metadata.is_file() => {
+            return Ok(Some(DownloadTask {
+                url: check_task.url.clone(),
+                path: check_task.path.clone(),
+            }));
         }
-        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Ok(_) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Ok(Some(DownloadTask {
+                url: check_task.url.clone(),
+                path: check_task.path.clone(),
+            }));
+        }
         Err(err) => return Err(err.into()),
+    }
+
+    if let Some(remote_sha1) = &check_task.remote_sha1 {
+        let local_sha1 = hash_file(&check_task.path).await?;
+        if &local_sha1 != remote_sha1 {
+            return Ok(Some(DownloadTask {
+                url: check_task.url.clone(),
+                path: check_task.path.clone(),
+            }));
+        }
     }
 
     Ok(None)
@@ -453,14 +458,25 @@ pub enum RetainPathsError {
     PathOutsideTargetDir(PathBuf),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RetainStats {
+    pub removed_files: usize,
+    pub removed_dirs: usize,
+    pub keep_files: usize,
+}
+
 /// Remove every file under target_dir not present in `keep_files`.
 /// Then remove directories that are not parents of any kept file.
 pub async fn retain_only_files_and_parents(
     target_dir: &Path,
     keep_files: &HashSet<PathBuf>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RetainStats> {
     if !target_dir.exists() {
-        return Ok(());
+        return Ok(RetainStats {
+            removed_files: 0,
+            removed_dirs: 0,
+            keep_files: keep_files.len(),
+        });
     }
     if !target_dir.is_dir() {
         return Err(RetainPathsError::TargetNotDirectory(target_dir.to_path_buf()).into());
@@ -469,6 +485,8 @@ pub async fn retain_only_files_and_parents(
     let mut keep_rel_files = HashSet::with_capacity(keep_files.len());
     let mut keep_rel_dirs = HashSet::new();
     keep_rel_dirs.insert(PathBuf::new());
+    let mut removed_files = 0usize;
+    let mut removed_dirs = 0usize;
 
     for keep_file in keep_files {
         let rel = keep_file
@@ -506,19 +524,27 @@ pub async fn retain_only_files_and_parents(
         if entry.file_type().is_dir() {
             if !keep_rel_dirs.contains(&rel) {
                 match fs::remove_dir(path).await {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        removed_dirs += 1;
+                    }
                     Err(err) if err.kind() == ErrorKind::NotFound => {}
                     Err(err) => return Err(err.into()),
                 }
             }
         } else if !keep_rel_files.contains(&rel) {
             match fs::remove_file(path).await {
-                Ok(()) => {}
+                Ok(()) => {
+                    removed_files += 1;
+                }
                 Err(err) if err.kind() == ErrorKind::NotFound => {}
                 Err(err) => return Err(err.into()),
             }
         }
     }
 
-    Ok(())
+    Ok(RetainStats {
+        removed_files,
+        removed_dirs,
+        keep_files: keep_files.len(),
+    })
 }

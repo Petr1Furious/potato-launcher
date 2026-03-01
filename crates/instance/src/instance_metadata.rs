@@ -9,7 +9,7 @@ use utils::{
     files::{self, CheckTask},
     paths::{BaseUrl, DataDir, InstanceDirFS, InstancesDir, VersionsDir},
     progress,
-    utils::hash_struct,
+    utils::{MOJANG_RESOURCES_URL_BASE, hash_struct},
 };
 
 use crate::{
@@ -99,10 +99,6 @@ pub struct InstanceMetadata {
     pub overrides_applied: bool,
 }
 
-lazy_static::lazy_static! {
-    static ref DEFAULT_RESOURCES_URL_BASE: Url = Url::parse("https://resources.download.minecraft.net").unwrap();
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum InstanceMetadataError {
     #[error("Missing asset index")]
@@ -188,7 +184,7 @@ impl InstanceMetadata {
     pub fn get_resources_url_base(&self) -> &Url {
         self.resources_url_base
             .as_ref()
-            .unwrap_or(&DEFAULT_RESOURCES_URL_BASE)
+            .unwrap_or(&MOJANG_RESOURCES_URL_BASE)
     }
 
     pub fn get_java_version(&self) -> String {
@@ -320,5 +316,4 @@ impl InstanceMetadata {
     pub fn get_default_xmx(&self) -> Option<&str> {
         self.default_xmx.as_deref()
     }
-
 }
