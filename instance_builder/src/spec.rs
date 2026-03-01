@@ -1,4 +1,5 @@
 use generate::instance::{IncludeConfig, IncludeRule, InstanceGenerator, Loader};
+use instance::manifest::{AuthlibInjectorDownload, DEFAULT_AUTHLIB_INJECTOR, InstanceManifest};
 use instance::version_metadata::OsArch;
 use launcher_auth::providers::AuthProviderConfig;
 use log::{info, warn};
@@ -12,8 +13,7 @@ use tokio::fs;
 use url::Url;
 use utils::{
     files::{self, CheckTask, CopyTask},
-    paths::{BaseUrl, DataDir, InstancesDir},
-    progress::ProgressTracker,
+    paths::{BaseUrl, DataDir, InstancesDir, LibrariesDir},
     utils::get_unique_name,
 };
 
@@ -38,6 +38,8 @@ fn yes() -> bool {
     true
 }
 
+const INSTANCE_MANIFEST_FILENAME: &str = "instance_manifest.json";
+
 #[derive(Deserialize)]
 pub struct InstanceSpec {
     pub name: String,
@@ -56,9 +58,6 @@ pub struct InstanceSpec {
     pub auth_backend: Option<AuthProviderConfig>,
 
     pub recommended_xmx: Option<String>,
-
-    pub exec_before: Option<String>,
-    pub exec_after: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -96,12 +95,21 @@ impl Spec {
         let mut all_check_tasks: Vec<CheckTask> = vec![];
         let mut all_copy_tasks: Vec<CopyTask> = vec![];
         let mut all_other_generated_files: Vec<PathBuf> = vec![];
+        let manifest_path = output_dir.join(INSTANCE_MANIFEST_FILENAME);
+
+        let mut all_metadata = vec![];
+        let authlib_injector_custom_url = LibrariesDir::root()
+            .authlib_injector_path()
+            .to_url(&download_server_base);
+        all_check_tasks.push(CheckTask {
+            url: DEFAULT_AUTHLIB_INJECTOR.url.clone(),
+            remote_sha1: None,
+            path: LibrariesDir::root()
+                .authlib_injector_path()
+                .to_fs(&data_dir),
+        });
 
         for instance in self.instances {
-            if let Some(command) = &instance.exec_before {
-                exec_string_command(command).await?;
-            }
-
             let unique_name = get_unique_name(&existing_instance_names, &instance.name);
             if unique_name != instance.name {
                 warn!(
@@ -179,14 +187,11 @@ impl Spec {
             );
 
             result.metadata.save(&instance_dir).await?;
+            all_metadata.push(result.metadata);
             all_other_generated_files.extend(result.other_generated_files);
             all_other_generated_files.push(instance_dir.meta_path());
             all_check_tasks.extend(result.check_tasks);
             all_copy_tasks.extend(result.copy_tasks);
-
-            if let Some(command) = &instance.exec_after {
-                exec_string_command(command).await?;
-            }
 
             info!("Finished generating instance {}", &unique_name);
         }
@@ -204,23 +209,43 @@ impl Spec {
             .collect::<HashSet<_>>();
         keep_files.extend(deduped_check_tasks.iter().map(|task| task.path.clone()));
         keep_files.extend(deduped_copy_tasks.iter().map(|task| task.target.clone()));
+        keep_files.insert(manifest_path.clone());
 
-        let check_progress: std::sync::Arc<dyn ProgressTracker> =
-            std::sync::Arc::new(TerminalProgressBar::new("Checking files"));
+        let check_progress = TerminalProgressBar::new("Checking files");
         let download_tasks = files::get_download_tasks(deduped_check_tasks, check_progress).await?;
 
         let download_progress = TerminalProgressBar::new("Downloading files");
-        download_progress.set_length(download_tasks.len() as u64);
-        files::download_files(
-            &client,
-            download_tasks,
-            std::sync::Arc::new(download_progress),
+        files::download_files(&client, download_tasks, download_progress).await?;
+
+        let copy_progress = TerminalProgressBar::new("Copying files");
+        files::copy_files_if_different(deduped_copy_tasks, copy_progress).await?;
+
+        let authlib_injector_sha1 = files::hash_file(
+            &LibrariesDir::root()
+                .authlib_injector_path()
+                .to_fs(&data_dir),
         )
         .await?;
+        let manifest = InstanceManifest {
+            instances: all_metadata
+                .iter()
+                .map(|metadata| {
+                    metadata.get_manifest_entry(metadata.get_name(), &download_server_base)
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?,
+            authlib_injector: Some(AuthlibInjectorDownload {
+                url: authlib_injector_custom_url.clone(),
+                sha1: Some(authlib_injector_sha1),
+            }),
+        };
+        manifest.save_to_file(&manifest_path).await?;
 
-        let copy_progress: std::sync::Arc<dyn ProgressTracker> =
-            std::sync::Arc::new(TerminalProgressBar::new("Copying files"));
-        files::copy_files_if_different(deduped_copy_tasks, copy_progress).await?;
+        let mut public_manifest_base = self.download_server_base.clone();
+        if !public_manifest_base.path().ends_with('/') {
+            public_manifest_base.set_path(&format!("{}/", public_manifest_base.path()));
+        }
+        let manifest_url = public_manifest_base.join(INSTANCE_MANIFEST_FILENAME)?;
+        info!("Instance manifest now should be available at {manifest_url}");
 
         files::retain_only_files_and_parents(data_dir.as_path(), &keep_files).await?;
 

@@ -28,15 +28,16 @@ pub struct Os {
 
 impl Os {
     fn matches_os(&self, os_name: &str, arch: &str) -> bool {
-        if let Some(expected_arch) = &self.arch {
-            if expected_arch != arch {
-                return false;
-            }
+        if let Some(expected_arch) = &self.arch
+            && expected_arch != arch
+        {
+            return false;
         }
-        if let Some(expected_name) = &self.name {
-            if expected_name != os_name && expected_name != &format!("{os_name}-{arch}") {
-                return false;
-            }
+        if let Some(expected_name) = &self.name
+            && expected_name != os_name
+            && expected_name != &format!("{os_name}-{arch}")
+        {
+            return false;
         }
 
         true
@@ -65,10 +66,10 @@ impl Rule {
         let is_allowed = self.action == "allow";
         let matching_features = ["has_custom_resolution"];
 
-        if let Some(os) = &self.os {
-            if !os.matches_os(os_name, arch) {
-                return None;
-            }
+        if let Some(os) = &self.os
+            && !os.matches_os(os_name, arch)
+        {
+            return None;
         }
 
         if let Some(features) = &self.features {
@@ -369,13 +370,13 @@ impl Library {
             tasks.push(task);
         }
         if let OsArch::Specific { os, arch } = target {
-            if let Some(native_name) = self.get_native_name(&Self::get_arch_os_name(os, arch)) {
-                if let Some(download) = self.get_native_download(native_name) {
-                    let path = self
-                        .get_native_rel_path(native_name, download)?
-                        .to_fs(data_dir);
-                    tasks.push(download.get_check_task(&path));
-                }
+            if let Some(native_name) = self.get_native_name(&Self::get_arch_os_name(os, arch))
+                && let Some(download) = self.get_native_download(native_name)
+            {
+                let path = self
+                    .get_native_rel_path(native_name, download)?
+                    .to_fs(data_dir);
+                tasks.push(download.get_check_task(&path));
             }
         } else if let Some(natives) = &self.natives {
             for native_name in natives.values() {
@@ -617,21 +618,21 @@ impl VersionMetadata {
                 .transpose()?;
 
             let mut maybe_classifiers = None;
-            if let Some(downloads) = &library.downloads {
-                if let Some(classifiers) = &downloads.classifiers {
-                    let mut replaced_classifiers = HashMap::with_capacity(classifiers.len());
-                    for (native_name, download) in classifiers.clone() {
-                        let native_path = library.get_native_rel_path(&native_name, &download)?;
-                        replaced_classifiers.insert(
-                            native_name,
-                            Download {
-                                url: native_path.to_url(download_server_base),
-                                sha1: download.sha1.clone(),
-                            },
-                        );
-                    }
-                    maybe_classifiers = Some(replaced_classifiers);
+            if let Some(downloads) = &library.downloads
+                && let Some(classifiers) = &downloads.classifiers
+            {
+                let mut replaced_classifiers = HashMap::with_capacity(classifiers.len());
+                for (native_name, download) in classifiers.clone() {
+                    let native_path = library.get_native_rel_path(&native_name, &download)?;
+                    replaced_classifiers.insert(
+                        native_name,
+                        Download {
+                            url: native_path.to_url(download_server_base),
+                            sha1: download.sha1.clone(),
+                        },
+                    );
                 }
+                maybe_classifiers = Some(replaced_classifiers);
             }
 
             replaced_libraries.push(Library {
@@ -687,16 +688,16 @@ impl VersionMetadata {
         };
 
         tasks.reserve(1 + self.libraries.len());
-        if let Some(downloads) = &self.downloads {
-            if let Some(download) = &downloads.client {
-                tasks.push(
-                    download.get_check_task(
-                        &VersionsDir::root()
-                            .client_jar_path(&self.id)
-                            .to_fs(data_dir),
-                    ),
-                );
-            }
+        if let Some(downloads) = &self.downloads
+            && let Some(download) = &downloads.client
+        {
+            tasks.push(
+                download.get_check_task(
+                    &VersionsDir::root()
+                        .client_jar_path(&self.id)
+                        .to_fs(data_dir),
+                ),
+            );
         }
         for library in &self.libraries {
             let check_tasks = library.get_check_tasks(data_dir, target)?;

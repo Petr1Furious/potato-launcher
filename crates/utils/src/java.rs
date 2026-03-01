@@ -6,7 +6,6 @@ use serde::Deserialize;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tar::Archive;
 use tokio::process::Command;
 
@@ -280,7 +279,7 @@ pub fn get_temp_dir() -> PathBuf {
 pub async fn download_java(
     required_version: &str,
     data_dir: &DataDir,
-    progress_tracker: Arc<dyn ProgressTracker + Send + Sync>,
+    progress_tracker: impl ProgressTracker,
 ) -> anyhow::Result<JavaInstallation> {
     let java_dir = JavaDir::root().to_fs(data_dir);
     let client = Client::new();

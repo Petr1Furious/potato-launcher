@@ -190,7 +190,7 @@ pub enum AdaptiveDownloadError {
 
 pub async fn download_files(
     download_tasks: Vec<DownloadTask>,
-    progress_bar: Arc<dyn ProgressTracker + Send + Sync>,
+    progress_bar: impl ProgressTracker,
 ) -> anyhow::Result<()> {
     progress_bar.set_length(download_tasks.len() as u64);
 

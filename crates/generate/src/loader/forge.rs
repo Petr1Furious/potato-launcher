@@ -306,7 +306,7 @@ pub fn trick_forge(forge_work_dir: &Path, minecraft_version: &str) -> anyhow::Re
     let versions_dir = VersionsDir::root().to_fs(&data_dir);
     std::fs::create_dir_all(versions_dir.join(minecraft_version))?;
     let mut file = std::fs::File::create(forge_work_dir.join("launcher_profiles.json"))?;
-    file.write(b"{\"profiles\":{}}")?;
+    let _ = file.write(b"{\"profiles\":{}}")?;
     Ok(())
 }
 
@@ -486,10 +486,7 @@ impl<'a> ForgeGenerator<'a> {
         info!(
             "Generating {} {}, minecraft version {}",
             self.loader,
-            self.loader_version
-                .as_ref()
-                .map(|version| version.as_str())
-                .unwrap_or("<auto>"),
+            self.loader_version.as_deref().unwrap_or("<auto>"),
             minecraft_version
         );
 
@@ -509,7 +506,7 @@ impl<'a> ForgeGenerator<'a> {
         let id = install_forge(
             &installer_work_dir,
             &forge_version,
-            &self.vanilla_metadata,
+            self.vanilla_metadata,
             &self.loader,
         )
         .await?;

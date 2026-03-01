@@ -63,40 +63,40 @@ pub struct Include {
 pub struct InstanceMetadata {
     /// instance name
     #[serde(default)]
-    pub(crate) name: String,
+    pub name: String,
 
     /// auth backend to use for this instance
     #[serde(default)]
-    pub(crate) auth_backend: Option<AuthProviderConfig>,
+    pub auth_backend: Option<AuthProviderConfig>,
 
     /// additional files to include with the instance
     /// (e.g. mods, configs, server.dat, etc.)
     /// and rules for what to do when file/directory contents differ from the remote
     #[serde(default)]
-    pub(crate) include: Vec<Include>,
+    pub include: Vec<Include>,
 
     /// base URL for assets
     /// if not set, the launcher will download assets from Mojang servers
     #[serde(default)]
-    pub(crate) resources_url_base: Option<Url>,
+    pub resources_url_base: Option<Url>,
 
     /// extra (neo)forge libraries to include with the instance
     /// should be empty when not using (neo)forge
     #[serde(default)]
-    pub(crate) extra_forge_libs: Vec<Library>,
+    pub extra_forge_libs: Vec<Library>,
 
     /// default JVM RAM limit (`-Xmx`) for this version
     /// e.g. "8192M"
-    pub(crate) default_xmx: Option<String>,
+    pub default_xmx: Option<String>,
 
     // used minecraft versions (client.json) ordered from parent to child
     // e.g. ["1.21.11", "fabric-loader-0.18.4-1.21.11"] since fabric-loader-0.18.4-1.21.11 inherits from 1.21.11
     #[serde(default)]
-    pub(crate) versions: Vec<VersionMetadata>,
+    pub versions: Vec<VersionMetadata>,
 
     // whether the overrides were already applied to the libraries (e.g. on instance_builder build)
     // this should be false for mojang's vanilla versions
-    pub(crate) overrides_applied: bool,
+    pub overrides_applied: bool,
 }
 
 lazy_static::lazy_static! {
@@ -114,28 +114,6 @@ pub enum InstanceMetadataError {
 }
 
 impl InstanceMetadata {
-    pub fn new(
-        name: String,
-        auth_backend: Option<AuthProviderConfig>,
-        include: Vec<Include>,
-        resources_url_base: Option<Url>,
-        extra_forge_libs: Vec<Library>,
-        default_xmx: Option<String>,
-        versions: Vec<VersionMetadata>,
-        overrides_applied: bool,
-    ) -> Self {
-        Self {
-            name,
-            auth_backend,
-            include,
-            resources_url_base,
-            extra_forge_libs,
-            default_xmx,
-            versions,
-            overrides_applied,
-        }
-    }
-
     pub async fn read_local(
         entry: &InstanceManifestEntry,
         instance_dir: &InstanceDirFS,
@@ -342,4 +320,5 @@ impl InstanceMetadata {
     pub fn get_default_xmx(&self) -> Option<&str> {
         self.default_xmx.as_deref()
     }
+
 }

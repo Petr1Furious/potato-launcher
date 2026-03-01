@@ -235,7 +235,7 @@ impl InstanceGenerator {
             }
             Loader::Forge | Loader::Neoforge => {
                 let result = ForgeGenerator::new(
-                    &vanilla_metadata,
+                    vanilla_metadata,
                     if self.loader == Loader::Forge {
                         forge::Loader::Forge
                     } else {
@@ -374,16 +374,16 @@ impl InstanceGenerator {
         };
 
         Ok(GeneratorResult {
-            metadata: InstanceMetadata::new(
-                self.instance_name,
-                self.auth_backend,
+            metadata: InstanceMetadata {
+                name: self.instance_name,
+                auth_backend: self.auth_backend,
                 include,
                 resources_url_base,
                 extra_forge_libs,
-                self.default_xmx,
-                metadata,
-                true,
-            ),
+                default_xmx: self.default_xmx,
+                versions: metadata,
+                overrides_applied: true,
+            },
             check_tasks,
             copy_tasks,
             other_generated_files,

@@ -1,5 +1,6 @@
 use utils::progress::ProgressTracker;
 
+#[derive(Clone)]
 pub struct TerminalProgressBar {
     bar: indicatif::ProgressBar,
 }

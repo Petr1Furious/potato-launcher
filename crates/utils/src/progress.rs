@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 #[derive(Clone)]
 pub struct Unit {
     pub name: String,
@@ -24,6 +22,7 @@ pub trait ProgressBar<M>: ProgressTracker + Sync + Send {
     fn set_unit(&self, unit: Unit);
 }
 
+#[derive(Clone, Copy, Default)]
 pub struct NoProgressBar;
 
 impl ProgressTracker for NoProgressBar {
@@ -37,6 +36,6 @@ impl<M> ProgressBar<M> for NoProgressBar {
     fn set_unit(&self, _unit: Unit) {}
 }
 
-pub fn no_progress_bar() -> Arc<dyn ProgressBar<i32> + Send + Sync> {
-    Arc::new(NoProgressBar)
+pub fn no_progress_bar() -> NoProgressBar {
+    NoProgressBar
 }

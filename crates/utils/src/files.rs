@@ -3,7 +3,6 @@ use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::{fs, io};
@@ -69,7 +68,7 @@ pub async fn hash_file(path: &Path) -> anyhow::Result<String> {
 
 pub async fn hash_files<P>(
     files: &[P],
-    progress_bar: Arc<dyn ProgressTracker>,
+    progress_bar: impl ProgressTracker,
 ) -> anyhow::Result<Vec<String>>
 where
     P: AsRef<Path>,
@@ -120,6 +119,7 @@ pub async fn remove_file_or_dir(path: &Path) -> anyhow::Result<()> {
 #[derive(Debug)]
 pub struct CheckTask {
     pub url: Url,
+    /// If not set, the file will never be redownloaded if it already exists
     pub remote_sha1: Option<String>,
     pub path: PathBuf,
 }
@@ -183,15 +183,20 @@ async fn atomic_replace_file(tmp_path: &Path, target_path: &Path) -> anyhow::Res
 pub async fn get_download_task(check_task: &CheckTask) -> anyhow::Result<Option<DownloadTask>> {
     match fs::metadata(&check_task.path).await {
         Ok(metadata) => {
-            if metadata.is_file() {
-                if let Some(remote_sha1) = &check_task.remote_sha1
-                    && remote_sha1 != &hash_file(&check_task.path).await?
-                {
-                    return Ok(Some(DownloadTask {
-                        url: check_task.url.clone(),
-                        path: check_task.path.clone(),
-                    }));
+            let need_download = if metadata.is_file() {
+                if let Some(remote_sha1) = &check_task.remote_sha1 {
+                    remote_sha1 != &hash_file(&check_task.path).await?
+                } else {
+                    true
                 }
+            } else {
+                true
+            };
+            if need_download {
+                return Ok(Some(DownloadTask {
+                    url: check_task.url.clone(),
+                    path: check_task.path.clone(),
+                }));
             }
         }
         Err(err) if err.kind() == ErrorKind::NotFound => {}
@@ -209,7 +214,7 @@ pub enum CheckTasksError {
 
 pub async fn get_download_tasks(
     check_tasks: Vec<CheckTask>,
-    progress_bar: Arc<dyn ProgressTracker>,
+    progress_bar: impl ProgressTracker,
 ) -> anyhow::Result<Vec<DownloadTask>> {
     let mut to_hash = Vec::new();
     for task in &check_tasks {
@@ -226,7 +231,7 @@ pub async fn get_download_tasks(
         }
     }
 
-    let hashes = hash_files(&to_hash, progress_bar.clone()).await?;
+    let hashes = hash_files(&to_hash, progress_bar).await?;
     let hashes = to_hash
         .into_iter()
         .zip(hashes.into_iter())
@@ -240,14 +245,13 @@ pub async fn get_download_tasks(
             Ok(metadata) => {
                 if !metadata.is_file() {
                     need_download = true;
-                } else if let Some(remote_sha1) = &task.remote_sha1 {
-                    if remote_sha1
+                } else if let Some(remote_sha1) = &task.remote_sha1
+                    && remote_sha1
                         != hashes
                             .get(&path)
                             .ok_or(CheckTasksError::HashMissing(path.clone()))?
-                    {
-                        need_download = true;
-                    }
+                {
+                    need_download = true;
                 }
             }
             Err(err) if err.kind() == ErrorKind::NotFound => {
@@ -309,7 +313,7 @@ where
 pub async fn download_files(
     client: &reqwest::Client,
     download_tasks: Vec<DownloadTask>,
-    progress_bar: Arc<dyn ProgressTracker>,
+    progress_bar: impl ProgressTracker,
 ) -> anyhow::Result<()> {
     progress_bar.set_length(download_tasks.len() as u64);
 
@@ -339,7 +343,7 @@ pub async fn download_files(
 
 pub async fn copy_files_if_different(
     copy_tasks: Vec<CopyTask>,
-    progress_bar: Arc<dyn ProgressTracker>,
+    progress_bar: impl ProgressTracker,
 ) -> anyhow::Result<()> {
     progress_bar.set_length(copy_tasks.len() as u64);
 

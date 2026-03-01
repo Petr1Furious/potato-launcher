@@ -56,7 +56,7 @@ async fn download_fabric_metadata(
     let fabric_metadata_url =
         format!("{FABRIC_META_BASE_URL}{minecraft_version}/{loader_version}/profile/json");
     let version_metadata = VersionMetadata::fetch(client, &fabric_metadata_url).await?;
-    version_metadata.save(&data_dir).await?;
+    version_metadata.save(data_dir).await?;
     Ok(version_metadata)
 }
 
@@ -88,10 +88,7 @@ impl FabricGenerator {
     ) -> anyhow::Result<VersionMetadata> {
         info!(
             "Generating Fabric {}, minecraft version {}",
-            self.loader_version
-                .as_ref()
-                .map(|version| version.as_str())
-                .unwrap_or("<auto>"),
+            self.loader_version.as_deref().unwrap_or("<auto>"),
             self.minecraft_version
         );
 
@@ -111,7 +108,7 @@ impl FabricGenerator {
 
         info!("Downloading Fabric version metadata");
         let fabric_metadata = download_fabric_metadata(
-            &client,
+            client,
             &self.minecraft_version,
             &fabric_version,
             output_dir,

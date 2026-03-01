@@ -22,11 +22,11 @@ fn get_asset_index_path(data_dir: &DataDir, asset_id: &str) -> PathBuf {
 
 impl AssetIndex {
     pub fn get_check_task(&self, data_dir: &DataDir) -> CheckTask {
-        return CheckTask {
+        CheckTask {
             url: self.url.clone(),
             remote_sha1: Some(self.sha1.clone()),
             path: get_asset_index_path(data_dir, &self.id),
-        };
+        }
     }
 }
 

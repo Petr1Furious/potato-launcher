@@ -4,7 +4,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use url::Url;
 use utils::{
-    files::CheckTask,
+    files::{self, CheckTask},
     paths::{DataDir, InstanceDirFS, VersionsDir},
 };
 
@@ -126,11 +126,27 @@ impl InstanceManifestEntry {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct AuthlibInjectorDownload {
+    pub url: Url,
+    #[serde(default)]
+    pub sha1: Option<String>,
+}
+
+lazy_static::lazy_static! {
+    pub static ref DEFAULT_AUTHLIB_INJECTOR: AuthlibInjectorDownload = AuthlibInjectorDownload {
+        url: Url::parse("https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.7/authlib-injector-1.2.7.jar").unwrap(),
+        sha1: None,
+    };
+}
+
 /// Replaces the vanilla version manifest.
 /// This is the first metadata the launcher will fetch.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct InstanceManifest {
     pub instances: Vec<InstanceManifestEntry>,
+    #[serde(default)]
+    pub authlib_injector: Option<AuthlibInjectorDownload>,
 }
 
 impl InstanceManifest {
@@ -143,5 +159,9 @@ impl InstanceManifest {
             .json::<Self>()
             .await?;
         Ok(res)
+    }
+
+    pub async fn save_to_file(&self, manifest_path: &Path) -> anyhow::Result<()> {
+        files::write_file_json(manifest_path, self).await
     }
 }
