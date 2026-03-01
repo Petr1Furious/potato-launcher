@@ -2,42 +2,44 @@
   lib,
   rustPlatform,
   makeWrapper,
-  libX11,
-  libXext,
-  libXcursor,
-  libXrandr,
-  libXxf86vm,
-  libXrender,
-  libXtst,
-  libXi,
+  libx11,
+  libxext,
+  libxcursor,
+  libxrandr,
+  libxxf86vm,
+  libxrender,
+  libxtst,
+  libxi,
   xrandr,
+  libxkbcommon,
   libpulseaudio,
   libGL,
   glfw3-minecraft,
   openal,
   wayland,
-  libxkbcommon,
+  vulkan-loader,
 }:
 let
   loadDotenv = import ./loadDotenv.nix { inherit lib; };
   env = loadDotenv ../../build.env;
   # keep in sync with deps in flake.nix
   runtimeDeps = [
-    libX11
-    libXext
-    libXcursor
-    libXrandr
-    libXxf86vm
-    libXrender
-    libXtst
-    libXi
+    libx11
+    libxext
+    libxcursor
+    libxrandr
+    libxxf86vm
+    libxrender
+    libxtst
+    libxi
     xrandr
+    libxkbcommon
     libpulseaudio
     libGL
     glfw3-minecraft
     openal
     wayland
-    libxkbcommon
+    vulkan-loader
   ];
 in
 rustPlatform.buildRustPackage {

@@ -1,18 +1,26 @@
 {
   inputs = {
     nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.xz";
+    fenix = {
+      url = "github:nix-community/fenix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
     {
       nixpkgs,
       flake-utils,
+      fenix,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ fenix.overlays.default ];
+        };
       in
       {
         packages.default = pkgs.callPackage ./packaging/nix/package.nix { };
@@ -21,30 +29,35 @@
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
             with pkgs;
             [
-              xorg.libX11
-              xorg.libXext
-              xorg.libXcursor
-              xorg.libXrandr
-              xorg.libXxf86vm
-              xorg.libXrender
-              xorg.libXtst
-              xorg.libXi
-              xorg.xrandr
+              libx11
+              libxext
+              libxcursor
+              libxrandr
+              libxxf86vm
+              libxrender
+              libxtst
+              libxi
+              xrandr
+              libxkbcommon
               libpulseaudio
               libGL
               glfw3-minecraft
               openal
               wayland
-              libxkbcommon
+              vulkan-loader
+              libxcb
             ]
           );
 
-          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+          RUST_SRC_PATH = "${pkgs.fenix.complete.rust-src}/lib/rustlib/src/rust/library";
 
+          buildInputs = with pkgs; [
+            libxcb
+            libxkbcommon
+          ];
           packages = with pkgs; [
-            cargo
-            rustc
-            clippy
+            # nightly toolchain
+            pkgs.fenix.complete.toolchain
 
             (python3.withPackages (
               ps: with ps; [

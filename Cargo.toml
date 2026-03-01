@@ -6,6 +6,7 @@ members = [
     "crates/instance",
     "crates/utils",
     "crates/generate",
+    "crates/launcher",
 ]
 resolver = "3"
 
