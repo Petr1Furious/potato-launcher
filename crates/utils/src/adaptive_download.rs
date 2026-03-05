@@ -344,7 +344,7 @@ pub async fn download_files(
                 if current == MIN_CONCURRENCY {
                     timeouts_at_min_concurrency += 1;
                     if timeouts_at_min_concurrency >= MAX_TIMEOUTS_AT_MIN_CONCURRENCY {
-                        return Err(AdaptiveDownloadError::ConnectionTimeout.into());
+                        return Err(AdaptiveDownloadError::ConnectionTimeout);
                     }
                     warn!("Timeouts at min concurrency: {timeouts_at_min_concurrency}");
                 }

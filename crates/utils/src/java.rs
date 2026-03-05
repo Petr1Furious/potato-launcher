@@ -370,14 +370,14 @@ pub async fn download_java(
             .bin_path(JAVA_BINARY_NAME)
             .to_fs(data_dir);
         if !check_java(required_version, &java_path).await {
-            return Err(JavaDownloadError::InvalidDownloadedJava.into());
+            return Err(JavaDownloadError::InvalidDownloadedJava);
         }
         if let Some(installation) = get_installation(&java_path).await {
             return Ok(installation);
         }
     }
 
-    Err(JavaDownloadError::NoJavaVersionsAvailable.into())
+    Err(JavaDownloadError::NoJavaVersionsAvailable)
 }
 
 pub async fn get_java(required_version: &str, data_dir: &DataDir) -> Option<JavaInstallation> {
