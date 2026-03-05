@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -35,17 +32,42 @@ pub struct AuthStorage {
 
 const LATEST_STORAGE_VERSION: u32 = 1;
 
+#[derive(thiserror::Error, Debug)]
+pub enum AuthStorageError {
+    #[error("failed to read auth storage from disk: {0}")]
+    ReadIo(#[source] std::io::Error),
+    #[error("failed to parse auth storage JSON: {0}")]
+    ParseJson(#[from] serde_json::Error),
+    #[error("auth storage JSON root must be an object")]
+    InvalidRootType,
+    #[error("failed to write auth storage JSON to disk: {0}")]
+    WriteIo(#[source] std::io::Error),
+}
+
 impl AuthStorage {
-    pub fn load(auth_data_path: PathBuf) -> Self {
+    pub fn empty(auth_data_path: PathBuf) -> Self {
+        Self {
+            disk_path: auth_data_path,
+            storage: AuthStorageData {
+                version: LATEST_STORAGE_VERSION,
+                providers: HashMap::new(),
+                accounts: Vec::new(),
+            },
+        }
+    }
+
+    pub fn load(auth_data_path: PathBuf) -> Result<Self, AuthStorageError> {
         let str_data = match std::fs::read_to_string(&auth_data_path) {
             Ok(data) => Some(data),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => panic!("Failed to read auth data from disk: {e:?}"),
+            Err(e) => return Err(AuthStorageError::ReadIo(e)),
         };
-        let value = str_data
-            .map(|str_data| serde_json::from_str(&str_data).expect("Failed to parse auth data"))
-            .unwrap_or(json!({}));
-        let value_object = value.as_object().expect("Failed to parse auth data");
+        let value = if let Some(str_data) = str_data {
+            serde_json::from_str(&str_data)?
+        } else {
+            json!({})
+        };
+        let value_object = value.as_object().ok_or(AuthStorageError::InvalidRootType)?;
         let storage = if !value_object.is_empty()
             && value_object
                 .get("version")
@@ -55,7 +77,7 @@ impl AuthStorage {
                 < LATEST_STORAGE_VERSION.into()
         {
             let legacy_storage: HashMap<String, HashMap<String, AccountData>> =
-                serde_json::from_value(value).expect("Failed to parse legacy auth data");
+                serde_json::from_value(value)?;
             let mut res = AuthStorageData {
                 version: LATEST_STORAGE_VERSION,
                 providers: HashMap::new(),
@@ -78,19 +100,19 @@ impl AuthStorage {
             }
             res
         } else {
-            serde_json::from_value(value).expect("Failed to parse auth data")
+            serde_json::from_value(value)?
         };
 
-        Self {
+        Ok(Self {
             storage,
             disk_path: auth_data_path,
-        }
+        })
     }
 
-    fn save(&self) {
-        let auth_data_str =
-            serde_json::to_string(&self.storage).expect("Failed to serialize auth data");
-        std::fs::write(&self.disk_path, auth_data_str).expect("Failed to write auth data to disk");
+    fn save(&self) -> Result<(), AuthStorageError> {
+        let auth_data_str = serde_json::to_string(&self.storage)?;
+        std::fs::write(&self.disk_path, auth_data_str).map_err(AuthStorageError::WriteIo)?;
+        Ok(())
     }
 
     pub fn get_account(
@@ -120,7 +142,7 @@ impl AuthStorage {
         &mut self,
         provider_spec: &AuthProviderConfig,
         auth_data: AccountData,
-    ) -> AccountKey {
+    ) -> Result<AccountKey, AuthStorageError> {
         let provider_id = self
             .storage
             .providers
@@ -141,16 +163,20 @@ impl AuthStorage {
         for entry in self.storage.accounts.iter_mut() {
             if entry.provider_id == provider_id && entry.auth_data.user_info.username == username {
                 *entry = new_entry;
-                self.save();
-                return (provider_id, username);
+                self.save()?;
+                return Ok((provider_id, username));
             }
         }
         self.storage.accounts.push(new_entry);
-        self.save();
-        (provider_id, username)
+        self.save()?;
+        Ok((provider_id, username))
     }
 
-    pub fn delete_account(&mut self, auth_provider_id: AuthProviderId, username: &Username) {
+    pub fn delete_account(
+        &mut self,
+        auth_provider_id: AuthProviderId,
+        username: &Username,
+    ) -> Result<(), AuthStorageError> {
         self.storage.accounts.retain(|x| {
             !(x.provider_id == auth_provider_id && x.auth_data.user_info.username == *username)
         });
@@ -163,7 +189,7 @@ impl AuthStorage {
         self.storage
             .providers
             .retain(|id, _| used_providers.contains(id));
-        self.save();
+        self.save()
     }
 
     pub fn account_keys(&self) -> Vec<AccountKey> {

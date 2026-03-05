@@ -41,7 +41,7 @@ async fn get_objects(
     base_url: &BaseUrl,
     instance_dir: &InstanceDir,
     existing_paths: &HashSet<PathBuf>,
-) -> anyhow::Result<Vec<Object>> {
+) -> Result<Vec<Object>, GetObjectsError> {
     let files = files::get_files_ignore_paths(path, existing_paths)?;
     let hashes = files::hash_files(&files, progress::no_progress_bar()).await?;
 
@@ -59,21 +59,41 @@ async fn get_objects(
 
 #[derive(thiserror::Error, Debug)]
 pub enum ExtraForgeLibsError {
-    #[error("Bad library name: {0}")]
+    #[error("bad library name: {0}")]
     BadLibraryName(String),
-    #[error("Extra forge library path is outside libraries dir: {0}")]
+    #[error("extra forge library path is outside libraries dir: {0}")]
     OutsideLibrariesDir(PathBuf),
-    #[error("Invalid forge library layout under libraries dir: {0}")]
+    #[error("invalid forge library layout under libraries dir: {0}")]
     InvalidLayout(PathBuf),
-    #[error("Missing file name for path: {0}")]
+    #[error("missing file name for path: {0}")]
     MissingFileName(PathBuf),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum GetObjectsError {
+    #[error("failed to enumerate include files: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("failed to hash include files: {0}")]
+    HashFiles(#[from] files::HashFilesError),
+    #[error("include path is outside include_from root: {0}")]
+    StripPrefix(#[from] std::path::StripPrefixError),
+    #[error("failed to convert include path to relative path: {0}")]
+    RelativePath(#[from] relative_path::FromPathError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum GetExtraForgeLibsError {
+    #[error("failed to parse extra forge library paths: {0}")]
+    ExtraForgeLibs(#[from] ExtraForgeLibsError),
+    #[error("failed to hash extra forge libraries: {0}")]
+    HashFiles(#[from] files::HashFilesError),
 }
 
 async fn get_extra_forge_libs(
     extra_forge_libs_paths: &[PathBuf],
     data_dir: &DataDir,
     download_server_base: Option<&BaseUrl>,
-) -> anyhow::Result<Vec<Library>> {
+) -> Result<Vec<Library>, GetExtraForgeLibsError> {
     struct ParsedExtraLib {
         source_path: PathBuf,
         rel_path: String,
@@ -184,9 +204,21 @@ pub struct InstanceGenerator {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum InstanceGeneratorError {
-    #[error("Vanilla version not found")]
+pub enum GenerateError {
+    #[error("failed to fetch vanilla version manifest: {0}")]
+    Manifest(#[from] instance::manifest::ManifestError),
+    #[error("failed while reading/downloading version metadata: {0}")]
+    VersionMetadata(#[from] instance::version_metadata::VersionMetadataError),
+    #[error("requested minecraft version does not exist in vanilla manifest")]
     VanillaVersionNotFound,
+    #[error("failed while generating Fabric metadata: {0}")]
+    Fabric(#[from] crate::loader::fabric::FabricGeneratorError),
+    #[error("failed while generating Forge metadata: {0}")]
+    Forge(#[from] crate::loader::forge::ForgeGenerateError),
+    #[error("failed while parsing extra forge libraries: {0}")]
+    ExtraForgeLibs(#[from] GetExtraForgeLibsError),
+    #[error("failed while collecting include objects: {0}")]
+    GetObjects(#[from] GetObjectsError),
 }
 
 pub struct GeneratorResult {
@@ -209,7 +241,7 @@ impl InstanceGenerator {
         instance_dir: &InstanceDirFS,
         work_dir: &Path,
         os_arch: &OsArch,
-    ) -> anyhow::Result<GeneratorResult> {
+    ) -> Result<GeneratorResult, GenerateError> {
         let output_dir = instance_dir.data_dir();
 
         info!("Fetching version manifest");
@@ -217,7 +249,7 @@ impl InstanceGenerator {
             VanillaVersionManifest::fetch(&self.client, &VANILLA_MANIFEST_URL).await?;
         let metadata_info = vanilla_manifest
             .get_entry(&self.minecraft_version)
-            .ok_or(InstanceGeneratorError::VanillaVersionNotFound)?
+            .ok_or(GenerateError::VanillaVersionNotFound)?
             .to_metadata_info();
 
         let vanilla_metadata =

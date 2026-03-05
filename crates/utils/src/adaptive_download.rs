@@ -12,7 +12,6 @@ use tokio::sync::Mutex;
 
 use crate::files::{self, DownloadTask};
 use crate::progress::ProgressTracker;
-use crate::utils::is_connect_error;
 
 const MAX_CONCURRENCY: usize = 50;
 const MIN_CONCURRENCY: usize = 1;
@@ -96,18 +95,49 @@ impl SlidingWindow {
     }
 }
 
-async fn download_file(client: &Client, task: &DownloadTask) -> anyhow::Result<u128> {
+#[derive(thiserror::Error, Debug)]
+pub enum DownloadFileError {
+    #[error("network request failed while downloading {url}: {source}")]
+    Reqwest { url: String, source: reqwest::Error },
+    #[error("file I/O failed while downloading {path}: {source}")]
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
+    #[error("timed out while waiting for download chunk from {url}: {source}")]
+    ChunkTimeout {
+        url: String,
+        source: tokio::time::error::Elapsed,
+    },
+    #[error("temporary file {path} does not exist after download")]
+    MissingTempFile { path: String },
+}
+
+async fn download_file(client: &Client, task: &DownloadTask) -> Result<u128, DownloadFileError> {
     let start = Instant::now();
 
     let response = client
         .get(task.url.as_str())
         .send()
-        .await?
-        .error_for_status()?;
+        .await
+        .map_err(|source| DownloadFileError::Reqwest {
+            url: task.url.to_string(),
+            source,
+        })?
+        .error_for_status()
+        .map_err(|source| DownloadFileError::Reqwest {
+            url: task.url.to_string(),
+            source,
+        })?;
     let mut stream = response.bytes_stream();
 
     if let Some(parent_dir) = task.path.parent() {
-        tokio::fs::create_dir_all(parent_dir).await?;
+        tokio::fs::create_dir_all(parent_dir)
+            .await
+            .map_err(|source| DownloadFileError::Io {
+                path: parent_dir.display().to_string(),
+                source,
+            })?;
     }
 
     // write to a temporary file first
@@ -116,36 +146,60 @@ async fn download_file(client: &Client, task: &DownloadTask) -> anyhow::Result<u
     let tmp_path = std::path::PathBuf::from(tmp_path);
 
     {
-        let mut file = tokio::fs::File::create(&tmp_path)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create temp file {:?}: {}", tmp_path, e))?;
+        let mut file =
+            tokio::fs::File::create(&tmp_path)
+                .await
+                .map_err(|source| DownloadFileError::Io {
+                    path: tmp_path.display().to_string(),
+                    source,
+                })?;
 
         let per_chunk_timeout = REQUEST_TIMEOUT;
-        while let Some(chunk_result) =
-            tokio::time::timeout(per_chunk_timeout, stream.next()).await?
+        while let Some(chunk_result) = tokio::time::timeout(per_chunk_timeout, stream.next())
+            .await
+            .map_err(|source| DownloadFileError::ChunkTimeout {
+                url: task.url.to_string(),
+                source,
+            })?
         {
-            let chunk = chunk_result?;
-            file.write_all(&chunk).await?;
+            let chunk = chunk_result.map_err(|source| DownloadFileError::Reqwest {
+                url: task.url.to_string(),
+                source,
+            })?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|source| DownloadFileError::Io {
+                    path: tmp_path.display().to_string(),
+                    source,
+                })?;
         }
-        file.flush().await?;
+        file.flush().await.map_err(|source| DownloadFileError::Io {
+            path: tmp_path.display().to_string(),
+            source,
+        })?;
     }
 
     if !tmp_path.exists() {
-        return Err(anyhow::anyhow!(
-            "Temporary file {:?} does not exist after creation",
-            tmp_path
-        ));
+        return Err(DownloadFileError::MissingTempFile {
+            path: tmp_path.display().to_string(),
+        });
     }
 
     // then atomically rename it to the target path
     if task.path.exists() {
-        files::remove_file_or_dir(&task.path).await?;
+        files::remove_file_or_dir(&task.path)
+            .await
+            .map_err(|source| DownloadFileError::Io {
+                path: task.path.display().to_string(),
+                source,
+            })?;
     }
 
     tokio::fs::rename(&tmp_path, &task.path)
         .await
-        .map_err(|e| {
-            anyhow::anyhow!("Failed to rename {:?} to {:?}: {}", tmp_path, task.path, e)
+        .map_err(|source| DownloadFileError::Io {
+            path: format!("{} -> {}", tmp_path.display(), task.path.display()),
+            source,
         })?;
 
     let latency_ms = start.elapsed().as_millis();
@@ -153,23 +207,43 @@ async fn download_file(client: &Client, task: &DownloadTask) -> anyhow::Result<u
     Ok(latency_ms)
 }
 
-fn is_timeout_error(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<reqwest::Error>()
-        .is_some_and(|e| e.is_timeout())
-        || e.downcast_ref::<tokio::time::error::Elapsed>().is_some()
-        || format!("{e:?}").contains("connection closed before message completed")
-    // reqwest doesn't let us check for this error directly
+fn is_transient_network_error(e: &DownloadFileError) -> bool {
+    match e {
+        DownloadFileError::ChunkTimeout { .. } => true,
+        DownloadFileError::Reqwest { source, .. } => {
+            let source_dbg = format!("{source:?}");
+            source.is_timeout()
+                || source.is_connect()
+                || source.status().is_some_and(|s| s.as_u16() == 523)
+                || source_dbg.contains("connection closed before message completed")
+                || source_dbg.contains("peer closed connection without sending TLS close_notify")
+                || source_dbg.contains("peer closed connection")
+                || source_dbg.contains("connection closed")
+                || source_dbg.contains("connection reset")
+                || source_dbg.contains("connection aborted")
+                || source_dbg.contains("broken pipe")
+                || source_dbg.contains("SendRequest")
+                || source_dbg.contains("connection error")
+                || source_dbg.contains("Connection refused")
+                || source_dbg.contains("Network is unreachable")
+                || source_dbg.contains("Connection timed out")
+        }
+        _ => false,
+    }
 }
 
 /// Download a single file, returning (success, latency_ms).
 /// On success, we return Ok(Some(latency_ms)).
 /// If it's a timeout, we return Ok(None). If it's another error, we return Err(e).
-async fn do_download(client: &Client, task: &DownloadTask) -> anyhow::Result<Option<u128>> {
+async fn do_download(
+    client: &Client,
+    task: &DownloadTask,
+) -> Result<Option<u128>, DownloadFileError> {
     let latency_ms = match download_file(client, task).await {
         Ok(r) => r,
         Err(e) => {
             // If it's a timeout, we return Ok(None), else Err
-            if is_timeout_error(&e) || is_connect_error(&e) {
+            if is_transient_network_error(&e) {
                 debug!("Timeout downloading {}", task.url);
                 return Ok(None);
             } else {
@@ -186,15 +260,22 @@ async fn do_download(client: &Client, task: &DownloadTask) -> anyhow::Result<Opt
 pub enum AdaptiveDownloadError {
     #[error("Connection timed out")]
     ConnectionTimeout,
+    #[error("failed to build HTTP client for adaptive downloader: {0}")]
+    ClientBuild(reqwest::Error),
+    #[error("download failed: {0}")]
+    Download(DownloadFileError),
 }
 
 pub async fn download_files(
     download_tasks: Vec<DownloadTask>,
     progress_bar: impl ProgressTracker,
-) -> anyhow::Result<()> {
+) -> Result<(), AdaptiveDownloadError> {
     progress_bar.set_length(download_tasks.len() as u64);
 
-    let client = Client::builder().connect_timeout(REQUEST_TIMEOUT).build()?;
+    let client = Client::builder()
+        .connect_timeout(REQUEST_TIMEOUT)
+        .build()
+        .map_err(AdaptiveDownloadError::ClientBuild)?;
 
     let desired_concurrency = Arc::new(AtomicUsize::new(4));
 
@@ -241,7 +322,7 @@ pub async fn download_files(
                 (false, 0)
             }
             Err(e) => {
-                return Err(e);
+                return Err(AdaptiveDownloadError::Download(e));
             }
         };
 

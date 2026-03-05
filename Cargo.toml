@@ -1,7 +1,6 @@
 [workspace]
 members = [
-    "launcher",
-    "instance_builder",
+    "crates/instance_builder",
     "crates/auth",
     "crates/instance",
     "crates/utils",

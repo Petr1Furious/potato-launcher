@@ -9,7 +9,6 @@ launcher-auth = { path = "../auth" }
 instance = { path = "../instance" }
 serde.workspace = true
 tokio.workspace = true
-anyhow.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true

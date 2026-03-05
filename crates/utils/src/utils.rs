@@ -24,28 +24,14 @@ pub fn get_unique_name(existing_names: &HashSet<String>, name_base: &str) -> Str
     }
 }
 
-pub fn hash_struct(s: &impl Serialize) -> anyhow::Result<String> {
+#[derive(thiserror::Error, Debug)]
+pub enum HashStructError {
+    #[error("failed to serialize value for hashing: {0}")]
+    Serialize(#[from] serde_json::Error),
+}
+
+pub fn hash_struct(s: &impl Serialize) -> Result<String, HashStructError> {
     let mut hasher = Sha1::new();
     hasher.update(serde_json::to_string(s)?);
     Ok(format!("{:x}", hasher.finalize()))
-}
-
-pub fn is_connect_error(e: &anyhow::Error) -> bool {
-    if let Some(e) = e.downcast_ref::<reqwest::Error>() {
-        return e.is_connect() || e.status().is_some_and(|s| s.as_u16() == 523);
-        // 523 = Cloudflare Origin is Unreachable
-    }
-
-    // Check for connection-related error messages that cannot be checked by reqwest
-    let error_str = format!("{e:?}");
-    error_str.contains("peer closed connection without sending TLS close_notify")
-        || error_str.contains("connection closed")
-        || error_str.contains("connection reset")
-        || error_str.contains("connection aborted")
-        || error_str.contains("broken pipe")
-        || error_str.contains("SendRequest")
-        || error_str.contains("connection error")
-        || error_str.contains("Connection refused")
-        || error_str.contains("Network is unreachable")
-        || error_str.contains("Connection timed out")
 }

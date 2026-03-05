@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::{providers::AuthProviderConfig, user_info::UserInfo};
+use crate::{
+    providers::{AuthProviderConfig, AuthProviderError},
+    user_info::UserInfo,
+};
 
 use super::user_info::AccountData;
 
@@ -26,9 +29,23 @@ pub enum AuthMessage {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum AuthError {
-    #[error("Auth loop exceeded max iterations")]
+pub enum PerformAuthError {
+    #[error("authentication provider failed: {0}")]
+    AuthProvider(#[from] AuthProviderError),
+    #[error("authentication loop exceeded max iterations")]
     InfiniteAuthLoop,
+    #[error("auth flow reached success state without tokens")]
+    MissingAuthResultData,
+}
+
+impl PerformAuthError {
+    pub fn is_connect_error(&self) -> bool {
+        matches!(self, Self::AuthProvider(err) if err.is_connect_error())
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::AuthProvider(err) if err.is_timeout())
+    }
 }
 
 #[async_trait]
@@ -45,7 +62,7 @@ pub async fn perform_auth(
     account_data: Option<AccountData>,
     auth_provider: AuthProviderConfig,
     auth_message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
-) -> anyhow::Result<AccountData> {
+) -> Result<AccountData, PerformAuthError> {
     let mut auth_result_data = account_data.map(|data| AuthResultData {
         access_token: data.access_token,
         refresh_token: data.refresh_token,
@@ -79,12 +96,7 @@ pub async fn perform_auth(
                     .get_user_info(&data.access_token)
                     .await
                     .or_else(|e| {
-                        let is_client_error = e
-                            .downcast_ref::<reqwest::Error>()
-                            .and_then(|re| re.status())
-                            .map(|status| status.is_client_error())
-                            .unwrap_or(false);
-                        if is_client_error {
+                        if e.is_client_error() {
                             Ok(AuthState::Refresh)
                         } else {
                             Err(e)
@@ -93,7 +105,8 @@ pub async fn perform_auth(
             }
 
             AuthState::Success(info) => {
-                let auth_result_data = auth_result_data.unwrap();
+                let auth_result_data =
+                    auth_result_data.ok_or(PerformAuthError::MissingAuthResultData)?;
                 return Ok(AccountData {
                     access_token: auth_result_data.access_token,
                     refresh_token: auth_result_data.refresh_token,
@@ -103,5 +116,5 @@ pub async fn perform_auth(
         }
     }
 
-    Err(AuthError::InfiniteAuthLoop.into())
+    Err(PerformAuthError::InfiniteAuthLoop)
 }

@@ -227,37 +227,56 @@ async fn find_java_installations() -> Vec<JavaInstallation> {
 }
 
 #[derive(thiserror::Error, Debug)]
-enum JavaDownloadError {
-    #[error("Unsupported architecture")]
+pub enum JavaParamsError {
+    #[error("unsupported architecture")]
     UnsupportedArchitecture,
-    #[error("Unsupported operating system")]
+    #[error("unsupported operating system")]
     UnsupportedOS,
-    #[error("No Java versions available")]
-    NoJavaVersionsAvailable,
-    #[error("Invalid downloaded Java")]
-    InvalidDownloadedJava,
-    #[error("No versions array")]
-    NoVersionsArray,
-    #[error("No download URL")]
-    NoDownloadURL,
-    #[error("No file name in URL")]
-    NoFileNameInURL,
-    #[error("No file extension in URL")]
-    NoFileExtensionInURL,
 }
 
-fn get_java_download_params(required_version: &str, archive_type: &str) -> anyhow::Result<String> {
+#[derive(thiserror::Error, Debug)]
+pub enum JavaDownloadError {
+    #[error("failed to build Java download query params: {0}")]
+    Params(#[from] JavaParamsError),
+    #[error("no Java versions available")]
+    NoJavaVersionsAvailable,
+    #[error("downloaded Java installation did not pass validation")]
+    InvalidDownloadedJava,
+    #[error("Java metadata response does not contain a versions array")]
+    NoVersionsArray,
+    #[error("Java metadata response is missing download URL")]
+    NoDownloadURL,
+    #[error("download URL does not contain a file name")]
+    NoFileNameInURL,
+    #[error("download URL does not have the expected file extension")]
+    NoFileExtensionInURL,
+    #[error("network request failed while downloading Java: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("failed to parse Java metadata JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("failed to parse Java download URL: {0}")]
+    Url(#[from] url::ParseError),
+    #[error("file I/O failed while downloading/installing Java: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("failed to extract Java ZIP archive: {0}")]
+    Zip(#[from] zip::result::ZipError),
+}
+
+fn get_java_download_params(
+    required_version: &str,
+    archive_type: &str,
+) -> Result<String, JavaParamsError> {
     let arch = match std::env::consts::ARCH {
         "x86_64" | "amd64" => "x64",
         "aarch64" => "aarch64",
-        _ => return Err(JavaDownloadError::UnsupportedArchitecture.into()),
+        _ => return Err(JavaParamsError::UnsupportedArchitecture),
     };
 
     let os = match std::env::consts::OS {
         "windows" => "windows",
         "linux" => "linux-glibc",
         "macos" => "macos",
-        _ => return Err(JavaDownloadError::UnsupportedOS.into()),
+        _ => return Err(JavaParamsError::UnsupportedOS),
     };
 
     let params = format!(
@@ -280,7 +299,7 @@ pub async fn download_java(
     required_version: &str,
     data_dir: &DataDir,
     progress_tracker: impl ProgressTracker,
-) -> anyhow::Result<JavaInstallation> {
+) -> Result<JavaInstallation, JavaDownloadError> {
     let java_dir = JavaDir::root().to_fs(data_dir);
     let client = Client::new();
 

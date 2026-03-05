@@ -31,8 +31,14 @@ pub struct ForgeMavenMetadata {
     versions: HashMap<String, Vec<String>>,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum ForgeMavenMetadataError {
+    #[error("network request failed while fetching Forge maven metadata: {0}")]
+    Reqwest(#[from] reqwest::Error),
+}
+
 impl ForgeMavenMetadata {
-    pub async fn fetch(client: &Client) -> anyhow::Result<Self> {
+    pub async fn fetch(client: &Client) -> Result<Self, ForgeMavenMetadataError> {
         let response = client
             .get(FORGE_MAVEN_METADATA_URL)
             .send()
@@ -82,8 +88,16 @@ pub struct NeoforgeMavenMetadata {
     versioning: Versioning,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum NeoforgeMavenMetadataError {
+    #[error("network request failed while fetching Neoforge maven metadata: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("failed to parse Neoforge maven metadata XML: {0}")]
+    Xml(#[from] serde_xml_rs::Error),
+}
+
 impl NeoforgeMavenMetadata {
-    pub async fn fetch(client: &Client) -> anyhow::Result<Self> {
+    pub async fn fetch(client: &Client) -> Result<Self, NeoforgeMavenMetadataError> {
         let response = client
             .get(NEOFORGE_MAVEN_METADATA_URL)
             .send()
@@ -142,8 +156,14 @@ pub struct ForgePromotions {
     promos: HashMap<String, String>,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum ForgePromotionsError {
+    #[error("network request failed while fetching Forge promotions metadata: {0}")]
+    Reqwest(#[from] reqwest::Error),
+}
+
 impl ForgePromotions {
-    pub async fn fetch(client: &Client) -> anyhow::Result<Self> {
+    pub async fn fetch(client: &Client) -> Result<Self, ForgePromotionsError> {
         let response = client
             .get(FORGE_PROMOTIONS_URL)
             .send()
@@ -173,7 +193,7 @@ async fn download_forge_installer(
     full_version: &str,
     work_dir: &Path,
     loader: &Loader,
-) -> anyhow::Result<PathBuf> {
+) -> Result<PathBuf, DownloadForgeInstallerError> {
     let filename = format!("{loader:?}-{full_version}-installer.jar");
     let forge_installer_url = match loader {
         Loader::Forge => format!("{FORGE_INSTALLER_BASE_URL}{full_version}/{filename}"),
@@ -233,8 +253,20 @@ impl Debug for Loader {
 pub enum ForgeError {
     #[error("Forge version {0} not found for minecraft {1}")]
     ForgeVersionNotFound(String, String),
-    #[error("No forge profiles found")]
+    #[error("no forge profiles found")]
     NoForgeProfiles,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum GetForgeVersionError {
+    #[error("failed to fetch Forge promotions metadata: {0}")]
+    ForgePromotions(#[from] ForgePromotionsError),
+    #[error("failed to fetch Forge maven metadata: {0}")]
+    ForgeMavenMetadata(#[from] ForgeMavenMetadataError),
+    #[error("failed to fetch Neoforge maven metadata: {0}")]
+    NeoforgeMavenMetadata(#[from] NeoforgeMavenMetadataError),
+    #[error("failed to resolve loader version: {0}")]
+    Forge(#[from] ForgeError),
 }
 
 pub async fn get_forge_version(
@@ -242,7 +274,7 @@ pub async fn get_forge_version(
     minecraft_version: &str,
     loader_version: &Option<String>,
     loader: &Loader,
-) -> anyhow::Result<String> {
+) -> Result<String, GetForgeVersionError> {
     match loader {
         Loader::Forge => {
             let forge_promotions = ForgePromotions::fetch(client).await?;
@@ -301,7 +333,7 @@ pub async fn get_forge_version(
 }
 
 // trick forge installer into thinking that the folder is actually a minecraft instance folder
-pub fn trick_forge(forge_work_dir: &Path, minecraft_version: &str) -> anyhow::Result<()> {
+pub fn trick_forge(forge_work_dir: &Path, minecraft_version: &str) -> Result<(), TrickForgeError> {
     let data_dir = DataDir::new(forge_work_dir.to_path_buf());
     let versions_dir = VersionsDir::root().to_fs(&data_dir);
     std::fs::create_dir_all(versions_dir.join(minecraft_version))?;
@@ -315,7 +347,7 @@ pub fn get_full_version(minecraft_version: &str, forge_version: &str) -> String 
 }
 
 // workaround for windows weirdness
-fn to_abs_path_str(path: &Path) -> anyhow::Result<String> {
+fn to_abs_path_str(path: &Path) -> Result<String, ToAbsPathError> {
     let canonical = path.canonicalize()?;
     let path_str = canonical.to_string_lossy();
 
@@ -339,7 +371,7 @@ async fn run_forge_command(
     java_path: &Path,
     forge_installer_path: &Path,
     forge_work_dir: &Path,
-) -> anyhow::Result<()> {
+) -> Result<(), RunForgeCommandError> {
     let mut cmd = tokio::process::Command::new(&to_abs_path_str(java_path)?);
     cmd.current_dir(&to_abs_path_str(forge_work_dir)?)
         .arg("-jar")
@@ -360,14 +392,13 @@ async fn run_forge_command(
                 .arg(&to_abs_path_str(forge_installer_path)?);
             let retry_output = retry_cmd.output().await?;
             if !retry_output.status.success() {
-                return Err(anyhow::anyhow!(
-                    "Command failed: {:?}",
-                    String::from_utf8_lossy(&output.stderr)
+                return Err(RunForgeCommandError::RetryFailed(
+                    String::from_utf8_lossy(&retry_output.stderr).to_string(),
                 ));
             }
         } else {
             error!("Command failed: {output:?}");
-            return Err(anyhow::anyhow!(stderr_str.to_string()));
+            return Err(RunForgeCommandError::CommandFailed(stderr_str.to_string()));
         }
     }
 
@@ -379,7 +410,7 @@ pub async fn install_forge(
     forge_version: &str,
     vanilla_metadata: &VersionMetadata,
     loader: &Loader,
-) -> anyhow::Result<String> {
+) -> Result<String, InstallForgeError> {
     std::fs::create_dir_all(forge_work_dir)?;
 
     let data_dir = DataDir::new(forge_work_dir.to_path_buf());
@@ -448,6 +479,70 @@ pub async fn install_forge(
     Ok(id)
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum DownloadForgeInstallerError {
+    #[error("network request failed while downloading installer: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("file I/O failed while writing installer: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum TrickForgeError {
+    #[error("file I/O failed while preparing Forge work dir: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ToAbsPathError {
+    #[error("failed to canonicalize path for Forge command: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum RunForgeCommandError {
+    #[error("failed to resolve absolute path for Forge command: {0}")]
+    ToAbsPath(#[from] ToAbsPathError),
+    #[error("failed to execute Forge installer command: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Forge installer command failed: {0}")]
+    CommandFailed(String),
+    #[error("Forge installer retry command failed: {0}")]
+    RetryFailed(String),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum InstallForgeError {
+    #[error("file I/O failed while installing Forge: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("failed to download Java runtime for Forge installer: {0}")]
+    JavaDownload(#[from] utils::java::JavaDownloadError),
+    #[error("failed to download Forge installer: {0}")]
+    DownloadInstaller(#[from] DownloadForgeInstallerError),
+    #[error("failed to prepare Forge work directory layout: {0}")]
+    TrickForge(#[from] TrickForgeError),
+    #[error("failed while running Forge installer command: {0}")]
+    RunForgeCommand(#[from] RunForgeCommandError),
+    #[error("failed to parse launcher profiles JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("failed to resolve Forge profile metadata: {0}")]
+    Forge(#[from] ForgeError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ForgeGenerateError {
+    #[error("failed to resolve Forge/Neoforge version: {0}")]
+    GetForgeVersion(#[from] GetForgeVersionError),
+    #[error("failed to install Forge/Neoforge: {0}")]
+    InstallForge(#[from] InstallForgeError),
+    #[error("failed to read generated version metadata: {0}")]
+    VersionMetadata(#[from] instance::version_metadata::VersionMetadataError),
+    #[error("failed to enumerate generated Forge libraries: {0}")]
+    GetFilesInDir(#[from] files::GetFilesInDirError),
+    #[error("generated library path is outside installer libraries directory: {0}")]
+    StripPrefix(#[from] std::path::StripPrefixError),
+}
+
 pub struct ForgeGenerator<'a> {
     vanilla_metadata: &'a VersionMetadata,
     loader: Loader,
@@ -479,7 +574,7 @@ impl<'a> ForgeGenerator<'a> {
         client: &Client,
         output_dir: &DataDir,
         work_dir: &Path,
-    ) -> anyhow::Result<GeneratorResult> {
+    ) -> Result<GeneratorResult, ForgeGenerateError> {
         let minecraft_version = self.vanilla_metadata.id.clone();
 
         info!(
@@ -524,19 +619,13 @@ impl<'a> ForgeGenerator<'a> {
         let installer_libraries_dir = LibrariesDir::root().to_fs(&installer_data_dir);
         let installer_extra_libs_paths = files::get_files_in_dir(&installer_libraries_dir)?
             .into_iter()
-            .filter_map(|path| {
-                let extension = path.extension().and_then(|ext| ext.to_str());
-                if path.is_file() && extension == Some("jar") {
-                    Some(
-                        path.strip_prefix(&installer_libraries_dir)
-                            .unwrap()
-                            .to_path_buf(),
-                    )
-                } else {
-                    None
-                }
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jar"))
+            .map(|path| {
+                Ok::<PathBuf, ForgeGenerateError>(
+                    path.strip_prefix(&installer_libraries_dir)?.to_path_buf(),
+                )
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
 
         info!(
             "Found {} extra {} libs",

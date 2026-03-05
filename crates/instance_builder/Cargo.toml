@@ -13,10 +13,10 @@ rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-launcher-auth = { path = "../crates/auth" }
-generate = { path = "../crates/generate" }
-instance = { path = "../crates/instance" }
-utils = { path = "../crates/utils" }
+launcher-auth = { path = "../auth" }
+generate = { path = "../generate" }
+instance = { path = "../instance" }
+utils = { path = "../utils" }
 url.workspace = true
 relative-path.workspace = true
 shell-words = "1.1.1"

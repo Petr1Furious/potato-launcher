@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     UserInfo,
     flow::{AuthMessageProvider, AuthResultData, AuthState},
-    providers::AuthProvider,
+    providers::{AuthProvider, base::AuthProviderError},
 };
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
@@ -18,18 +18,18 @@ impl AuthProvider for OfflineAuthProvider {
     async fn authenticate(
         &self,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
-    ) -> anyhow::Result<AuthState> {
+    ) -> Result<AuthState, AuthProviderError> {
         Ok(AuthState::UserInfo(AuthResultData {
             access_token: message_provider.request_offline_nickname().await,
             refresh_token: None,
         }))
     }
 
-    async fn refresh(&self, _: String) -> anyhow::Result<AuthState> {
+    async fn refresh(&self, _: String) -> Result<AuthState, AuthProviderError> {
         Ok(AuthState::Auth)
     }
 
-    async fn get_user_info(&self, token: &str) -> anyhow::Result<AuthState> {
+    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError> {
         let nickname = token;
         let namespace = Uuid::NAMESPACE_DNS;
         let generated_uuid = Uuid::new_v3(&namespace, nickname.as_bytes());

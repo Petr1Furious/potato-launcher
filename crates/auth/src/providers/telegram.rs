@@ -1,7 +1,7 @@
 use crate::{
     UserInfo,
     flow::{AuthMessage, AuthMessageProvider, AuthResultData, AuthState},
-    providers::AuthProvider,
+    providers::{AuthProvider, base::AuthProviderError},
 };
 
 use async_trait::async_trait;
@@ -25,8 +25,28 @@ pub struct TGAuthProvider {
     pub auth_base_url: String,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum TelegramAuthError {
+    #[error("network request failed during Telegram auth: {0}")]
+    Reqwest(#[from] reqwest::Error),
+}
+
+impl TelegramAuthError {
+    pub fn is_client_error(&self) -> bool {
+        matches!(self, Self::Reqwest(err) if err.status().is_some_and(|status| status.is_client_error()))
+    }
+
+    pub fn is_connect_error(&self) -> bool {
+        matches!(self, Self::Reqwest(err) if err.is_connect())
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::Reqwest(err) if err.is_timeout() || err.status().map(|status| status.as_u16()) == Some(524))
+    }
+}
+
 impl TGAuthProvider {
-    async fn get_bot_name(&self) -> anyhow::Result<String> {
+    async fn get_bot_name(&self) -> Result<String, TelegramAuthError> {
         let bot_info: BotInfo = Client::new()
             .get(format!("{}/info", self.auth_base_url))
             .send()
@@ -57,15 +77,17 @@ impl AuthProvider for TGAuthProvider {
     async fn authenticate(
         &self,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
-    ) -> anyhow::Result<AuthState> {
+    ) -> Result<AuthState, AuthProviderError> {
         let client = Client::new();
         let bot_name = self.get_bot_name().await?;
         let start_resp: LoginStartResponse = client
             .post(format!("{}/login/start", self.auth_base_url))
             .send()
-            .await?
+            .await
+            .map_err(TelegramAuthError::Reqwest)?
             .json()
-            .await?;
+            .await
+            .map_err(TelegramAuthError::Reqwest)?;
 
         let tg_deeplink = format!("https://t.me/{}?start={}", bot_name, start_resp.code);
         let _ = open::that(&tg_deeplink);
@@ -85,14 +107,16 @@ impl AuthProvider for TGAuthProvider {
 
             match response {
                 Ok(resp) => {
-                    resp.error_for_status_ref()?;
-                    let poll_resp: LoginPollResponse = resp.json().await?;
+                    resp.error_for_status_ref()
+                        .map_err(TelegramAuthError::Reqwest)?;
+                    let poll_resp: LoginPollResponse =
+                        resp.json().await.map_err(TelegramAuthError::Reqwest)?;
                     access_token = poll_resp.user.access_token;
                     break;
                 }
                 Err(e) => {
                     if !e.is_timeout() {
-                        return Err(e.into());
+                        return Err(TelegramAuthError::Reqwest(e).into());
                     }
                 }
             }
@@ -106,19 +130,22 @@ impl AuthProvider for TGAuthProvider {
         }))
     }
 
-    async fn refresh(&self, _: String) -> anyhow::Result<AuthState> {
+    async fn refresh(&self, _: String) -> Result<AuthState, AuthProviderError> {
         Ok(AuthState::Auth)
     }
 
-    async fn get_user_info(&self, token: &str) -> anyhow::Result<AuthState> {
+    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError> {
         let resp: UserInfo = Client::new()
             .get(format!("{}/login/profile", self.auth_base_url))
             .header("Authorization", format!("Bearer {token}"))
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .map_err(TelegramAuthError::Reqwest)?
+            .error_for_status()
+            .map_err(TelegramAuthError::Reqwest)?
             .json()
-            .await?;
+            .await
+            .map_err(TelegramAuthError::Reqwest)?;
         Ok(AuthState::Success(resp))
     }
 

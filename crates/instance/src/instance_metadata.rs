@@ -19,8 +19,9 @@ use crate::{
 };
 
 use super::{
+    manifest::ManifestError,
     manifest::InstanceManifestEntry,
-    version_metadata::{Arguments, Library, VersionMetadata},
+    version_metadata::{Arguments, Library, VersionMetadata, VersionMetadataError},
 };
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -107,13 +108,29 @@ pub enum InstanceMetadataError {
     MissingClientDownload,
     #[error("Missing version metadata")]
     MissingVersionMetadata,
+    #[error("failed to read instance metadata file: {0}")]
+    ReadFileIo(#[from] std::io::Error),
+    #[error("failed to parse instance metadata JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("failed to compute metadata download tasks: {0}")]
+    GetDownloadTasks(#[from] files::GetDownloadTasksError),
+    #[error("failed to download metadata files: {0}")]
+    DownloadFiles(#[from] files::DownloadFilesError),
+    #[error("failed while processing version metadata: {0}")]
+    VersionMetadata(#[from] VersionMetadataError),
+    #[error("failed to hash instance metadata for manifest: {0}")]
+    HashStruct(#[from] utils::utils::HashStructError),
+    #[error("failed to write instance metadata JSON file: {0}")]
+    WriteFileJson(#[from] files::WriteFileJsonError),
+    #[error("failed while building manifest metadata: {0}")]
+    Manifest(#[from] ManifestError),
 }
 
 impl InstanceMetadata {
     pub async fn read_local(
         entry: &InstanceManifestEntry,
         instance_dir: &InstanceDirFS,
-    ) -> anyhow::Result<Option<Self>> {
+    ) -> Result<Option<Self>, InstanceMetadataError> {
         let meta_path = instance_dir.meta_path();
         if !meta_path.exists() {
             return Ok(None);
@@ -142,7 +159,7 @@ impl InstanceMetadata {
         client: &reqwest::Client,
         entry: &InstanceManifestEntry,
         instance_dir: &InstanceDirFS,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, InstanceMetadataError> {
         let check_tasks = entry.get_check_tasks(instance_dir);
         let download_tasks =
             files::get_download_tasks(check_tasks, progress::no_progress_bar()).await?;
@@ -150,14 +167,14 @@ impl InstanceMetadata {
 
         Self::read_local(entry, instance_dir)
             .await?
-            .ok_or_else(|| InstanceMetadataError::MissingVersionMetadata.into())
+            .ok_or(InstanceMetadataError::MissingVersionMetadata)
     }
 
     pub fn get_manifest_entry(
         &self,
         unique_name: &str,
         base_url: &BaseUrl,
-    ) -> anyhow::Result<InstanceManifestEntry> {
+    ) -> Result<InstanceManifestEntry, InstanceMetadataError> {
         Ok(InstanceManifestEntry {
             name: self.name.clone(),
             url: InstancesDir::root()
@@ -169,16 +186,13 @@ impl InstanceMetadata {
                 .versions
                 .iter()
                 .map(|metadata| metadata.get_metadata_info(base_url))
-                .collect::<Result<Vec<_>, anyhow::Error>>()?,
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 
-    pub async fn save(&self, instance_dir: &InstanceDirFS) -> anyhow::Result<()> {
+    pub async fn save(&self, instance_dir: &InstanceDirFS) -> Result<(), InstanceMetadataError> {
         let path = instance_dir.meta_path();
-        let serialized = serde_json::to_string(self)?;
-        tokio::fs::write(path, serialized).await?;
-
-        Ok(())
+        Ok(files::write_file_json(&path, self).await?)
     }
 
     pub fn get_resources_url_base(&self) -> &Url {
@@ -199,7 +213,7 @@ impl InstanceMetadata {
         &self.name
     }
 
-    pub fn get_client_check_task(&self, data_dir: &DataDir) -> anyhow::Result<CheckTask> {
+    pub fn get_client_check_task(&self, data_dir: &DataDir) -> Result<CheckTask, InstanceMetadataError> {
         let metadata = self
             .versions
             .first()
@@ -214,7 +228,7 @@ impl InstanceMetadata {
                     .to_fs(data_dir),
             ))
         } else {
-            Err(InstanceMetadataError::MissingClientDownload.into())
+            Err(InstanceMetadataError::MissingClientDownload)
         }
     }
 
@@ -254,7 +268,7 @@ impl InstanceMetadata {
             .collect()
     }
 
-    pub fn get_id(&self) -> anyhow::Result<&str> {
+    pub fn get_id(&self) -> Result<&str, InstanceMetadataError> {
         Ok(&self
             .versions
             .last()
@@ -262,7 +276,7 @@ impl InstanceMetadata {
             .id)
     }
 
-    pub fn get_parent_id(&self) -> anyhow::Result<&str> {
+    pub fn get_parent_id(&self) -> Result<&str, InstanceMetadataError> {
         Ok(&self
             .versions
             .first()
@@ -270,7 +284,7 @@ impl InstanceMetadata {
             .id)
     }
 
-    pub fn get_asset_index(&self) -> anyhow::Result<&AssetIndex> {
+    pub fn get_asset_index(&self) -> Result<&AssetIndex, InstanceMetadataError> {
         let version = self
             .versions
             .first()
@@ -281,7 +295,7 @@ impl InstanceMetadata {
             .ok_or(InstanceMetadataError::MissingAssetIndex)?)
     }
 
-    pub fn get_arguments(&self) -> anyhow::Result<Arguments> {
+    pub fn get_arguments(&self) -> Result<Arguments, InstanceMetadataError> {
         let first = self
             .versions
             .first()
@@ -300,7 +314,7 @@ impl InstanceMetadata {
         Ok(merged_arguments)
     }
 
-    pub fn get_main_class(&self) -> anyhow::Result<&str> {
+    pub fn get_main_class(&self) -> Result<&str, InstanceMetadataError> {
         Ok(self
             .versions
             .last()

@@ -14,7 +14,7 @@ use utils::{
 };
 
 use crate::{
-    assets::{AssetIndex, AssetsMetadata},
+    assets::{AssetIndex, AssetsMetadata, AssetsMetadataError},
     instance_metadata::InstanceMetadata,
 };
 
@@ -189,14 +189,42 @@ pub struct LibraryDownloads {
 
 #[derive(thiserror::Error, Debug)]
 pub enum LibraryError {
-    #[error("Invalid library path")]
+    #[error("invalid library path")]
     InvalidLibraryPath,
-    #[error("Invalid library name")]
+    #[error("invalid library name")]
     InvalidLibraryName,
-    #[error("Missing library URL")]
+    #[error("missing library URL")]
     MissingLibraryUrl,
-    #[error("Invalid native URL")]
+    #[error("invalid native URL")]
     InvalidNativeUrl,
+    #[error("failed to construct library URL: {0}")]
+    Url(#[from] url::ParseError),
+    #[error("failed to construct library path: {0}")]
+    PathsLibrary(#[from] utils::paths::LibraryError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum VersionMetadataError {
+    #[error("failed while processing version library metadata: {0}")]
+    Library(#[from] LibraryError),
+    #[error("failed to read local version metadata JSON: {0}")]
+    ReadFileParsed(#[from] files::ReadFileParsedError),
+    #[error("network request failed while fetching version metadata: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("failed to check local version metadata state: {0}")]
+    DownloadCheckIo(#[from] std::io::Error),
+    #[error("failed to parse downloaded version metadata JSON: {0}")]
+    DownloadFileParsed(#[from] files::DownloadFileParsedError),
+    #[error("failed to hash version metadata for manifest: {0}")]
+    HashStruct(#[from] utils::utils::HashStructError),
+    #[error("missing minecraft arguments for legacy version metadata")]
+    MissingMinecraftArguments,
+    #[error("failed to write version metadata JSON file: {0}")]
+    WriteFileJson(#[from] files::WriteFileJsonError),
+    #[error("failed to hash local library file: {0}")]
+    HashFileIo(std::io::Error),
+    #[error("failed to gather assets metadata check tasks: {0}")]
+    AssetsMetadata(#[from] AssetsMetadataError),
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -242,11 +270,11 @@ impl Library {
         }
     }
 
-    fn get_rel_path(&self) -> anyhow::Result<RelativePathBuf> {
+    fn get_rel_path(&self) -> Result<RelativePathBuf, LibraryError> {
         let full_name = self.name.clone();
         let parts: Vec<&str> = full_name.split(':').collect();
         if parts.len() != 3 && parts.len() != 4 {
-            return Err(LibraryError::InvalidLibraryName.into());
+            return Err(LibraryError::InvalidLibraryName);
         }
         let (pkg, name, version) = (parts[0], parts[1], parts[2]);
         let suffix = *parts.get(3).unwrap_or(&"");
@@ -263,16 +291,14 @@ impl Library {
         )))
     }
 
-    fn get_path(&self, data_dir: &DataDir) -> anyhow::Result<PathBuf> {
+    fn get_path(&self, data_dir: &DataDir) -> Result<PathBuf, LibraryError> {
         Ok(LibrariesDir::root()
             .library_path(&self.get_rel_path()?)
             .to_fs(data_dir))
     }
 
-    pub fn get_url(&self) -> anyhow::Result<Url> {
-        self.url
-            .clone()
-            .ok_or(LibraryError::MissingLibraryUrl.into())
+    pub fn get_url(&self) -> Result<Url, LibraryError> {
+        self.url.clone().ok_or(LibraryError::MissingLibraryUrl)
     }
 
     fn get_native_name(&self, os_arch: &str) -> Option<&str> {
@@ -290,7 +316,7 @@ impl Library {
         &self,
         native_name: &str,
         native_download: &Download,
-    ) -> anyhow::Result<NativePath> {
+    ) -> Result<NativePath, LibraryError> {
         Ok(LibrariesDir::root()
             .library_path(&self.get_rel_path()?)
             .native_path(
@@ -312,7 +338,7 @@ impl Library {
 
     /// Get the native path for the library, matching the given target OS/arch.
     /// This function expects OsArch::Specific
-    pub fn get_os_native_path(&self, target: &OsArch) -> anyhow::Result<Option<NativePath>> {
+    pub fn get_os_native_path(&self, target: &OsArch) -> Result<Option<NativePath>, LibraryError> {
         if let OsArch::Specific { os, arch } = target
             && let Some(native_name) = self.get_native_name(&Self::get_arch_os_name(os, arch))
             && let Some(download) = self.get_native_download(native_name)
@@ -337,7 +363,10 @@ impl Library {
         }
     }
 
-    fn get_library_check_task(&self, data_dir: &DataDir) -> anyhow::Result<Option<CheckTask>> {
+    fn get_library_check_task(
+        &self,
+        data_dir: &DataDir,
+    ) -> Result<Option<CheckTask>, LibraryError> {
         if let Some(downloads) = &self.downloads {
             if let Some(artifact) = &downloads.artifact {
                 // if the library has an artifact, we return its check task
@@ -364,7 +393,7 @@ impl Library {
         &self,
         data_dir: &DataDir,
         target: &OsArch,
-    ) -> anyhow::Result<Vec<CheckTask>> {
+    ) -> Result<Vec<CheckTask>, LibraryError> {
         let mut tasks = vec![];
         if let Some(task) = self.get_library_check_task(data_dir)? {
             tasks.push(task);
@@ -402,7 +431,7 @@ impl Library {
 
     /// Get the inferred sha1 url from the library name.
     /// This should only be used for libraries that don't have a proper sha1 in the metadata.
-    pub fn get_inferred_sha1_url(&self) -> anyhow::Result<Url> {
+    pub fn get_inferred_sha1_url(&self) -> Result<Url, LibraryError> {
         let mut path = self.get_rel_path()?;
         path.set_file_name(
             path.file_name()
@@ -491,14 +520,17 @@ lazy_static::lazy_static! {
 }
 
 impl VersionMetadata {
-    pub async fn read_local(data_dir: &DataDir, version_id: &str) -> anyhow::Result<Self> {
+    pub async fn read_local(
+        data_dir: &DataDir,
+        version_id: &str,
+    ) -> Result<Self, VersionMetadataError> {
         let version_path = VersionsDir::root()
             .metadata_path(version_id)
             .to_fs(data_dir);
-        files::read_file_parsed(&version_path).await
+        Ok(files::read_file_parsed(&version_path).await?)
     }
 
-    pub async fn fetch(client: &reqwest::Client, url: &str) -> anyhow::Result<Self> {
+    pub async fn fetch(client: &reqwest::Client, url: &str) -> Result<Self, VersionMetadataError> {
         let response = client.get(url).send().await?.error_for_status()?;
         let metadata = response.json().await?;
         Ok(metadata)
@@ -508,16 +540,22 @@ impl VersionMetadata {
         client: &reqwest::Client,
         metadata_info: &VersionMetadataInfo,
         data_dir: &DataDir,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, VersionMetadataError> {
         let check_task = metadata_info.to_check_task(data_dir);
-        if let Some(download_task) = files::get_download_task(&check_task).await? {
-            files::download_file_parsed(client, &download_task).await
+        if let Some(download_task) = files::get_download_task(&check_task)
+            .await
+            .map_err(VersionMetadataError::DownloadCheckIo)?
+        {
+            Ok(files::download_file_parsed(client, &download_task).await?)
         } else {
             Self::read_local(data_dir, &metadata_info.id).await
         }
     }
 
-    pub fn get_metadata_info(&self, base_url: &BaseUrl) -> anyhow::Result<VersionMetadataInfo> {
+    pub fn get_metadata_info(
+        &self,
+        base_url: &BaseUrl,
+    ) -> Result<VersionMetadataInfo, VersionMetadataError> {
         Ok(VersionMetadataInfo {
             id: self.id.clone(),
             url: VersionsDir::root().metadata_path(&self.id).to_url(base_url),
@@ -525,11 +563,14 @@ impl VersionMetadata {
         })
     }
 
-    pub fn get_arguments(&self) -> anyhow::Result<Arguments> {
+    pub fn get_arguments(&self) -> Result<Arguments, VersionMetadataError> {
         match &self.arguments {
             Some(arguments) => Ok(arguments.clone()),
             None => {
-                let minecraft_arguments = self.minecraft_arguments.clone().unwrap();
+                let minecraft_arguments = self
+                    .minecraft_arguments
+                    .clone()
+                    .ok_or(VersionMetadataError::MissingMinecraftArguments)?;
                 Ok(Arguments {
                     game: minecraft_arguments
                         .split_whitespace()
@@ -541,11 +582,11 @@ impl VersionMetadata {
         }
     }
 
-    pub async fn save(&self, data_dir: &DataDir) -> anyhow::Result<()> {
+    pub async fn save(&self, data_dir: &DataDir) -> Result<(), VersionMetadataError> {
         let version_path = VersionsDir::root()
             .metadata_path(&self.id)
             .to_fs_safe(data_dir);
-        files::write_file_json(&version_path, self).await
+        Ok(files::write_file_json(&version_path, self).await?)
     }
 
     /// Convert vanilla version metadata into instance metadata
@@ -566,7 +607,7 @@ impl VersionMetadata {
         &self,
         download_server_base: &BaseUrl,
         data_dir: &DataDir,
-    ) -> anyhow::Result<VersionMetadata> {
+    ) -> Result<VersionMetadata, VersionMetadataError> {
         let mut replaced_metadata = VersionMetadata {
             arguments: self.arguments.clone(),
             asset_index: self.asset_index.clone(),
@@ -603,12 +644,14 @@ impl VersionMetadata {
                 artifact_sha1 = Some(if let Some(sha1) = &library.sha1 {
                     sha1.clone()
                 } else {
-                    files::hash_file(&library.get_path(data_dir)?).await?
+                    files::hash_file(&library.get_path(data_dir)?)
+                        .await
+                        .map_err(VersionMetadataError::HashFileIo)?
                 });
             }
             let library_artifact = artifact_sha1
                 .map(|sha1| {
-                    Ok::<Download, anyhow::Error>(Download {
+                    Ok::<Download, VersionMetadataError>(Download {
                         url: LibrariesDir::root()
                             .library_path(&library.get_rel_path()?)
                             .to_url(download_server_base),
@@ -660,7 +703,7 @@ impl VersionMetadata {
         data_dir: &DataDir,
         resources_url_base: &ResourcesUrlBase,
         target: &OsArch,
-    ) -> anyhow::Result<Vec<CheckTask>> {
+    ) -> Result<Vec<CheckTask>, VersionMetadataError> {
         let asset_metadata = if let Some(asset_index) = &self.asset_index {
             Some(AssetsMetadata::read_or_download(client, asset_index, data_dir).await?)
         } else {
@@ -680,7 +723,7 @@ impl VersionMetadata {
         asset_metadata: Option<&AssetsMetadata>,
         resources_url_base: &ResourcesUrlBase,
         target: &OsArch,
-    ) -> anyhow::Result<Vec<CheckTask>> {
+    ) -> Result<Vec<CheckTask>, VersionMetadataError> {
         let mut tasks = if let Some(asset_metadata) = asset_metadata {
             asset_metadata.get_check_tasks(data_dir, resources_url_base, false)?
         } else {

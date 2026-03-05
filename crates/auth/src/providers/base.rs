@@ -10,22 +10,59 @@ use crate::{
 };
 
 use super::{
-    elyby::ElyByAuthProvider, microsoft::MicrosoftAuthProvider, offline::OfflineAuthProvider,
-    telegram::TGAuthProvider,
+    elyby::{ElyByAuthError, ElyByAuthProvider},
+    microsoft::{MicrosoftAuthError, MicrosoftAuthProvider},
+    offline::OfflineAuthProvider,
+    telegram::{TGAuthProvider, TelegramAuthError},
 };
+
+#[derive(thiserror::Error, Debug)]
+pub enum AuthProviderError {
+    #[error("microsoft authentication flow failed: {0}")]
+    Microsoft(#[from] MicrosoftAuthError),
+    #[error("telegram authentication flow failed: {0}")]
+    Telegram(#[from] TelegramAuthError),
+    #[error("ely.by authentication flow failed: {0}")]
+    ElyBy(#[from] ElyByAuthError),
+}
+
+impl AuthProviderError {
+    pub fn is_client_error(&self) -> bool {
+        match self {
+            AuthProviderError::Microsoft(err) => err.is_client_error(),
+            AuthProviderError::Telegram(err) => err.is_client_error(),
+            AuthProviderError::ElyBy(err) => err.is_client_error(),
+        }
+    }
+
+    pub fn is_connect_error(&self) -> bool {
+        match self {
+            AuthProviderError::Microsoft(err) => err.is_connect_error(),
+            AuthProviderError::Telegram(err) => err.is_connect_error(),
+            AuthProviderError::ElyBy(err) => err.is_connect_error(),
+        }
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            AuthProviderError::Microsoft(err) => err.is_timeout(),
+            AuthProviderError::Telegram(err) => err.is_timeout(),
+            AuthProviderError::ElyBy(err) => err.is_timeout(),
+        }
+    }
+}
 
 /// All methods here should be stateless
 #[async_trait]
 pub trait AuthProvider {
-    // TODO: sane error handling
     async fn authenticate(
         &self,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
-    ) -> anyhow::Result<AuthState>;
+    ) -> Result<AuthState, AuthProviderError>;
 
-    async fn refresh(&self, refresh_token: String) -> anyhow::Result<AuthState>;
+    async fn refresh(&self, refresh_token: String) -> Result<AuthState, AuthProviderError>;
 
-    async fn get_user_info(&self, token: &str) -> anyhow::Result<AuthState>;
+    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError>;
 
     fn get_injector_url(&self) -> Option<String>;
 }

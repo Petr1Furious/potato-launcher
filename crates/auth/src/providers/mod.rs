@@ -5,7 +5,7 @@ mod offline;
 mod telegram;
 
 pub(crate) use base::AuthProvider;
-pub use base::{AuthProviderConfig, AuthProviderType};
+pub use base::{AuthProviderConfig, AuthProviderError, AuthProviderType};
 
 pub use elyby::ElyByAuthProvider;
 pub use microsoft::MicrosoftAuthProvider;

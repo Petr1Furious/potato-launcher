@@ -52,9 +52,7 @@ lazy_static::lazy_static! {
         let overrides = MOJANG_LIBRARY_PATCHES_JSON;
         serde_json::from_str(overrides).expect("Failed to parse library overrides")
     };
-}
 
-lazy_static::lazy_static! {
     static ref LWJGL_VERSION_MATCHES: HashMap<String, String> = {
         let matches = LWJGL_VERSION_MATCHES_JSON;
         serde_json::from_str(matches).expect("Failed to parse lwjgl version matches")

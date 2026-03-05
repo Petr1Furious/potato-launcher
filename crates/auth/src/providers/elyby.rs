@@ -17,24 +17,69 @@ use tokio::time::sleep;
 use crate::UserInfo;
 use crate::flow::{AuthMessage, AuthMessageProvider, AuthResultData, AuthState};
 
-use super::base::AuthProvider;
+use super::base::{AuthProvider, AuthProviderError};
 
 const ELY_BY_BASE: &str = "https://ely.by/";
 
 #[derive(thiserror::Error, Debug)]
-pub enum AuthError {
-    #[error("Invalid code")]
+pub enum ExchangeCodeError {
+    #[error("invalid code")]
     InvalidCode,
-    #[error("Invalid token type")]
+    #[error("invalid token type")]
     InvalidTokenType,
-    #[error("Missing access token")]
+    #[error("missing access token")]
     MissingAccessToken,
-    #[error("Request error")]
-    RequestError,
-    #[error("Timeout during authentication")]
-    AuthTimeout,
-    #[error("Missing query string")]
+    #[error("network request failed while exchanging Ely.by code: {0}")]
+    Reqwest(#[from] reqwest::Error),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum HandleRequestError {
+    #[error("missing query string")]
     MissingQueryString,
+    #[error("failed to parse auth callback query: {0}")]
+    SerdeUrlEncoded(#[from] serde_urlencoded::de::Error),
+    #[error("failed to exchange Ely.by auth code: {0}")]
+    ExchangeCode(#[from] ExchangeCodeError),
+    #[error("failed to build callback response: {0}")]
+    Http(#[from] hyper::http::Error),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ElyByAuthError {
+    #[error("request channel closed unexpectedly")]
+    RequestChannelClosed,
+    #[error("authentication timed out")]
+    AuthTimeout,
+    #[error("failed to bind local callback server: {0}")]
+    BindListener(#[source] std::io::Error),
+    #[error("failed to read local callback listener address: {0}")]
+    LocalAddr(#[source] std::io::Error),
+    #[error("failed to accept callback connection: {0}")]
+    AcceptConnection(#[source] std::io::Error),
+    #[error("callback server failed: {0}")]
+    Hyper(#[from] hyper::Error),
+    #[error("failed while handling callback request: {0}")]
+    HandleRequest(#[from] HandleRequestError),
+    #[error("failed to exchange Ely.by auth code: {0}")]
+    ExchangeCode(#[from] ExchangeCodeError),
+    #[error("network request failed while fetching Ely.by profile: {0}")]
+    Reqwest(#[from] reqwest::Error),
+}
+
+impl ElyByAuthError {
+    pub fn is_client_error(&self) -> bool {
+        matches!(self, Self::Reqwest(err) if err.status().is_some_and(|status| status.is_client_error()))
+    }
+
+    pub fn is_connect_error(&self) -> bool {
+        matches!(self, Self::Reqwest(err) if err.is_connect())
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        matches!(self, Self::AuthTimeout)
+            || matches!(self, Self::Reqwest(err) if err.is_timeout() || err.status().map(|status| status.as_u16()) == Some(524))
+    }
 }
 
 pub(crate) fn elyby_default_launcher_name() -> String {
@@ -59,7 +104,7 @@ async fn exchange_code(
     client_secret: &str,
     code: &str,
     redirect_uri: &str,
-) -> anyhow::Result<String> {
+) -> Result<String, ExchangeCodeError> {
     let client = Client::new();
     let resp = client
         .post("https://account.ely.by/api/oauth2/v1/token")
@@ -76,11 +121,11 @@ async fn exchange_code(
     let status = resp.status();
     let data: serde_json::Value = resp.json().await?;
     if status != 200 && data.get("error") == Some(&"invalid_request".into()) {
-        return Err(AuthError::InvalidCode.into());
+        return Err(ExchangeCodeError::InvalidCode);
     }
 
     if data.get("token_type") != Some(&"Bearer".into()) {
-        return Err(AuthError::InvalidTokenType.into());
+        return Err(ExchangeCodeError::InvalidTokenType);
     }
 
     if let Some(access_token) = data.get("access_token")
@@ -88,14 +133,14 @@ async fn exchange_code(
     {
         Ok(access_token.to_string())
     } else {
-        Err(AuthError::MissingAccessToken.into())
+        Err(ExchangeCodeError::MissingAccessToken)
     }
 }
 
 enum TokenResult {
     Token(String),
     InvalidCode,
-    Error(anyhow::Error),
+    Error(ElyByAuthError),
 }
 
 impl ElyByAuthProvider {
@@ -127,8 +172,11 @@ impl ElyByAuthProvider {
         redirect_uri: String,
         req: Request<hyper::body::Incoming>,
         token_tx: Box<mpsc::UnboundedSender<TokenResult>>,
-    ) -> anyhow::Result<Response<Full<Bytes>>> {
-        let query = req.uri().query().ok_or(AuthError::MissingQueryString)?;
+    ) -> Result<Response<Full<Bytes>>, HandleRequestError> {
+        let query = req
+            .uri()
+            .query()
+            .ok_or(HandleRequestError::MissingQueryString)?;
         let auth_query: AuthQuery = serde_urlencoded::from_str(query)?;
 
         let token_result = match exchange_code(
@@ -140,13 +188,8 @@ impl ElyByAuthProvider {
         .await
         {
             Ok(token) => TokenResult::Token(token),
-            Err(e) => match e.downcast::<AuthError>() {
-                Ok(e) => match e {
-                    AuthError::InvalidCode => TokenResult::InvalidCode,
-                    _ => TokenResult::Error(e.into()),
-                },
-                Err(e) => TokenResult::Error(e),
-            },
+            Err(ExchangeCodeError::InvalidCode) => TokenResult::InvalidCode,
+            Err(e) => TokenResult::Error(e.into()),
         };
 
         let response = match &token_result {
@@ -181,11 +224,19 @@ impl AuthProvider for ElyByAuthProvider {
     async fn authenticate(
         &self,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
-    ) -> anyhow::Result<AuthState> {
+    ) -> Result<AuthState, AuthProviderError> {
         let addr = SocketAddr::from(([127, 0, 0, 1], 0));
-        let listener = TcpListener::bind(addr).await?;
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(ElyByAuthError::BindListener)?;
 
-        let redirect_uri = format!("http://localhost:{}/", listener.local_addr()?.port());
+        let redirect_uri = format!(
+            "http://localhost:{}/",
+            listener
+                .local_addr()
+                .map_err(ElyByAuthError::LocalAddr)?
+                .port()
+        );
         self.print_auth_url(&redirect_uri, message_provider).await;
 
         let mut http = http1::Builder::new();
@@ -195,11 +246,11 @@ impl AuthProvider for ElyByAuthProvider {
             let stream;
             tokio::select! {
                 _ = sleep(Duration::from_secs(120)) => {
-                    return Err(AuthError::AuthTimeout.into());
+                    return Err(ElyByAuthError::AuthTimeout.into());
                 }
 
                 st = listener.accept() => {
-                    stream = st?.0;
+                    stream = st.map_err(ElyByAuthError::AcceptConnection)?.0;
                 }
             }
 
@@ -215,7 +266,8 @@ impl AuthProvider for ElyByAuthProvider {
                     self.handle_request(redirect_uri.clone(), req, token_tx)
                 }),
             )
-            .await?;
+            .await
+            .map_err(ElyByAuthError::Hyper)?;
 
             if let Some(token) = token_rx.recv().await {
                 match token {
@@ -226,28 +278,31 @@ impl AuthProvider for ElyByAuthProvider {
                         }));
                     }
                     TokenResult::InvalidCode => continue,
-                    TokenResult::Error(e) => return Err(e),
+                    TokenResult::Error(e) => return Err(e.into()),
                 }
             } else {
-                return Err(AuthError::RequestError.into());
+                return Err(ElyByAuthError::RequestChannelClosed.into());
             }
         }
     }
 
-    async fn refresh(&self, _: String) -> anyhow::Result<AuthState> {
+    async fn refresh(&self, _: String) -> Result<AuthState, AuthProviderError> {
         Ok(AuthState::Auth)
     }
 
-    async fn get_user_info(&self, token: &str) -> anyhow::Result<AuthState> {
+    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError> {
         let client = Client::new();
         let resp: UserInfo = client
             .get("https://account.ely.by/api/account/v1/info")
             .header("Authorization", format!("Bearer {token}"))
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .map_err(ElyByAuthError::Reqwest)?
+            .error_for_status()
+            .map_err(ElyByAuthError::Reqwest)?
             .json()
-            .await?;
+            .await
+            .map_err(ElyByAuthError::Reqwest)?;
         Ok(AuthState::Success(resp))
     }
 

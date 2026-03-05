@@ -11,7 +11,13 @@ use walkdir::WalkDir;
 
 use crate::progress::ProgressTracker;
 
-pub fn get_files_in_dir(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+#[derive(thiserror::Error, Debug)]
+pub enum GetFilesInDirError {
+    #[error("failed to get files in dir: {0}")]
+    WalkDir(#[from] walkdir::Error),
+}
+
+pub fn get_files_in_dir(path: &Path) -> Result<Vec<PathBuf>, GetFilesInDirError> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
     }
@@ -22,16 +28,17 @@ pub fn get_files_in_dir(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
 
     Ok(WalkDir::new(path)
         .into_iter()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
-        .map(|entry| entry.path().to_path_buf())
+        .map(|entry| entry.map(|entry| entry.into_path()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|entry| entry.is_file())
         .collect())
 }
 
 pub fn get_files_ignore_paths(
     path: &Path,
     ignore_paths: &HashSet<PathBuf>,
-) -> anyhow::Result<Vec<PathBuf>> {
+) -> io::Result<Vec<PathBuf>> {
     if path.is_file() {
         return Ok(vec![path.to_path_buf()]);
     }
@@ -49,7 +56,7 @@ pub fn get_files_ignore_paths(
         .collect())
 }
 
-pub async fn hash_file(path: &Path) -> anyhow::Result<String> {
+pub async fn hash_file(path: &Path) -> io::Result<String> {
     let file = fs::File::open(path).await?;
     let mut reader = io::BufReader::new(file);
     let mut hasher = Sha1::new();
@@ -69,7 +76,7 @@ pub async fn hash_file(path: &Path) -> anyhow::Result<String> {
 pub async fn hash_files<P>(
     files: &[P],
     progress_bar: impl ProgressTracker,
-) -> anyhow::Result<Vec<String>>
+) -> Result<Vec<String>, HashFilesError>
 where
     P: AsRef<Path>,
 {
@@ -94,7 +101,7 @@ where
             }
             Err(e) => {
                 progress_bar.finish();
-                return Err(e);
+                return Err(e.into());
             }
         }
     }
@@ -107,7 +114,13 @@ where
         .collect())
 }
 
-pub async fn remove_file_or_dir(path: &Path) -> anyhow::Result<()> {
+#[derive(thiserror::Error, Debug)]
+pub enum HashFilesError {
+    #[error("failed while hashing files: {0}")]
+    Io(#[from] io::Error),
+}
+
+pub async fn remove_file_or_dir(path: &Path) -> io::Result<()> {
     if path.is_file() {
         fs::remove_file(path).await?;
     } else if path.is_dir() {
@@ -170,17 +183,16 @@ fn temp_path_for(target_path: &Path) -> PathBuf {
     PathBuf::from(tmp_path)
 }
 
-async fn atomic_replace_file(tmp_path: &Path, target_path: &Path) -> anyhow::Result<()> {
+async fn atomic_replace_file(tmp_path: &Path, target_path: &Path) -> io::Result<()> {
     match fs::remove_file(target_path).await {
         Ok(()) => {}
         Err(err) if err.kind() == ErrorKind::NotFound => {}
-        Err(err) => return Err(err.into()),
+        Err(err) => return Err(err),
     }
-    fs::rename(tmp_path, target_path).await?;
-    Ok(())
+    fs::rename(tmp_path, target_path).await
 }
 
-pub async fn get_download_task(check_task: &CheckTask) -> anyhow::Result<Option<DownloadTask>> {
+pub async fn get_download_task(check_task: &CheckTask) -> io::Result<Option<DownloadTask>> {
     match fs::metadata(&check_task.path).await {
         Ok(metadata) if !metadata.is_file() => {
             return Ok(Some(DownloadTask {
@@ -195,7 +207,7 @@ pub async fn get_download_task(check_task: &CheckTask) -> anyhow::Result<Option<
                 path: check_task.path.clone(),
             }));
         }
-        Err(err) => return Err(err.into()),
+        Err(err) => return Err(err),
     }
 
     if let Some(remote_sha1) = &check_task.remote_sha1 {
@@ -217,10 +229,20 @@ pub enum CheckTasksError {
     HashMissing(PathBuf),
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum GetDownloadTasksError {
+    #[error("failed while reading local files for download checks: {0}")]
+    Io(#[from] io::Error),
+    #[error("failed while hashing local files for download checks: {0}")]
+    HashFiles(#[from] HashFilesError),
+    #[error("download check state is invalid: {0}")]
+    CheckTasks(#[from] CheckTasksError),
+}
+
 pub async fn get_download_tasks(
     check_tasks: Vec<CheckTask>,
     progress_bar: impl ProgressTracker,
-) -> anyhow::Result<Vec<DownloadTask>> {
+) -> Result<Vec<DownloadTask>, GetDownloadTasksError> {
     let mut to_hash = Vec::new();
     for task in &check_tasks {
         if task.remote_sha1.is_some() {
@@ -276,7 +298,18 @@ pub async fn get_download_tasks(
         .collect())
 }
 
-pub async fn download_file(client: &reqwest::Client, task: &DownloadTask) -> anyhow::Result<()> {
+#[derive(thiserror::Error, Debug)]
+pub enum DownloadFileError {
+    #[error("network request failed while downloading file: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("file I/O failed while downloading file: {0}")]
+    Io(#[from] io::Error),
+}
+
+pub async fn download_file(
+    client: &reqwest::Client,
+    task: &DownloadTask,
+) -> Result<(), DownloadFileError> {
     if let Some(parent) = task.path.parent() {
         fs::create_dir_all(parent).await?;
     }
@@ -303,10 +336,18 @@ pub async fn download_file(client: &reqwest::Client, task: &DownloadTask) -> any
     Ok(())
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum DownloadFileParsedError {
+    #[error("network request failed while fetching JSON file: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("failed to parse downloaded JSON: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
 pub async fn download_file_parsed<T>(
     client: &reqwest::Client,
     task: &DownloadTask,
-) -> anyhow::Result<T>
+) -> Result<T, DownloadFileParsedError>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -319,7 +360,7 @@ pub async fn download_files(
     client: &reqwest::Client,
     download_tasks: Vec<DownloadTask>,
     progress_bar: impl ProgressTracker,
-) -> anyhow::Result<()> {
+) -> Result<(), DownloadFilesError> {
     progress_bar.set_length(download_tasks.len() as u64);
 
     const MAX_CONCURRENT_TASKS: usize = 8;
@@ -337,7 +378,7 @@ pub async fn download_files(
             }
             Err(e) => {
                 progress_bar.finish();
-                return Err(e);
+                return Err(e.into());
             }
         }
     }
@@ -346,10 +387,16 @@ pub async fn download_files(
     Ok(())
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum DownloadFilesError {
+    #[error("one or more file downloads failed: {0}")]
+    DownloadFile(#[from] DownloadFileError),
+}
+
 pub async fn copy_files_if_different(
     copy_tasks: Vec<CopyTask>,
     progress_bar: impl ProgressTracker,
-) -> anyhow::Result<()> {
+) -> Result<(), CopyFilesError> {
     progress_bar.set_length(copy_tasks.len() as u64);
 
     const MAX_CONCURRENT_TASKS: usize = 8;
@@ -368,7 +415,7 @@ pub async fn copy_files_if_different(
             }
             Err(e) => {
                 progress_bar.finish();
-                return Err(e);
+                return Err(e.into());
             }
         }
     }
@@ -377,7 +424,21 @@ pub async fn copy_files_if_different(
     Ok(())
 }
 
-pub async fn read_file_parsed<T>(path: &Path) -> anyhow::Result<T>
+#[derive(thiserror::Error, Debug)]
+pub enum CopyFilesError {
+    #[error("one or more file copy operations failed: {0}")]
+    CopyFile(#[from] CopyFileError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ReadFileParsedError {
+    #[error("failed to read JSON file from disk: {0}")]
+    Io(#[from] io::Error),
+    #[error("failed to parse JSON file from disk: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+pub async fn read_file_parsed<T>(path: &Path) -> Result<T, ReadFileParsedError>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -385,7 +446,15 @@ where
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-pub async fn write_file_json<T>(path: &Path, value: &T) -> anyhow::Result<()>
+#[derive(thiserror::Error, Debug)]
+pub enum WriteFileJsonError {
+    #[error("failed to write JSON file to disk: {0}")]
+    Io(#[from] io::Error),
+    #[error("failed to serialize JSON payload: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+pub async fn write_file_json<T>(path: &Path, value: &T) -> Result<(), WriteFileJsonError>
 where
     T: serde::Serialize,
 {
@@ -398,15 +467,17 @@ where
 pub enum CopyFileError {
     #[error("Source path is not a file: {0}")]
     SourceNotFile(PathBuf),
+    #[error("file I/O failed while copying file: {0}")]
+    Io(#[from] io::Error),
 }
 
 /// Compare two files by size+sha1 and atomically replace target from source when different.
 /// Returns true when replacement happened.
 /// This function will return an error if target is a directory.
-pub async fn copy_file_if_different(source: &Path, target: &Path) -> anyhow::Result<bool> {
+pub async fn copy_file_if_different(source: &Path, target: &Path) -> Result<bool, CopyFileError> {
     let source_meta = fs::metadata(source).await?;
     if !source_meta.is_file() {
-        return Err(CopyFileError::SourceNotFile(source.to_path_buf()).into());
+        return Err(CopyFileError::SourceNotFile(source.to_path_buf()));
     }
 
     let same = match fs::metadata(target).await {
@@ -458,6 +529,18 @@ pub enum RetainPathsError {
     PathOutsideTargetDir(PathBuf),
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum RetainOnlyFilesError {
+    #[error("invalid retain paths: {0}")]
+    RetainPaths(#[from] RetainPathsError),
+    #[error("failed while traversing target directory: {0}")]
+    WalkDir(#[from] walkdir::Error),
+    #[error("failed to resolve relative path under target directory: {0}")]
+    StripPrefix(#[from] std::path::StripPrefixError),
+    #[error("file I/O failed while retaining files: {0}")]
+    Io(#[from] io::Error),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RetainStats {
     pub removed_files: usize,
@@ -470,7 +553,7 @@ pub struct RetainStats {
 pub async fn retain_only_files_and_parents(
     target_dir: &Path,
     keep_files: &HashSet<PathBuf>,
-) -> anyhow::Result<RetainStats> {
+) -> Result<RetainStats, RetainOnlyFilesError> {
     if !target_dir.exists() {
         return Ok(RetainStats {
             removed_files: 0,
@@ -513,8 +596,8 @@ pub async fn retain_only_files_and_parents(
     for entry in WalkDir::new(target_dir)
         .contents_first(true)
         .into_iter()
-        .filter_map(|entry| entry.ok())
     {
+        let entry = entry?;
         let path = entry.path();
         if path == target_dir {
             continue;

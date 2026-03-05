@@ -77,12 +77,7 @@ impl Spec {
         Ok(spec)
     }
 
-    pub async fn generate(
-        self,
-        output_dir: &Path,
-        work_dir: &Path,
-        _delete_remote_instances: Option<&HashSet<String>>,
-    ) -> anyhow::Result<()> {
+    pub async fn generate(self, output_dir: &Path, work_dir: &Path) -> anyhow::Result<()> {
         let data_dir = DataDir::new(output_dir.to_path_buf());
         let download_server_base = BaseUrl::new(self.download_server_base.clone());
         let client = reqwest::Client::new();
@@ -229,7 +224,7 @@ impl Spec {
                 .map(|metadata| {
                     metadata.get_manifest_entry(metadata.get_name(), &download_server_base)
                 })
-                .collect::<anyhow::Result<Vec<_>>>()?,
+                .collect::<Result<Vec<_>, _>>()?,
             authlib_injector: Some(AuthlibInjectorDownload {
                 url: authlib_injector_custom_url.clone(),
                 sha1: Some(authlib_injector_sha1),

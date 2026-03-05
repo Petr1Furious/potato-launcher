@@ -2,29 +2,10 @@ mod progress;
 mod spec;
 
 use clap::{Arg, Command};
-use env_logger::Env;
 use spec::Spec;
-use std::collections::HashSet;
-use std::fs::OpenOptions;
 use std::path::PathBuf;
 use tokio::runtime::Runtime;
-
-struct TeeWriter {
-    file: std::fs::File,
-}
-
-impl std::io::Write for TeeWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let _ = std::io::stderr().write_all(buf);
-        self.file.write_all(buf)?;
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        let _ = std::io::stderr().flush();
-        self.file.flush()
-    }
-}
+use utils::logs::{LoggerOptions, setup_logger_with_options};
 
 fn parse_path(v: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(v);
@@ -81,21 +62,16 @@ fn main() -> anyhow::Result<()> {
     let work_dir_path = work_dir.clone();
 
     std::fs::create_dir_all(&work_dir_path)?;
-    let log_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(work_dir_path.join("builder.log"))?;
-    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
-        .target(env_logger::Target::Pipe(Box::new(TeeWriter {
-            file: log_file,
-        })))
-        .init();
+    setup_logger_with_options(
+        &work_dir_path.join("builder.log"),
+        LoggerOptions {
+            append: true,
+            ..LoggerOptions::default()
+        },
+    )?;
 
     let rt = Runtime::new().unwrap();
     let spec = rt.block_on(Spec::from_file(&spec_file_path))?;
-    let delete_remote_set: Option<HashSet<String>> = matches
-        .get_many::<String>("delete_remote_instances")
-        .map(|vals| vals.map(|s| s.to_string()).collect());
 
-    rt.block_on(spec.generate(&output_dir_path, &work_dir_path, delete_remote_set.as_ref()))
+    rt.block_on(spec.generate(&output_dir_path, &work_dir_path))
 }

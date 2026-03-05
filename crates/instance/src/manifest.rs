@@ -8,6 +8,14 @@ use utils::{
     paths::{DataDir, InstanceDirFS, VersionsDir},
 };
 
+#[derive(thiserror::Error, Debug)]
+pub enum ManifestError {
+    #[error("network request failed while fetching manifest: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("failed to write manifest JSON file: {0}")]
+    WriteFileJson(#[from] files::WriteFileJsonError),
+}
+
 /// A single entry in the vanilla version manifest
 /// https://piston-meta.mojang.com/mc/game/version_manifest_v2.json
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -58,7 +66,7 @@ pub struct VanillaVersionManifest {
 }
 
 impl VanillaVersionManifest {
-    pub async fn fetch(client: &Client, url: &Url) -> anyhow::Result<Self> {
+    pub async fn fetch(client: &Client, url: &Url) -> Result<Self, ManifestError> {
         let res = client
             .get(url.clone())
             .send()
@@ -73,10 +81,8 @@ impl VanillaVersionManifest {
         self.versions.iter().find(|v| v.id == minecraft_version)
     }
 
-    pub async fn save_to_file(&self, manifest_path: &Path) -> anyhow::Result<()> {
-        let manifest_str = serde_json::to_string(self)?;
-        tokio::fs::write(manifest_path, manifest_str).await?;
-        Ok(())
+    pub async fn save_to_file(&self, manifest_path: &Path) -> Result<(), ManifestError> {
+        Ok(files::write_file_json(manifest_path, self).await?)
     }
 }
 
@@ -150,7 +156,7 @@ pub struct InstanceManifest {
 }
 
 impl InstanceManifest {
-    pub async fn fetch(client: &Client, url: &Url) -> anyhow::Result<Self> {
+    pub async fn fetch(client: &Client, url: &Url) -> Result<Self, ManifestError> {
         let res = client
             .get(url.clone())
             .send()
@@ -161,7 +167,7 @@ impl InstanceManifest {
         Ok(res)
     }
 
-    pub async fn save_to_file(&self, manifest_path: &Path) -> anyhow::Result<()> {
-        files::write_file_json(manifest_path, self).await
+    pub async fn save_to_file(&self, manifest_path: &Path) -> Result<(), ManifestError> {
+        Ok(files::write_file_json(manifest_path, self).await?)
     }
 }

@@ -20,8 +20,18 @@ pub struct FabricVersionsMeta {
     versions: Vec<FabricVersionMeta>,
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum FabricGeneratorError {
+    #[error("no Fabric versions found for game version {0}")]
+    NoVersionsFound(String),
+    #[error("network request failed while fetching Fabric metadata: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("failed while processing Fabric version metadata: {0}")]
+    VersionMetadata(#[from] instance::version_metadata::VersionMetadataError),
+}
+
 impl FabricVersionsMeta {
-    pub async fn fetch(game_version: &str) -> anyhow::Result<Self> {
+    pub async fn fetch(game_version: &str) -> Result<Self, FabricGeneratorError> {
         let fabric_manifest_url = format!("{FABRIC_META_BASE_URL}{game_version}");
         let client = Client::new();
         let response = client
@@ -52,7 +62,7 @@ async fn download_fabric_metadata(
     minecraft_version: &str,
     loader_version: &str,
     data_dir: &DataDir,
-) -> anyhow::Result<VersionMetadata> {
+) -> Result<VersionMetadata, FabricGeneratorError> {
     let fabric_metadata_url =
         format!("{FABRIC_META_BASE_URL}{minecraft_version}/{loader_version}/profile/json");
     let version_metadata = VersionMetadata::fetch(client, &fabric_metadata_url).await?;
@@ -74,18 +84,12 @@ impl FabricGenerator {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum FabricGeneratorError {
-    #[error("No Fabric versions found for game version {0}")]
-    NoVersionsFound(String),
-}
-
 impl FabricGenerator {
     pub async fn generate(
         &self,
         client: &Client,
         output_dir: &DataDir,
-    ) -> anyhow::Result<VersionMetadata> {
+    ) -> Result<VersionMetadata, FabricGeneratorError> {
         info!(
             "Generating Fabric {}, minecraft version {}",
             self.loader_version.as_deref().unwrap_or("<auto>"),
@@ -107,13 +111,9 @@ impl FabricGenerator {
         };
 
         info!("Downloading Fabric version metadata");
-        let fabric_metadata = download_fabric_metadata(
-            client,
-            &self.minecraft_version,
-            &fabric_version,
-            output_dir,
-        )
-        .await?;
+        let fabric_metadata =
+            download_fabric_metadata(client, &self.minecraft_version, &fabric_version, output_dir)
+                .await?;
 
         info!("Fabric \"{}\" generated", &fabric_version);
 

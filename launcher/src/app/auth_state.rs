@@ -18,7 +18,6 @@ use launcher_auth::storage::AuthStorage;
 use log::error;
 use qrcode::QrCode;
 use shared::paths::get_auth_data_path;
-use shared::utils::is_connect_error;
 use std::hash::DefaultHasher;
 use std::hash::Hash as _;
 use std::hash::Hasher as _;
@@ -70,22 +69,11 @@ fn authenticate(
             },
 
             Err(e) => {
-                let mut connect_error = false;
-                if is_connect_error(&e) {
-                    connect_error = true;
-                }
-                let mut timeout_error = false;
-                if let Some(re) = e.downcast_ref::<reqwest::Error>()
-                    && (re.is_timeout() || re.status().map(|s| s.as_u16()) == Some(524))
-                {
-                    timeout_error = true;
-                }
-
                 AuthResult {
                     auth_provider,
-                    status: if connect_error {
+                    status: if e.is_connect_error() {
                         AuthStatus::AuthorizeErrorOffline
-                    } else if timeout_error {
+                    } else if e.is_timeout() {
                         AuthStatus::AuthorizeErrorTimeout
                     } else {
                         error!("Auth error:\n{e:?}");
@@ -134,7 +122,10 @@ impl AuthState {
             auth_status: AuthStatus::NotAuthorized,
             auth_task: None,
             auth_message_provider: Arc::new(EguiAuthMessageProvider::new(ctx)),
-            auth_storage: AuthStorage::load(auth_data_path),
+            auth_storage: AuthStorage::load(auth_data_path.clone()).unwrap_or_else(|e| {
+                error!("Failed to load auth storage, using empty storage: {e}");
+                AuthStorage::empty(auth_data_path)
+            }),
             fresh_accounts: HashSet::new(),
 
             show_add_account: false,
@@ -164,8 +155,17 @@ impl AuthState {
                     if result.status == AuthStatus::Authorized
                         && let Some(auth_data) = result.account_data
                     {
-                        let (provider_id, username) =
-                            self.auth_storage.insert_account(&result.auth_provider, auth_data);
+                        let (provider_id, username) = match self
+                            .auth_storage
+                            .insert_account(&result.auth_provider, auth_data)
+                        {
+                            Ok(value) => value,
+                            Err(e) => {
+                                error!("Failed to save authenticated account: {e}");
+                                self.auth_status = AuthStatus::AuthorizeError;
+                                return true;
+                            }
+                        };
                         self.fresh_accounts.insert((provider_id, username));
                         config.set_selected_auth_profile(AuthProfile {
                             auth_backend_id: provider_id,
@@ -417,7 +417,8 @@ impl AuthState {
             && let Some(auth_profile) = auth_profile.take()
         {
             self.auth_storage
-                .delete_account(auth_profile.auth_backend_id, &auth_profile.username);
+                .delete_account(auth_profile.auth_backend_id, &auth_profile.username)
+                .unwrap_or_else(|e| error!("Failed to delete account from storage: {e}"));
             config.clear_selected_auth_profile();
         }
 

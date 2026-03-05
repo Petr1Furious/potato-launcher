@@ -390,7 +390,7 @@ impl ResourcesUrlBase {
     }
 
     pub fn object_url(&self, object_hash: &str) -> Result<Url, url::ParseError> {
-        Ok(self.0.join(object_rel_path(object_hash).as_str())?)
+        self.0.join(object_rel_path(object_hash).as_str())
     }
 }
 

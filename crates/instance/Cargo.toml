@@ -8,7 +8,6 @@ utils = { path = "../utils" }
 launcher-auth = { path = "../auth" }
 serde.workspace = true
 tokio.workspace = true
-anyhow.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
