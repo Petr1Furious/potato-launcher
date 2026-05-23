@@ -593,10 +593,7 @@ pub async fn retain_only_files_and_parents(
         }
     }
 
-    for entry in WalkDir::new(target_dir)
-        .contents_first(true)
-        .into_iter()
-    {
+    for entry in WalkDir::new(target_dir).contents_first(true).into_iter() {
         let entry = entry?;
         let path = entry.path();
         if path == target_dir {

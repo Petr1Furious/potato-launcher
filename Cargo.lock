@@ -7094,6 +7094,8 @@ dependencies = [
  "url",
  "walkdir",
  "which 8.0.2",
+ "winapi",
+ "winreg 0.56.0",
  "zip",
 ]
 

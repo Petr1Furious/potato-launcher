@@ -23,3 +23,7 @@ lazy_static.workspace = true
 which = "8.0.2"
 zip.workspace = true
 hex = "0.4.3"
+
+[target.'cfg(windows)'.dependencies]
+winapi.workspace = true
+winreg.workspace = true

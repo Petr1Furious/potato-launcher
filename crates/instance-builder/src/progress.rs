@@ -16,7 +16,6 @@ impl TerminalProgressBar {
         bar.set_message(message.to_string());
         Self { bar }
     }
-
 }
 
 impl ProgressTracker for TerminalProgressBar {
