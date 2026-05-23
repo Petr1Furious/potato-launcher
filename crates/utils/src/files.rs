@@ -259,10 +259,7 @@ pub async fn get_download_tasks(
     }
 
     let hashes = hash_files(&to_hash, progress_bar).await?;
-    let hashes = to_hash
-        .into_iter()
-        .zip(hashes.into_iter())
-        .collect::<HashMap<_, _>>();
+    let hashes = to_hash.into_iter().zip(hashes).collect::<HashMap<_, _>>();
 
     let mut download_tasks = HashMap::new();
     for task in check_tasks {
