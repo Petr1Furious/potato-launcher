@@ -70,7 +70,7 @@ pub async fn hash_file(path: &Path) -> io::Result<String> {
         hasher.update(&buffer[..n]);
     }
 
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 pub async fn hash_files<P>(

@@ -33,5 +33,5 @@ pub enum HashStructError {
 pub fn hash_struct(s: &impl Serialize) -> Result<String, HashStructError> {
     let mut hasher = Sha1::new();
     hasher.update(serde_json::to_string(s)?);
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }

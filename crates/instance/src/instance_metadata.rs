@@ -19,8 +19,8 @@ use crate::{
 };
 
 use super::{
-    manifest::ManifestError,
     manifest::InstanceManifestEntry,
+    manifest::ManifestError,
     version_metadata::{Arguments, Library, VersionMetadata, VersionMetadataError},
 };
 
@@ -213,7 +213,10 @@ impl InstanceMetadata {
         &self.name
     }
 
-    pub fn get_client_check_task(&self, data_dir: &DataDir) -> Result<CheckTask, InstanceMetadataError> {
+    pub fn get_client_check_task(
+        &self,
+        data_dir: &DataDir,
+    ) -> Result<CheckTask, InstanceMetadataError> {
         let metadata = self
             .versions
             .first()
@@ -289,10 +292,10 @@ impl InstanceMetadata {
             .versions
             .first()
             .ok_or(InstanceMetadataError::MissingVersionMetadata)?;
-        Ok(version
+        version
             .asset_index
             .as_ref()
-            .ok_or(InstanceMetadataError::MissingAssetIndex)?)
+            .ok_or(InstanceMetadataError::MissingAssetIndex)
     }
 
     pub fn get_arguments(&self) -> Result<Arguments, InstanceMetadataError> {

@@ -2,6 +2,7 @@ use gpui::*;
 use gpui_component::{
     ActiveTheme, Root, button::Button, h_flex, scroll::ScrollableElement, v_flex,
 };
+use gpui_platform::application;
 
 pub struct MainView;
 impl Render for MainView {
@@ -46,9 +47,7 @@ impl Render for MainView {
 }
 
 fn main() {
-    let app = Application::new();
-
-    app.run(move |cx| {
+    application().run(move |cx| {
         gpui_component::init(cx);
 
         cx.spawn(async move |cx| {

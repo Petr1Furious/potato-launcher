@@ -20,5 +20,6 @@ serde.workspace = true
 serde_json.workspace = true
 tar.workspace = true
 lazy_static.workspace = true
-which = "8.0.1"
+which = "8.0.2"
 zip.workspace = true
+hex = "0.4.3"
