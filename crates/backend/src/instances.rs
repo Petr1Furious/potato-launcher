@@ -39,29 +39,50 @@ pub struct InstanceUserSettingsView {
     pub jvm_flags: Option<Arc<str>>,
 }
 
-pub fn build_instance_views(
-    local_instances: &[LocalInstance],
-    catalogs: &HashMap<Url, BackendCatalogState>,
-    installing: &ProgressMap,
-    install_errors: &HashMap<Uuid, Arc<str>>,
-    installed_overrides: &HashSet<Uuid>,
-    launching: &HashSet<Uuid>,
-    running: &HashSet<Uuid>,
-    launch_errors: &HashMap<Uuid, Arc<str>>,
-    local_metadata: &HashMap<Uuid, LocalMetadataView>,
-    user_settings: &HashMap<Uuid, InstanceUserSettingsView>,
-    accounts: &[AccountView],
-) -> Vec<InstanceView> {
+pub struct InstanceLiveState<'a> {
+    pub installing: &'a ProgressMap,
+    pub install_errors: &'a HashMap<Uuid, Arc<str>>,
+    pub installed_overrides: &'a HashSet<Uuid>,
+    pub launching: &'a HashSet<Uuid>,
+    pub running: &'a HashSet<Uuid>,
+    pub launch_errors: &'a HashMap<Uuid, Arc<str>>,
+}
+
+pub struct InstanceViewBuildInput<'a> {
+    pub local_instances: &'a [LocalInstance],
+    pub catalogs: &'a HashMap<Url, BackendCatalogState>,
+    pub live_state: InstanceLiveState<'a>,
+    pub local_metadata: &'a HashMap<Uuid, LocalMetadataView>,
+    pub user_settings: &'a HashMap<Uuid, InstanceUserSettingsView>,
+    pub accounts: &'a [AccountView],
+}
+
+pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceView> {
+    let InstanceViewBuildInput {
+        local_instances,
+        catalogs,
+        live_state,
+        local_metadata,
+        user_settings,
+        accounts,
+    } = input;
+    let InstanceLiveState {
+        installing,
+        install_errors,
+        installed_overrides,
+        launching,
+        running,
+        launch_errors,
+    } = live_state;
     let mut views = Vec::new();
     let fetched_manifests = fetched_manifests(catalogs);
     let mut covered_remote_keys = HashSet::new();
 
-    for local in local_instances {
+    for local in *local_instances {
         let mut status = base_local_status(
             local,
             installing,
             install_errors,
-            installed_overrides,
             launching,
             running,
             launch_errors,
@@ -254,7 +275,6 @@ fn base_local_status(
     local: &LocalInstance,
     installing: &ProgressMap,
     install_errors: &HashMap<Uuid, Arc<str>>,
-    installed_overrides: &HashSet<Uuid>,
     launching: &HashSet<Uuid>,
     running: &HashSet<Uuid>,
     launch_errors: &HashMap<Uuid, Arc<str>>,
@@ -275,8 +295,6 @@ fn base_local_status(
         InstanceLiveStatus::InstallFailed(error.clone())
     } else if let Some(error) = launch_errors.get(&local.id) {
         InstanceLiveStatus::LaunchFailed(error.clone())
-    } else if installed_overrides.contains(&local.id) {
-        InstanceLiveStatus::Installed
     } else {
         InstanceLiveStatus::Installed
     }
@@ -385,6 +403,43 @@ mod tests {
     use super::*;
     use instance::{manifest::InstanceManifestEntry, storage::RemoteSource};
 
+    #[derive(Default)]
+    struct TestBuildFixture {
+        installing: ProgressMap,
+        install_errors: HashMap<Uuid, Arc<str>>,
+        installed_overrides: HashSet<Uuid>,
+        launching: HashSet<Uuid>,
+        running: HashSet<Uuid>,
+        launch_errors: HashMap<Uuid, Arc<str>>,
+        local_metadata: HashMap<Uuid, LocalMetadataView>,
+        user_settings: HashMap<Uuid, InstanceUserSettingsView>,
+    }
+
+    impl TestBuildFixture {
+        fn build<'a>(
+            &'a self,
+            local_instances: &'a [LocalInstance],
+            catalogs: &'a HashMap<Url, BackendCatalogState>,
+            accounts: &'a [AccountView],
+        ) -> Vec<InstanceView> {
+            build_instance_views(&InstanceViewBuildInput {
+                local_instances,
+                catalogs,
+                live_state: InstanceLiveState {
+                    installing: &self.installing,
+                    install_errors: &self.install_errors,
+                    installed_overrides: &self.installed_overrides,
+                    launching: &self.launching,
+                    running: &self.running,
+                    launch_errors: &self.launch_errors,
+                },
+                local_metadata: &self.local_metadata,
+                user_settings: &self.user_settings,
+                accounts,
+            })
+        }
+    }
+
     #[test]
     fn derives_statuses_across_multiple_backend_urls() {
         let url_a = Url::parse("https://a.example/manifest.json").unwrap();
@@ -445,19 +500,8 @@ mod tests {
             ),
         ]);
 
-        let views = build_instance_views(
-            &locals,
-            &catalogs,
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &[],
-        );
+        let fixture = TestBuildFixture::default();
+        let views = fixture.build(&locals, &catalogs, &[]);
 
         assert_status(&views, local_only_id, InstanceLiveStatus::Installed);
         assert_status(&views, installed_id, InstanceLiveStatus::Installed);
@@ -484,19 +528,8 @@ mod tests {
             ),
         ]);
 
-        let views = build_instance_views(
-            &[],
-            &catalogs,
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &[],
-        );
+        let fixture = TestBuildFixture::default();
+        let views = fixture.build(&[], &catalogs, &[]);
 
         let vanilla_views = views
             .iter()
@@ -533,19 +566,8 @@ mod tests {
             BackendCatalogState::Fetched(Arc::new(manifest([("New Pack", "new")]))),
         )]);
 
-        let views = build_instance_views(
-            &locals,
-            &catalogs,
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &[],
-        );
+        let fixture = TestBuildFixture::default();
+        let views = fixture.build(&locals, &catalogs, &[]);
         let view = views.iter().find(|view| view.id == id).unwrap();
 
         assert_eq!(view.status, InstanceLiveStatus::OrphanedFromBackend);
@@ -581,19 +603,9 @@ mod tests {
             },
         )]);
 
-        let views = build_instance_views(
-            &locals,
-            &catalogs,
-            &progress,
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &[],
-        );
+        let mut fixture = TestBuildFixture::default();
+        fixture.installing = progress;
+        let views = fixture.build(&locals, &catalogs, &[]);
         let view = views.iter().find(|view| view.id == id).unwrap();
 
         assert!(view.orphaned);
@@ -615,19 +627,9 @@ mod tests {
             },
         )]);
 
-        let views = build_instance_views(
-            &[local],
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &metadata,
-            &HashMap::new(),
-            &[],
-        );
+        let mut fixture = TestBuildFixture::default();
+        fixture.local_metadata = metadata.clone();
+        let views = fixture.build(&[local], &HashMap::new(), &[]);
 
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].auth_provider, Some(provider));
@@ -652,19 +654,9 @@ mod tests {
             OfflineAuthProvider {},
         ))];
 
-        let views = build_instance_views(
-            &[local],
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &metadata,
-            &HashMap::new(),
-            &accounts,
-        );
+        let mut fixture = TestBuildFixture::default();
+        fixture.local_metadata = metadata.clone();
+        let views = fixture.build(&[local], &HashMap::new(), &accounts);
 
         assert!(!views[0].has_required_account);
         assert!(views[0].launch_blocked_reason.is_some());
@@ -696,19 +688,10 @@ mod tests {
             },
         )]);
 
-        let views = build_instance_views(
-            &[local],
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &metadata,
-            &settings,
-            &[account],
-        );
+        let mut fixture = TestBuildFixture::default();
+        fixture.local_metadata = metadata.clone();
+        fixture.user_settings = settings.clone();
+        let views = fixture.build(&[local], &HashMap::new(), &[account]);
 
         assert_eq!(views[0].selected_account, Some(selected_key));
         assert_eq!(views[0].effective_auth_provider, Some(required));
@@ -741,19 +724,8 @@ mod tests {
             })),
         )]);
 
-        let views = build_instance_views(
-            &[],
-            &catalogs,
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &[account],
-        );
+        let fixture = TestBuildFixture::default();
+        let views = fixture.build(&[], &catalogs, &[account]);
 
         assert_eq!(views[0].selected_account, None);
         assert_eq!(views[0].effective_auth_provider, Some(provider));
@@ -795,19 +767,9 @@ mod tests {
             },
         )]);
 
-        let views = build_instance_views(
-            &[],
-            &catalogs,
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &settings,
-            &[override_account],
-        );
+        let mut fixture = TestBuildFixture::default();
+        fixture.user_settings = settings.clone();
+        let views = fixture.build(&[], &catalogs, &[override_account]);
 
         assert!(!views[0].locally_installed);
         assert_eq!(views[0].account_override, Some(override_key));
@@ -845,19 +807,10 @@ mod tests {
             OfflineAuthProvider {},
         ))];
 
-        let views = build_instance_views(
-            &[local],
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &metadata,
-            &settings,
-            &accounts,
-        );
+        let mut fixture = TestBuildFixture::default();
+        fixture.local_metadata = metadata.clone();
+        fixture.user_settings = settings.clone();
+        let views = fixture.build(&[local], &HashMap::new(), &accounts);
 
         assert_eq!(views[0].account_override, Some(override_account));
         assert_eq!(views[0].effective_xmx_mb, Some(6144));
@@ -880,19 +833,9 @@ mod tests {
             },
         )]);
 
-        let views = build_instance_views(
-            &[local],
-            &HashMap::new(),
-            &progress,
-            &HashMap::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashSet::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &HashMap::new(),
-            &[],
-        );
+        let mut fixture = TestBuildFixture::default();
+        fixture.installing = progress;
+        let views = fixture.build(&[local], &HashMap::new(), &[]);
 
         assert!(matches!(
             &views[0].status,

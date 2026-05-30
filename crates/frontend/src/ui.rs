@@ -11,19 +11,7 @@ pub struct LauncherUI {
 
 impl LauncherUI {
     pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let instances_page = cx.new(|cx| {
-            InstancesPage::new(
-                data.instances.clone(),
-                data.backends.clone(),
-                data.accounts.clone(),
-                data.notifications.clone(),
-                data.settings.clone(),
-                data.backend_sender.clone(),
-                data.launcher_dir.clone(),
-                window,
-                cx,
-            )
-        });
+        let instances_page = cx.new(|cx| InstancesPage::new(data, window, cx));
         Self {
             data: data.clone(),
             instances_page,

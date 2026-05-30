@@ -350,19 +350,21 @@ impl BackendState {
         let local_metadata = self.local_metadata_views();
         let account_views = self.account_views();
         let instance_settings = self.instance_settings_views();
-        instances::build_instance_views(
-            self.instance_storage.all(),
-            &self.catalogs,
-            &self.installing,
-            &self.install_errors,
-            &self.installed_overrides,
-            &self.launching,
-            &self.running,
-            &self.launch_errors,
-            &local_metadata,
-            &instance_settings,
-            &account_views,
-        )
+        instances::build_instance_views(&instances::InstanceViewBuildInput {
+            local_instances: self.instance_storage.all(),
+            catalogs: &self.catalogs,
+            live_state: instances::InstanceLiveState {
+                installing: &self.installing,
+                install_errors: &self.install_errors,
+                installed_overrides: &self.installed_overrides,
+                launching: &self.launching,
+                running: &self.running,
+                launch_errors: &self.launch_errors,
+            },
+            local_metadata: &local_metadata,
+            user_settings: &instance_settings,
+            accounts: &account_views,
+        })
         .into()
     }
 

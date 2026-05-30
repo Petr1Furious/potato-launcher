@@ -264,7 +264,7 @@ impl InstanceStorage {
     }
 }
 
-pub fn allocate_dir_name<'a>(taken: &HashSet<&'a str>, base: &str) -> String {
+pub fn allocate_dir_name(taken: &HashSet<&str>, base: &str) -> String {
     let base = sanitize_dir_name(base);
     if !taken.contains(base.as_str()) {
         return base;

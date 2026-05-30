@@ -84,7 +84,7 @@ pub fn start(
 
         cx.spawn(async move |cx| {
             while let Some(message) = receiver.recv().await {
-                let _ = cx.update(|cx| processor.process(message, cx));
+                cx.update(|cx| processor.process(message, cx));
             }
         })
         .detach();
@@ -100,12 +100,10 @@ fn initial_window_bounds(cx: &App) -> WindowBounds {
             let display_size = display.bounds().size;
             let width = (display_size.width.as_f32() * 0.86)
                 .min(display_size.width.as_f32() - 96.0)
-                .min(1280.0)
-                .max(720.0);
+                .clamp(720.0, 1280.0);
             let height = (display_size.height.as_f32() * 0.86)
                 .min(display_size.height.as_f32() - 96.0)
-                .min(820.0)
-                .max(420.0);
+                .clamp(420.0, 820.0);
             size(px(width), px(height))
         })
         .unwrap_or_else(|| size(px(1180.0), px(760.0)));

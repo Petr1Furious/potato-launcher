@@ -156,16 +156,16 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
     let java = java::get_java(&java_version, &data_dir)
         .await
         .ok_or_else(|| LaunchError::JavaNotFound(java_version.clone()))?;
-    let args = build_launch_arguments(
-        &metadata,
-        &provider,
-        &account_data,
+    let args = build_launch_arguments(&LaunchBuildContext {
+        metadata: &metadata,
+        provider: &provider,
+        account: &account_data,
         online,
-        request.xmx_mb,
-        request.jvm_flags.as_deref(),
-        &data_dir,
-        &instance_dir,
-    )?;
+        xmx_mb: request.xmx_mb,
+        jvm_flags: request.jvm_flags.as_deref(),
+        data_dir: &data_dir,
+        instance_dir: &instance_dir,
+    })?;
 
     let minecraft_dir = instance_dir.minecraft_dir();
     tokio::fs::create_dir_all(&minecraft_dir).await?;
@@ -212,16 +212,28 @@ struct LaunchArguments {
     game: Vec<String>,
 }
 
-fn build_launch_arguments(
-    metadata: &InstanceMetadata,
-    provider: &AuthProviderConfig,
-    account: &AccountData,
+struct LaunchBuildContext<'a> {
+    metadata: &'a InstanceMetadata,
+    provider: &'a AuthProviderConfig,
+    account: &'a AccountData,
     online: bool,
     xmx_mb: Option<u64>,
-    jvm_flags: Option<&str>,
-    data_dir: &DataDir,
-    instance_dir: &InstanceDirFS,
-) -> Result<LaunchArguments, LaunchError> {
+    jvm_flags: Option<&'a str>,
+    data_dir: &'a DataDir,
+    instance_dir: &'a InstanceDirFS,
+}
+
+fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArguments, LaunchError> {
+    let LaunchBuildContext {
+        metadata,
+        provider,
+        account,
+        online,
+        xmx_mb,
+        jvm_flags,
+        data_dir,
+        instance_dir,
+    } = ctx;
     let classpath = classpath(metadata, data_dir)?;
     let libraries_dir = LibrariesDir::root().to_fs(data_dir);
     let natives_dir = NativesDir::for_id(metadata.get_parent_id()?).to_fs(data_dir);
@@ -261,7 +273,7 @@ fn build_launch_arguments(
         ("auth_xuid".to_string(), String::new()),
         (
             "user_type".to_string(),
-            if online { "mojang" } else { "offline" }.to_string(),
+            if *online { "mojang" } else { "offline" }.to_string(),
         ),
         ("version_type".to_string(), "release".to_string()),
         ("resolution_width".to_string(), "925".to_string()),
@@ -288,7 +300,7 @@ fn build_launch_arguments(
         java_args.extend(flags.split_whitespace().map(ToString::to_string));
     }
 
-    if online && let Some(auth_url) = provider.get_injector_url() {
+    if *online && let Some(auth_url) = provider.get_injector_url() {
         let authlib_path = metadata
             .authlib_injector_path(data_dir, provider)?
             .ok_or_else(|| {

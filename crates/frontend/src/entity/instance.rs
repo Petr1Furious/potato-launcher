@@ -12,6 +12,35 @@ pub struct InstanceEntries {
 #[derive(Clone)]
 pub struct InstancesUpdatedEvent;
 
+#[derive(Clone, Debug)]
+pub struct InstanceProgressUpdate {
+    pub id: Uuid,
+    pub stage: ProgressStage,
+    pub current: u64,
+    pub total: u64,
+    pub message: Arc<str>,
+    pub show_bar: bool,
+}
+
+impl InstanceProgressUpdate {
+    pub fn new(
+        id: Uuid,
+        stage: ProgressStage,
+        current: u64,
+        total: u64,
+        message: Arc<str>,
+    ) -> Self {
+        Self {
+            id,
+            stage,
+            current,
+            total,
+            message,
+            show_bar: total > 1,
+        }
+    }
+}
+
 impl EventEmitter<InstancesUpdatedEvent> for InstanceEntries {}
 
 impl InstanceEntries {
@@ -21,23 +50,14 @@ impl InstanceEntries {
         cx.notify();
     }
 
-    pub fn set_progress(
-        &mut self,
-        id: Uuid,
-        stage: ProgressStage,
-        current: u64,
-        total: u64,
-        message: Arc<str>,
-        show_bar: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(instance) = self.entries.iter_mut().find(|entry| entry.id == id) {
+    pub fn set_progress(&mut self, update: InstanceProgressUpdate, cx: &mut Context<Self>) {
+        if let Some(instance) = self.entries.iter_mut().find(|entry| entry.id == update.id) {
             instance.status = InstanceLiveStatus::Installing {
-                stage,
-                current,
-                total,
-                message,
-                show_bar,
+                stage: update.stage,
+                current: update.current,
+                total: update.total,
+                message: update.message,
+                show_bar: update.show_bar,
             };
             cx.emit(InstancesUpdatedEvent);
             cx.notify();

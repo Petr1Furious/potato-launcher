@@ -17,28 +17,23 @@ use launcher_auth::providers::{
     AuthProviderConfig, ElyByAuthProvider, MicrosoftAuthProvider, TGAuthProvider,
 };
 use launcher_bridge::{
-    AccountView, BackendFetchState, BackendSender, BackendStatus, InstanceLiveStatus,
+    AccountView, BackendFetchState, BackendStatus, BackendSender, InstanceLiveStatus,
     InstanceOrigin, InstanceView, LauncherSettingsView, MessageToBackend, NotificationLevel,
 };
 use url::Url;
 use uuid::Uuid;
 
 use crate::entity::{
-    account::{AccountEntries, AccountsUpdatedEvent},
-    backend::{BackendList, BackendsUpdatedEvent},
-    instance::{InstanceEntries, InstancesUpdatedEvent},
+    DataEntities,
+    account::AccountsUpdatedEvent,
+    backend::BackendsUpdatedEvent,
+    instance::InstancesUpdatedEvent,
     notification::NotificationEntries,
-    settings::{LauncherSettingsEntries, LauncherSettingsUpdatedEvent},
+    settings::LauncherSettingsUpdatedEvent,
 };
 
 pub struct InstancesPage {
-    instances: gpui::Entity<InstanceEntries>,
-    backends: gpui::Entity<BackendList>,
-    accounts: gpui::Entity<AccountEntries>,
-    notifications: gpui::Entity<NotificationEntries>,
-    settings: gpui::Entity<LauncherSettingsEntries>,
-    backend_sender: BackendSender,
-    launcher_dir: PathBuf,
+    data: DataEntities,
     selected_instance: Option<Uuid>,
     show_global_settings: bool,
     show_backend_settings: bool,
@@ -61,27 +56,17 @@ pub struct InstancesPage {
 }
 
 impl InstancesPage {
-    pub fn new(
-        instances: gpui::Entity<InstanceEntries>,
-        backends: gpui::Entity<BackendList>,
-        accounts: gpui::Entity<AccountEntries>,
-        notifications: gpui::Entity<NotificationEntries>,
-        settings: gpui::Entity<LauncherSettingsEntries>,
-        backend_sender: BackendSender,
-        launcher_dir: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let _instances_subscription = cx
-            .subscribe(&instances, |_, _, _: &InstancesUpdatedEvent, cx| {
+            .subscribe(&data.instances, |_, _, _: &InstancesUpdatedEvent, cx| {
                 cx.notify()
             });
         let _backends_subscription =
-            cx.subscribe(&backends, |_, _, _: &BackendsUpdatedEvent, cx| cx.notify());
+            cx.subscribe(&data.backends, |_, _, _: &BackendsUpdatedEvent, cx| cx.notify());
         let _accounts_subscription =
-            cx.subscribe(&accounts, |_, _, _: &AccountsUpdatedEvent, cx| cx.notify());
+            cx.subscribe(&data.accounts, |_, _, _: &AccountsUpdatedEvent, cx| cx.notify());
         let _settings_subscription = cx
-            .subscribe(&settings, |_, _, _: &LauncherSettingsUpdatedEvent, cx| {
+            .subscribe(&data.settings, |_, _, _: &LauncherSettingsUpdatedEvent, cx| {
                 cx.notify()
             });
         let backend_url_input = cx
@@ -101,13 +86,7 @@ impl InstancesPage {
             cx.new(|cx| InputState::new(window, cx).placeholder("Extra JVM flags"));
 
         Self {
-            instances,
-            backends,
-            accounts,
-            notifications,
-            settings,
-            backend_sender,
-            launcher_dir,
+            data: data.clone(),
             selected_instance: None,
             show_global_settings: false,
             show_backend_settings: false,
@@ -163,10 +142,10 @@ impl InstancesPage {
 
 impl Render for InstancesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let instances = self.instances.read(cx).entries.clone();
-        let backends = self.backends.read(cx).backends.clone();
-        let accounts = self.accounts.read(cx).accounts.clone();
-        let launcher_settings = self.settings.read(cx).settings;
+        let instances = self.data.instances.read(cx).entries.clone();
+        let backends = self.data.backends.read(cx).backends.clone();
+        let accounts = self.data.accounts.read(cx).accounts.clone();
+        let launcher_settings = self.data.settings.read(cx).settings;
         if launcher_settings.hide_window_after_launch
             && let Some(instance) = instances
                 .iter()
@@ -194,18 +173,17 @@ impl Render for InstancesPage {
         }
 
         let mut sections = Vec::new();
-        if let Some(local) = groups.local {
-            if !local.is_empty() {
+        if let Some(local) = groups.local
+            && !local.is_empty() {
                 sections.push(section(
                     "Local".to_string(),
                     None,
                     local,
                     launcher_settings.hide_usernames_in_cards,
-                    &self.backend_sender,
+                    &self.data.backend_sender,
                     cx,
                 ));
             }
-        }
 
         for backend in &backends {
             let instances = groups
@@ -232,7 +210,7 @@ impl Render for InstancesPage {
                 Some(backend),
                 instances,
                 launcher_settings.hide_usernames_in_cards,
-                &self.backend_sender,
+                &self.data.backend_sender,
                 cx,
             ));
         }
@@ -309,13 +287,15 @@ impl InstancesPage {
         accounts: Vec<AccountView>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let sender = self.backend_sender.clone();
+        let sender = self.data.backend_sender.clone();
         let id = instance.id;
         let log_path = self
+            .data
             .launcher_dir
             .join("logs")
             .join("latest_minecraft_launch.log");
         let instance_path = self
+            .data
             .launcher_dir
             .join("instances")
             .join(instance.dir_name.as_ref());
@@ -410,7 +390,7 @@ impl InstancesPage {
                             .label("Open Instance Folder")
                             .disabled(matches!(instance.status, InstanceLiveStatus::NotInstalled))
                             .on_click({
-                                let notifications = self.notifications.clone();
+                                let notifications = self.data.notifications.clone();
                                 move |_, _, cx| {
                                     if let Err(err) = open_path(&instance_path) {
                                         notifications.update(cx, |entries, cx| {
@@ -428,7 +408,7 @@ impl InstancesPage {
                         Button::new(format!("open-logs-{id}"))
                             .label("Open Latest Launch Log")
                             .on_click({
-                                let notifications = self.notifications.clone();
+                                let notifications = self.data.notifications.clone();
                                 move |_, _, cx| {
                                     if let Err(err) = open_path(&log_path) {
                                         notifications.update(cx, |entries, cx| {
@@ -451,7 +431,7 @@ impl InstancesPage {
         settings: LauncherSettingsView,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let sender = self.backend_sender.clone();
+        let sender = self.data.backend_sender.clone();
         v_flex()
             .w_96()
             .min_w_96()
@@ -479,8 +459,8 @@ impl InstancesPage {
             .child(
                 launcher_settings_section(
                     settings,
-                    self.launcher_dir.clone(),
-                    self.notifications.clone(),
+                    self.data.launcher_dir.clone(),
+                    self.data.notifications.clone(),
                     sender,
                     cx,
                 )
@@ -494,7 +474,7 @@ impl InstancesPage {
         accounts: Vec<AccountView>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let sender = self.backend_sender.clone();
+        let sender = self.data.backend_sender.clone();
         v_flex()
             .w_96()
             .min_w_96()
@@ -565,7 +545,7 @@ impl InstancesPage {
         backend_names: BTreeMap<String, String>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let sender = self.backend_sender.clone();
+        let sender = self.data.backend_sender.clone();
         let input_value = self.backend_url_input.read(cx).value().to_string();
         let trimmed = input_value.trim().to_string();
         let parsed_url = Url::parse(&trimmed).ok();

@@ -2,7 +2,7 @@ use gpui::App;
 use launcher_auth::flow::AuthMessage;
 use launcher_bridge::{ExitOutcome, MessageToFrontend, NotificationLevel};
 
-use crate::entity::DataEntities;
+use crate::entity::{DataEntities, instance::InstanceProgressUpdate};
 
 pub struct Processor {
     data: DataEntities,
@@ -28,7 +28,10 @@ impl Processor {
                 message,
             } => {
                 self.data.instances.update(cx, |entries, cx| {
-                    entries.set_progress(id, stage, current, total, message, total > 1, cx);
+                    entries.set_progress(
+                        InstanceProgressUpdate::new(id, stage, current, total, message),
+                        cx,
+                    );
                 });
             }
             MessageToFrontend::AccountsUpdated(accounts) => {
