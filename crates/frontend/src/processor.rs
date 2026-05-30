@@ -1,6 +1,7 @@
 use gpui::App;
 use launcher_auth::flow::AuthMessage;
 use launcher_bridge::{ExitOutcome, MessageToFrontend, NotificationLevel};
+use launcher_i18n::{self as t, set_lang};
 
 use crate::entity::{DataEntities, instance::InstanceProgressUpdate};
 
@@ -45,6 +46,7 @@ impl Processor {
                     .update(cx, |entries, cx| entries.replace(backends, cx));
             }
             MessageToFrontend::SettingsUpdated(settings) => {
+                set_lang(&settings.language);
                 self.data
                     .settings
                     .update(cx, |entries, cx| entries.replace(settings, cx));
@@ -71,26 +73,29 @@ impl Processor {
                         log::info!("Instance {instance} exited successfully");
                         (
                             NotificationLevel::Success,
-                            "Minecraft exited successfully".to_string(),
+                            t::notifications::minecraft_exited_successfully().to_string(),
                         )
                     }
                     ExitOutcome::ExitCode(code) => {
                         log::warn!("Instance {instance} exited with code {code}");
                         (
                             NotificationLevel::Error,
-                            format!("Minecraft exited with code {code}"),
+                            t::notifications::minecraft_exited_with_code(code),
                         )
                     }
                     ExitOutcome::Terminated => {
                         log::info!("Instance {instance} was terminated");
                         (
                             NotificationLevel::Info,
-                            "Minecraft was terminated".to_string(),
+                            t::notifications::minecraft_terminated().to_string(),
                         )
                     }
                     ExitOutcome::Error(error) => {
                         log::error!("Instance {instance} failed to launch: {error}");
-                        (NotificationLevel::Error, format!("Launch failed: {error}"))
+                        (
+                            NotificationLevel::Error,
+                            t::notifications::launch_failed(error.to_string()),
+                        )
                     }
                 };
                 self.data
@@ -106,9 +111,7 @@ impl Processor {
 
 fn auth_prompt_message(prompt: AuthMessage) -> String {
     match prompt {
-        AuthMessage::Link { url } => format!("Continue authentication in your browser: {url}"),
-        AuthMessage::LinkCode { url, code } => {
-            format!("Continue authentication in your browser: {url}\nCode: {code}")
-        }
+        AuthMessage::Link { url } => t::auth::continue_in_browser(url),
+        AuthMessage::LinkCode { url, code } => t::auth::continue_in_browser_with_code(url, code),
     }
 }

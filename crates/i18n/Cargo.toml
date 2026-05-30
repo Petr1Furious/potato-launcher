@@ -1,0 +1,14 @@
+[package]
+name = "launcher-i18n"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+sys-locale = "0.3.2"
+
+[build-dependencies]
+indexmap = "2.14.0"
+toml = "1.1.2"
+
+[dev-dependencies]

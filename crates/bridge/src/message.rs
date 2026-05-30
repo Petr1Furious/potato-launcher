@@ -151,10 +151,35 @@ pub struct AccountView {
     pub selected: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LauncherSettingsView {
     pub hide_window_after_launch: bool,
     pub hide_usernames_in_cards: bool,
+    pub language: String,
+}
+
+impl Default for LauncherSettingsView {
+    fn default() -> Self {
+        Self {
+            hide_window_after_launch: false,
+            hide_usernames_in_cards: false,
+            language: "en".to_string(),
+        }
+    }
+}
+
+impl LauncherSettingsView {
+    pub fn new(
+        hide_window_after_launch: bool,
+        hide_usernames_in_cards: bool,
+        language: impl Into<String>,
+    ) -> Self {
+        Self {
+            hide_window_after_launch,
+            hide_usernames_in_cards,
+            language: language.into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

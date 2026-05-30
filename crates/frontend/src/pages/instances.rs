@@ -16,6 +16,7 @@ use gpui_component::{
 use launcher_auth::providers::{
     AuthProviderConfig, ElyByAuthProvider, MicrosoftAuthProvider, TGAuthProvider,
 };
+use launcher_i18n as t;
 use launcher_bridge::{
     AccountView, BackendFetchState, BackendStatus, BackendSender, InstanceLiveStatus,
     InstanceOrigin, InstanceView, LauncherSettingsView, MessageToBackend, NotificationLevel,
@@ -70,20 +71,20 @@ impl InstancesPage {
                 cx.notify()
             });
         let backend_url_input = cx
-            .new(|cx| InputState::new(window, cx).placeholder("https://example.com/manifest.json"));
+            .new(|cx| InputState::new(window, cx).placeholder(t::placeholders::manifest_url()));
         let offline_nickname_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Offline nickname"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::offline_nickname()));
         let telegram_base_url_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Telegram auth base URL"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::telegram_auth_base_url()));
         let elyby_client_id_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Client ID"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::client_id()));
         let elyby_client_secret_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Client secret"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::client_secret()));
         let elyby_launcher_name_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Launcher name"));
-        let memory_input = cx.new(|cx| InputState::new(window, cx).placeholder("Memory MiB"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::launcher_name()));
+        let memory_input = cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::memory_mib()));
         let jvm_flags_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Extra JVM flags"));
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::jvm_flags()));
 
         Self {
             data: data.clone(),
@@ -145,7 +146,7 @@ impl Render for InstancesPage {
         let instances = self.data.instances.read(cx).entries.clone();
         let backends = self.data.backends.read(cx).backends.clone();
         let accounts = self.data.accounts.read(cx).accounts.clone();
-        let launcher_settings = self.data.settings.read(cx).settings;
+        let launcher_settings = self.data.settings.read(cx).settings.clone();
         if launcher_settings.hide_window_after_launch
             && let Some(instance) = instances
                 .iter()
@@ -176,7 +177,7 @@ impl Render for InstancesPage {
         if let Some(local) = groups.local
             && !local.is_empty() {
                 sections.push(section(
-                    "Local".to_string(),
+                    t::common::local().to_string(),
                     None,
                     local,
                     launcher_settings.hide_usernames_in_cards,
@@ -226,13 +227,13 @@ impl Render for InstancesPage {
                 .items_center()
                 .justify_center()
                 .gap_2()
-                .child(div().text_xl().child("No instances yet"))
+                .child(div().text_xl().child(t::instances::no_instances_yet()))
                 .child(
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(
-                            "Open Backends to add a manifest URL, or create a local instance later.",
+                            t::instances::no_instances_hint(),
                         ),
                 )
                 .into_any_element()
@@ -334,7 +335,7 @@ impl InstancesPage {
                     )
                     .child(
                         Button::new("close-instance-details")
-                            .label("Close")
+                            .label(t::common::close())
                             .on_click(cx.listener(|page, _, _, cx| {
                                 page.selected_instance = None;
                                 cx.notify();
@@ -342,12 +343,12 @@ impl InstancesPage {
                     ),
             )
             .child(detail_section(
-                "Status",
+                t::instances::status(),
                 v_flex()
                     .gap_2()
                     .child(div().child(status_label(&instance)))
                     .when_some(status_error(&instance.status), |this, error| {
-                        this.child(error_alert("Details", error, cx))
+                        this.child(error_alert(t::common::details(), error, cx))
                     })
                     .when_some(progress_ratio(&instance.status), |this, value| {
                         this.child(progress_bar(value, cx))
@@ -361,7 +362,7 @@ impl InstancesPage {
                 cx,
             ))
             .child(detail_section(
-                "Runtime",
+                t::instances::runtime(),
                 runtime_section(
                     &instance,
                     self.memory_input.clone(),
@@ -372,7 +373,7 @@ impl InstancesPage {
                 cx,
             ))
             .child(detail_section(
-                "Actions",
+                t::instances::actions(),
                 action_section(
                     instance.clone(),
                     self.pending_delete == Some(id),
@@ -382,12 +383,12 @@ impl InstancesPage {
                 cx,
             ))
             .child(detail_section(
-                "Logs",
+                t::instances::logs(),
                 v_flex()
                     .gap_2()
                     .child(
                         Button::new(format!("open-instance-folder-{id}"))
-                            .label("Open Instance Folder")
+                            .label(t::instances::open_instance_folder())
                             .disabled(matches!(instance.status, InstanceLiveStatus::NotInstalled))
                             .on_click({
                                 let notifications = self.data.notifications.clone();
@@ -396,7 +397,7 @@ impl InstancesPage {
                                         notifications.update(cx, |entries, cx| {
                                             entries.push(
                                                 NotificationLevel::Error,
-                                                format!("Failed to open instance folder: {err}"),
+                                                t::notifications::failed_open_instance_folder(err.to_string()),
                                                 cx,
                                             );
                                         });
@@ -406,7 +407,7 @@ impl InstancesPage {
                     )
                     .child(
                         Button::new(format!("open-logs-{id}"))
-                            .label("Open Latest Launch Log")
+                            .label(t::instances::open_latest_launch_log())
                             .on_click({
                                 let notifications = self.data.notifications.clone();
                                 move |_, _, cx| {
@@ -414,7 +415,7 @@ impl InstancesPage {
                                         notifications.update(cx, |entries, cx| {
                                             entries.push(
                                                 NotificationLevel::Error,
-                                                format!("Failed to open logs: {err}"),
+                                                t::notifications::failed_open_logs(err.to_string()),
                                                 cx,
                                             );
                                         });
@@ -446,10 +447,10 @@ impl InstancesPage {
                 h_flex()
                     .justify_between()
                     .items_center()
-                    .child(div().text_xl().font_semibold().child("Launcher Settings"))
+                    .child(div().text_xl().font_semibold().child(t::settings::title()))
                     .child(
                         Button::new("close-global-settings")
-                            .label("Close")
+                            .label(t::common::close())
                             .on_click(cx.listener(|page, _, _, cx| {
                                 page.show_global_settings = false;
                                 cx.notify();
@@ -489,10 +490,10 @@ impl InstancesPage {
                 h_flex()
                     .justify_between()
                     .items_center()
-                    .child(div().text_xl().font_semibold().child("Accounts"))
+                    .child(div().text_xl().font_semibold().child(t::accounts::title()))
                     .child(
                         Button::new("close-accounts")
-                            .label("Close")
+                            .label(t::common::close())
                             .on_click(cx.listener(|page, _, _, cx| {
                                 page.show_accounts_panel = false;
                                 page.preferred_add_provider = None;
@@ -502,30 +503,30 @@ impl InstancesPage {
             )
             .when_some(self.preferred_add_provider.as_ref(), |this, provider| {
                 this.child(detail_section(
-                    "Suggested Account",
+                    t::accounts::suggested_account(),
                     v_flex()
                         .gap_2()
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(format!("This instance needs {}", provider_label(provider))),
+                                .child(t::accounts::suggested_account_needs(provider_label(provider))),
                         )
                         .child(add_provider_button(
                             provider.clone(),
-                            "Add Suggested Account",
+                            t::accounts::add_suggested_account(),
                             sender.clone(),
                         )),
                     cx,
                 ))
             })
             .child(detail_section(
-                "Accounts",
+                t::accounts::section(),
                 accounts_section(accounts, sender.clone(), cx),
                 cx,
             ))
             .child(detail_section(
-                "Add Account",
+                t::accounts::add_account_section(),
                 add_account_section(
                     self.offline_nickname_input.clone(),
                     self.telegram_base_url_input.clone(),
@@ -554,7 +555,7 @@ impl InstancesPage {
             .is_some_and(|url| matches!(url.scheme(), "http" | "https"));
         let show_error = !trimmed.is_empty() && !valid_url;
         let add_backend = Button::new("backend-panel-add")
-            .label("Add Backend")
+            .label(t::backends::add_backend())
             .disabled(!valid_url)
             .on_click({
                 let sender = sender.clone();
@@ -586,10 +587,10 @@ impl InstancesPage {
                 h_flex()
                     .justify_between()
                     .items_center()
-                    .child(div().text_xl().font_semibold().child("Backends"))
+                    .child(div().text_xl().font_semibold().child(t::backends::title()))
                     .child(
                         Button::new("close-backend-settings")
-                            .label("Close")
+                            .label(t::common::close())
                             .on_click(cx.listener(|page, _, _, cx| {
                                 page.show_backend_settings = false;
                                 cx.notify();
@@ -597,7 +598,7 @@ impl InstancesPage {
                     ),
             )
             .child(detail_section(
-                "Add Backend",
+                t::backends::add_backend_section(),
                 v_flex()
                     .w_full()
                     .min_w_0()
@@ -609,13 +610,13 @@ impl InstancesPage {
                             div()
                                 .text_sm()
                                 .text_color(cx.theme().red)
-                                .child("Enter an http(s) manifest URL"),
+                                .child(t::backends::manifest_url_hint()),
                         )
                     }),
                 cx,
             ))
             .child(detail_section(
-                "Configured Backends",
+                t::backends::configured_backends(),
                 backend_list(backends, backend_names, sender, cx),
                 cx,
             ))
@@ -679,7 +680,7 @@ fn section(
 
     let fetch_state = backend
         .map(|backend| fetch_state_label(&backend.fetch_state))
-        .unwrap_or_else(|| "local only".to_string());
+        .unwrap_or_else(|| t::backends::local_only().to_string());
     let fetch_color = if let Some(backend) = backend {
         match &backend.fetch_state {
             BackendFetchState::Offline | BackendFetchState::Error(_) => cx.theme().red,
@@ -717,18 +718,20 @@ fn backend_empty_state_section(
     };
     let (message_title, message) = match &backend.fetch_state {
         BackendFetchState::Fetching => (
-            format!("Refreshing {title}"),
-            "The backend has not returned an instance list yet.".to_string(),
+            t::backends::refreshing_title(title.clone()),
+            t::backends::refreshing_message().to_string(),
         ),
         BackendFetchState::Offline => (
-            format!("{title} is offline"),
-            "Installed instances from this backend will appear here when known locally."
-                .to_string(),
+            t::backends::offline_title(title.clone()),
+            t::backends::offline_message().to_string(),
         ),
-        BackendFetchState::Error(error) => (format!("Failed to fetch {title}"), error.to_string()),
+        BackendFetchState::Error(error) => (
+            t::backends::fetch_failed_title(title.clone()),
+            error.to_string(),
+        ),
         BackendFetchState::NotFetched => (
-            format!("{title} has not been fetched"),
-            "Use Refresh to try fetching this backend.".to_string(),
+            t::backends::not_fetched_title(title.clone()),
+            t::backends::not_fetched_message().to_string(),
         ),
         BackendFetchState::Fetched { .. } => return None,
     };
@@ -793,7 +796,7 @@ fn instance_card(
     let details_id = instance.id;
     let show_dir_name = instance.dir_name.as_ref() != instance.display_name.as_ref();
     let settings = Button::new(format!("settings-{details_id}"))
-        .label("Settings")
+        .label(t::common::settings())
         .on_click(cx.listener(move |page, _, _, cx| {
             page.show_global_settings = false;
             page.show_backend_settings = false;
@@ -804,7 +807,7 @@ fn instance_card(
         }));
 
     v_flex()
-        .w_64()
+        .w_80()
         .min_h_40()
         .p_3()
         .gap_3()
@@ -851,13 +854,13 @@ fn progress_slot(value: Option<f32>, cx: &mut Context<InstancesPage>) -> gpui::D
 
 fn account_summary(instance: &InstanceView, cx: &mut Context<InstancesPage>) -> gpui::Div {
     let account = if instance.launch_blocked_reason.is_some() {
-        "Add account".to_string()
+        t::instances::add_account_card().to_string()
     } else {
         instance
             .effective_account_username
             .as_ref()
             .map(|username| username.to_string())
-            .unwrap_or_else(|| "No account selected".to_string())
+            .unwrap_or_else(|| t::instances::no_account_selected().to_string())
     };
     let provider = {
         let label = instance
@@ -865,9 +868,9 @@ fn account_summary(instance: &InstanceView, cx: &mut Context<InstancesPage>) -> 
             .as_ref()
             .or(instance.auth_provider.as_ref())
             .map(provider_type_label)
-            .unwrap_or_else(|| "Any provider".to_string());
+            .unwrap_or_else(|| t::instances::any_provider().to_string());
         if instance.account_override.is_some() {
-            format!("{label}, Override")
+            format!("{label}{}", t::instances::override_suffix())
         } else {
             label
         }
@@ -933,14 +936,14 @@ fn action_button(
 ) -> Button {
     match instance.status {
         InstanceLiveStatus::Installing { .. } => Button::new(format!("cancel-{}", instance.id))
-            .label("Cancel")
+            .label(t::common::cancel())
             .on_click(move |_, _, _| sender.send(MessageToBackend::CancelInstall(instance.id))),
         InstanceLiveStatus::NotInstalled | InstanceLiveStatus::Outdated => {
             Button::new(format!("install-{}", instance.id))
                 .label(if matches!(instance.status, InstanceLiveStatus::Outdated) {
-                    "Update"
+                    t::instances::update()
                 } else {
-                    "Install"
+                    t::instances::install()
                 })
                 .on_click(move |_, _, _| {
                     sender.send(MessageToBackend::InstallInstance {
@@ -950,16 +953,16 @@ fn action_button(
                 })
         }
         InstanceLiveStatus::Launching => Button::new(format!("launching-{}", instance.id))
-            .label("Launching")
+            .label(t::instances::launching())
             .disabled(true),
         InstanceLiveStatus::Running => Button::new(format!("kill-{}", instance.id))
-            .label("Kill")
+            .label(t::instances::kill())
             .on_click(move |_, _, _| sender.send(MessageToBackend::KillInstance(instance.id))),
         InstanceLiveStatus::Installed | InstanceLiveStatus::OrphanedFromBackend => {
             if instance.launch_blocked_reason.is_some() {
                 let provider = instance.auth_provider.clone();
                 return Button::new(format!("add-account-{}", instance.id))
-                    .label("Add Account")
+                    .label(t::accounts::add_account_section())
                     .on_click(cx.listener(move |page, _, _, cx| {
                         page.selected_instance = None;
                         page.show_accounts_panel = true;
@@ -970,7 +973,7 @@ fn action_button(
                     }));
             }
             Button::new(format!("play-{}", instance.id))
-                .label("Play")
+                .label(t::instances::play())
                 .on_click(move |_, _, _| {
                     sender.send(MessageToBackend::Launch {
                         instance: instance.id,
@@ -979,7 +982,7 @@ fn action_button(
                 })
         }
         InstanceLiveStatus::InstallFailed(_) => Button::new(format!("retry-{}", instance.id))
-            .label("Retry")
+            .label(t::common::retry())
             .on_click(move |_, _, _| {
                 sender.send(MessageToBackend::InstallInstance {
                     id: instance.id,
@@ -988,9 +991,9 @@ fn action_button(
             }),
         InstanceLiveStatus::LaunchFailed(_) => Button::new(format!("play-again-{}", instance.id))
             .label(if instance.launch_blocked_reason.is_some() {
-                "Add Account"
+                t::instances::add_account()
             } else {
-                "Play Again"
+                t::instances::play_again()
             })
             .on_click({
                 let provider = instance.auth_provider.clone();
@@ -1087,22 +1090,19 @@ fn account_detail_sections(
     let mut sections = Vec::new();
     let required_provider_for_add = required_provider.clone();
     sections.push(detail_section(
-        "Account",
+        t::accounts::account_section(),
         v_flex()
             .gap_2()
             .child(
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!(
-                        "Required provider: {}",
-                        provider_label(required_provider)
-                    )),
+                    .child(t::accounts::required_provider(provider_label(required_provider))),
             )
             .when(matching_accounts.is_empty(), |this| {
                 this.child(
                     Button::new(format!("add-required-account-{}", instance.id))
-                        .label("Add Account")
+                        .label(t::instances::add_account())
                         .on_click(cx.listener(move |page, _, _, cx| {
                             page.selected_instance = None;
                             page.show_accounts_panel = true;
@@ -1123,7 +1123,7 @@ fn account_detail_sections(
 
     if !other_accounts.is_empty() {
         sections.push(detail_section(
-            "Account Override",
+            t::accounts::account_override_section(),
             v_flex().gap_2().children(
                 other_accounts
                     .into_iter()
@@ -1182,7 +1182,7 @@ fn account_select_row(
                 account.key.0,
                 account.key.1
             ))
-            .label(if selected { "Selected" } else { "Use" })
+            .label(if selected { t::common::selected() } else { t::common::select() })
             .disabled(selected)
             .on_click(move |_, _, _| {
                 if override_account {
@@ -1226,9 +1226,8 @@ fn runtime_section(
             div()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child(format!(
-                    "Effective memory: {} MB",
-                    instance.effective_xmx_mb.unwrap_or(4096)
+                .child(t::instances::effective_memory(
+                    instance.effective_xmx_mb.unwrap_or(4096),
                 )),
         )
         .child(
@@ -1237,7 +1236,7 @@ fn runtime_section(
                 .child(Input::new(&memory_input))
                 .child(
                     Button::new(format!("save-memory-{id}"))
-                        .label("Set Memory")
+                        .label(t::instances::set_memory())
                         .on_click({
                             let input = memory_input.clone();
                             let sender = sender.clone();
@@ -1252,7 +1251,7 @@ fn runtime_section(
                 )
                 .child(
                     Button::new(format!("clear-memory-{id}"))
-                        .label("Default")
+                        .label(t::common::default())
                         .on_click({
                             let sender = sender.clone();
                             move |_, _, _| {
@@ -1271,9 +1270,12 @@ fn runtime_section(
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(format!(
-                            "JVM flags: {}",
-                            instance.jvm_flags.as_deref().unwrap_or("default")
+                        .child(t::instances::jvm_flags(
+                            instance
+                                .jvm_flags
+                                .as_deref()
+                                .unwrap_or(t::instances::jvm_flags_default())
+                                .to_string(),
                         )),
                 )
                 .child(
@@ -1282,7 +1284,7 @@ fn runtime_section(
                         .child(Input::new(&jvm_flags_input))
                         .child(
                             Button::new(format!("save-jvm-flags-{id}"))
-                                .label("Set Flags")
+                                .label(t::instances::set_flags())
                                 .on_click({
                                     let input = jvm_flags_input.clone();
                                     let sender = sender.clone();
@@ -1297,7 +1299,7 @@ fn runtime_section(
                         )
                         .child(
                             Button::new(format!("clear-jvm-flags-{id}"))
-                                .label("Default")
+                                .label(t::common::default())
                                 .on_click({
                                     let sender = sender.clone();
                                     move |_, _, _| {
@@ -1319,6 +1321,7 @@ fn launcher_settings_section(
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
+    let language = settings.language.clone();
     v_flex()
         .gap_2()
         .child(
@@ -1329,29 +1332,31 @@ fn launcher_settings_section(
                 .child(
                     v_flex()
                         .min_w_0()
-                        .child(div().font_semibold().child("Hide launcher after launch"))
+                        .child(div().font_semibold().child(t::settings::hide_after_launch_title()))
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Minimize the launcher window when Minecraft starts."),
+                                .child(t::settings::hide_after_launch_desc()),
                         ),
                 )
                 .child(
                     Button::new("toggle-hide-after-launch")
                         .label(if settings.hide_window_after_launch {
-                            "On"
+                            t::common::on()
                         } else {
-                            "Off"
+                            t::common::off()
                         })
                         .on_click({
                             let sender = sender.clone();
+                            let settings = settings.clone();
                             move |_, _, _| {
                                 sender.send(MessageToBackend::SetLauncherSettings(
                                     LauncherSettingsView {
                                         hide_window_after_launch: !settings
                                             .hide_window_after_launch,
                                         hide_usernames_in_cards: settings.hide_usernames_in_cards,
+                                        language: settings.language.clone(),
                                     },
                                 ));
                             }
@@ -1366,40 +1371,106 @@ fn launcher_settings_section(
                 .child(
                     v_flex()
                         .min_w_0()
-                        .child(div().font_semibold().child("Hide usernames in cards"))
+                        .child(div().font_semibold().child(t::settings::hide_usernames_title()))
                         .child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Hide the account line on instance cards."),
+                                .child(t::settings::hide_usernames_desc()),
                         ),
                 )
                 .child(
                     Button::new("toggle-hide-usernames")
                         .label(if settings.hide_usernames_in_cards {
-                            "On"
+                            t::common::on()
                         } else {
-                            "Off"
+                            t::common::off()
                         })
-                        .on_click(move |_, _, _| {
-                            sender.send(MessageToBackend::SetLauncherSettings(
-                                LauncherSettingsView {
-                                    hide_window_after_launch: settings.hide_window_after_launch,
-                                    hide_usernames_in_cards: !settings.hide_usernames_in_cards,
-                                },
-                            ));
+                        .on_click({
+                            let sender = sender.clone();
+                            let settings = settings.clone();
+                            move |_, _, _| {
+                                sender.send(MessageToBackend::SetLauncherSettings(
+                                    LauncherSettingsView {
+                                        hide_window_after_launch: settings.hide_window_after_launch,
+                                        hide_usernames_in_cards: !settings.hide_usernames_in_cards,
+                                        language: settings.language.clone(),
+                                    },
+                                ));
+                            }
                         }),
                 ),
         )
         .child(
+            h_flex()
+                .justify_between()
+                .items_center()
+                .gap_2()
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .child(div().font_semibold().child(t::settings::language_title()))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(t::settings::language_desc()),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("language-en")
+                                .label(t::settings::language_english())
+                                .disabled(language == "en")
+                                .on_click({
+                                    let sender = sender.clone();
+                                    let settings = settings.clone();
+                                    move |_, _, _| {
+                                        sender.send(MessageToBackend::SetLauncherSettings(
+                                            LauncherSettingsView {
+                                                hide_window_after_launch: settings
+                                                    .hide_window_after_launch,
+                                                hide_usernames_in_cards: settings
+                                                    .hide_usernames_in_cards,
+                                                language: "en".to_string(),
+                                            },
+                                        ));
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("language-ru")
+                                .label(t::settings::language_russian())
+                                .disabled(language == "ru")
+                                .on_click({
+                                    let sender = sender.clone();
+                                    let settings = settings.clone();
+                                    move |_, _, _| {
+                                        sender.send(MessageToBackend::SetLauncherSettings(
+                                            LauncherSettingsView {
+                                                hide_window_after_launch: settings
+                                                    .hide_window_after_launch,
+                                                hide_usernames_in_cards: settings
+                                                    .hide_usernames_in_cards,
+                                                language: "ru".to_string(),
+                                            },
+                                        ));
+                                    }
+                                }),
+                        ),
+                ),
+        )
+        .child(
             Button::new("open-launcher-directory")
-                .label("Open Launcher Directory")
+                .label(t::instances::open_launcher_directory())
                 .on_click(move |_, _, cx| {
                     if let Err(err) = open_path(&launcher_dir) {
                         notifications.update(cx, |entries, cx| {
                             entries.push(
                                 NotificationLevel::Error,
-                                format!("Failed to open launcher directory: {err}"),
+                                t::notifications::failed_open_launcher_directory(err.to_string()),
                                 cx,
                             );
                         });
@@ -1418,7 +1489,7 @@ fn accounts_section(
             div()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("No accounts have been added yet."),
+                .child(t::accounts::no_accounts_yet()),
         );
     }
 
@@ -1446,7 +1517,7 @@ fn accounts_section(
                         "settings-remove-account-{}-{}",
                         remove_key.0, remove_key.1
                     ))
-                    .label("Remove")
+                    .label(t::common::remove())
                     .on_click({
                         let sender = sender.clone();
                         move |_, _, _| {
@@ -1470,13 +1541,13 @@ fn add_account_section(
         .gap_3()
         .child(add_provider_button(
             AuthProviderConfig::Microsoft(MicrosoftAuthProvider {}),
-            "Add Microsoft",
+            t::accounts::add_microsoft(),
             sender.clone(),
         ))
         .child(
             h_flex().gap_2().child(Input::new(&offline_nickname)).child(
                 Button::new("settings-add-offline")
-                    .label("Add Offline")
+                    .label(t::accounts::add_offline())
                     .on_click({
                         let input = offline_nickname.clone();
                         let sender = sender.clone();
@@ -1494,7 +1565,7 @@ fn add_account_section(
                 .child(Input::new(&telegram_base_url))
                 .child(
                     Button::new("settings-add-telegram")
-                        .label("Add Telegram")
+                        .label(t::accounts::add_telegram())
                         .on_click({
                             let input = telegram_base_url.clone();
                             let sender = sender.clone();
@@ -1519,7 +1590,7 @@ fn add_account_section(
                 .child(Input::new(&elyby_launcher_name))
                 .child(
                     Button::new("settings-add-elyby")
-                        .label("Add Ely.by")
+                        .label(t::accounts::add_elyby())
                         .on_click({
                             let client_id_input = elyby_client_id.clone();
                             let client_secret_input = elyby_client_secret.clone();
@@ -1537,7 +1608,7 @@ fn add_account_section(
                                             client_id,
                                             client_secret,
                                             if launcher_name.is_empty() {
-                                                "Potato Launcher".to_string()
+                                                t::auth::default_launcher_name().to_string()
                                             } else {
                                                 launcher_name
                                             },
@@ -1573,7 +1644,7 @@ fn backend_list(
             div()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("No backends configured yet."),
+                .child(t::backends::no_backends_yet()),
         );
     }
 
@@ -1595,11 +1666,11 @@ fn backend_list(
                 BackendFetchState::NotFetched => cx.theme().muted_foreground,
             };
             let origin_note = if backend.configured {
-                "Configured".to_string()
+                t::backends::configured().to_string()
             } else if backend.referenced_by_instances {
-                "Used by installed instances".to_string()
+                t::instances::used_by_installed().to_string()
             } else {
-                "Discovered".to_string()
+                t::backends::discovered().to_string()
             };
 
             v_flex()
@@ -1636,7 +1707,7 @@ fn backend_list(
                         )
                         .child(
                             Button::new(format!("backend-panel-remove-{}", url.as_str()))
-                                .label("Remove")
+                                .label(t::common::remove())
                                 .disabled(!backend.configured)
                                 .on_click({
                                     let sender = sender.clone();
@@ -1702,7 +1773,7 @@ fn action_section(
                 .gap_2()
                 .child(
                     Button::new(format!("detail-play-{id}"))
-                        .label("Play")
+                        .label(t::instances::play())
                         .disabled(!can_launch || launch_blocked)
                         .on_click({
                             let sender = sender.clone();
@@ -1716,7 +1787,7 @@ fn action_section(
                 )
                 .child(
                     Button::new(format!("detail-kill-{id}"))
-                        .label("Kill")
+                        .label(t::instances::kill())
                         .disabled(!matches!(instance.status, InstanceLiveStatus::Running))
                         .on_click({
                             let sender = sender.clone();
@@ -1729,7 +1800,7 @@ fn action_section(
                 .gap_2()
                 .child(
                     Button::new(format!("detail-resync-{id}"))
-                        .label("Resync")
+                        .label(t::instances::resync())
                         .disabled(matches!(
                             instance.status,
                             InstanceLiveStatus::Installing { .. }
@@ -1746,7 +1817,7 @@ fn action_section(
                 )
                 .child(
                     Button::new(format!("detail-hard-resync-{id}"))
-                        .label("Hard Resync")
+                        .label(t::instances::hard_resync())
                         .disabled(matches!(
                             instance.status,
                             InstanceLiveStatus::Installing { .. }
@@ -1766,9 +1837,9 @@ fn action_section(
             h_flex().gap_2().child(
                 Button::new(format!("detail-delete-{id}"))
                     .label(if pending_delete {
-                        "Confirm Delete"
+                        t::instances::confirm_delete()
                     } else {
-                        "Delete"
+                        t::instances::delete()
                     })
                     .disabled(!instance.locally_installed)
                     .on_click({
@@ -1791,7 +1862,7 @@ fn action_section(
                 div()
                     .text_sm()
                     .text_color(cx.theme().red)
-                    .child("Click Confirm Delete to remove this instance from disk."),
+                    .child(t::instances::confirm_delete_hint()),
             )
         })
         .when_some(instance.launch_blocked_reason.clone(), |this, reason| {
@@ -1807,7 +1878,7 @@ fn action_section(
             |this| {
                 this.child(
                     Button::new(format!("detail-update-{id}"))
-                        .label("Update")
+                        .label(t::instances::update())
                         .on_click(move |_, _, _| {
                             sender.send(MessageToBackend::InstallInstance {
                                 id,
@@ -1822,7 +1893,7 @@ fn action_section(
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(format!("Recommended memory: {xmx} MB")),
+                    .child(t::instances::recommended_memory(xmx)),
             )
         })
 }
@@ -1838,19 +1909,21 @@ fn status_error(status: &InstanceLiveStatus) -> Option<String> {
 
 fn provider_label(provider: &AuthProviderConfig) -> String {
     match provider {
-        AuthProviderConfig::Microsoft(_) => "Microsoft".to_string(),
-        AuthProviderConfig::Telegram(provider) => format!("Telegram ({})", provider.auth_base_url),
-        AuthProviderConfig::ElyBy(_) => "Ely.by".to_string(),
-        AuthProviderConfig::Offline(_) => "Offline".to_string(),
+        AuthProviderConfig::Microsoft(_) => t::providers::microsoft().to_string(),
+        AuthProviderConfig::Telegram(provider) => {
+            t::providers::telegram_with_url(provider.auth_base_url.clone())
+        }
+        AuthProviderConfig::ElyBy(_) => t::providers::elyby().to_string(),
+        AuthProviderConfig::Offline(_) => t::providers::offline().to_string(),
     }
 }
 
 fn provider_type_label(provider: &AuthProviderConfig) -> String {
     match provider {
-        AuthProviderConfig::Microsoft(_) => "Microsoft".to_string(),
-        AuthProviderConfig::Telegram(_) => "Telegram".to_string(),
-        AuthProviderConfig::ElyBy(_) => "Ely.by".to_string(),
-        AuthProviderConfig::Offline(_) => "Offline".to_string(),
+        AuthProviderConfig::Microsoft(_) => t::providers::microsoft().to_string(),
+        AuthProviderConfig::Telegram(_) => t::providers::telegram().to_string(),
+        AuthProviderConfig::ElyBy(_) => t::providers::elyby().to_string(),
+        AuthProviderConfig::Offline(_) => t::providers::offline().to_string(),
     }
 }
 
@@ -1918,19 +1991,21 @@ fn backend_display_name(url: &Url, include_path: bool) -> String {
 
 fn fetch_state_label(fetch_state: &BackendFetchState) -> String {
     match fetch_state {
-        BackendFetchState::NotFetched => "not fetched".to_string(),
-        BackendFetchState::Fetching => "Refreshing...".to_string(),
-        BackendFetchState::Fetched { instance_count } => format!("{instance_count} published"),
-        BackendFetchState::Offline => "offline".to_string(),
+        BackendFetchState::NotFetched => t::backends::not_fetched().to_string(),
+        BackendFetchState::Fetching => t::common::refreshing().to_string(),
+        BackendFetchState::Fetched { instance_count } => {
+            t::backends::published_count(*instance_count)
+        }
+        BackendFetchState::Offline => t::backends::offline().to_string(),
         BackendFetchState::Error(error) => error.to_string(),
     }
 }
 
 fn status_label(instance: &InstanceView) -> String {
     let label = match &instance.status {
-        InstanceLiveStatus::NotInstalled => "Available".to_string(),
-        InstanceLiveStatus::Installed => "Installed".to_string(),
-        InstanceLiveStatus::Outdated => "Outdated".to_string(),
+        InstanceLiveStatus::NotInstalled => t::instances::status_available().to_string(),
+        InstanceLiveStatus::Installed => t::instances::status_installed().to_string(),
+        InstanceLiveStatus::Outdated => t::instances::status_outdated().to_string(),
         InstanceLiveStatus::Installing {
             current,
             total,
@@ -1944,11 +2019,11 @@ fn status_label(instance: &InstanceView) -> String {
                 format!("{message} {}%", current.saturating_mul(100) / total)
             }
         }
-        InstanceLiveStatus::InstallFailed(_) => "Failed".to_string(),
-        InstanceLiveStatus::Launching => "Launching".to_string(),
-        InstanceLiveStatus::Running => "Running".to_string(),
-        InstanceLiveStatus::LaunchFailed(_) => "Launch failed".to_string(),
-        InstanceLiveStatus::OrphanedFromBackend => "Orphaned".to_string(),
+        InstanceLiveStatus::InstallFailed(_) => t::instances::status_failed().to_string(),
+        InstanceLiveStatus::Launching => t::instances::launching().to_string(),
+        InstanceLiveStatus::Running => t::instances::status_running().to_string(),
+        InstanceLiveStatus::LaunchFailed(_) => t::instances::status_launch_failed().to_string(),
+        InstanceLiveStatus::OrphanedFromBackend => t::instances::status_orphaned().to_string(),
     };
     if instance.launch_blocked_reason.is_some()
         && matches!(
@@ -1959,7 +2034,7 @@ fn status_label(instance: &InstanceView) -> String {
                 | InstanceLiveStatus::LaunchFailed(_)
         )
     {
-        format!("{label}, no account")
+        t::instances::status_no_account(label)
     } else {
         label
     }

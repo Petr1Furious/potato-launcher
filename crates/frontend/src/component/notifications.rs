@@ -1,6 +1,7 @@
 use gpui::{Context, IntoElement, ParentElement, Styled, div, px};
 use gpui_component::{ActiveTheme, StyledExt, button::Button, v_flex};
 use launcher_bridge::NotificationLevel;
+use launcher_i18n as t;
 
 use crate::entity::notification::{NotificationEntries, NotificationEntry};
 
@@ -34,10 +35,10 @@ fn notification_card(
         NotificationLevel::Info => cx.theme().blue,
     };
     let title = match entry.level {
-        NotificationLevel::Error => "Error",
-        NotificationLevel::Warning => "Warning",
-        NotificationLevel::Success => "Success",
-        NotificationLevel::Info => "Info",
+        NotificationLevel::Error => t::common::error(),
+        NotificationLevel::Warning => t::common::warning(),
+        NotificationLevel::Success => t::common::success(),
+        NotificationLevel::Info => t::common::info(),
     };
 
     div()
@@ -58,7 +59,7 @@ fn notification_card(
                         .child(div().font_semibold().child(title))
                         .child(
                             Button::new(format!("dismiss-notification-{}", entry.id))
-                                .label("Dismiss")
+                                .label(t::common::dismiss())
                                 .on_click(move |_, _, cx| {
                                     notifications
                                         .update(cx, |entries, cx| entries.dismiss(entry.id, cx));

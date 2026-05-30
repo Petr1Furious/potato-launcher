@@ -359,9 +359,7 @@ fn launch_blocked_reason(
     if account_override.is_some() || required_provider.is_none() || has_effective_account {
         return None;
     }
-    Some(Arc::<str>::from(
-        "Select a compatible account or choose an instance account override before launching.",
-    ))
+    Some(Arc::from(launcher_i18n::instances::launch_blocked()))
 }
 
 fn uuid_from_seed(seed: &str) -> Uuid {
@@ -598,7 +596,7 @@ mod tests {
                 stage: ProgressStage::Files,
                 current: 1,
                 total: 10,
-                message: Arc::<str>::from("Downloading files"),
+                message: Arc::<str>::from(launcher_i18n::progress::downloading_files()),
                 show_bar: true,
             },
         )]);
@@ -828,7 +826,7 @@ mod tests {
                 stage: ProgressStage::Metadata,
                 current: 1,
                 total: 1,
-                message: Arc::<str>::from("Fetching metadata"),
+                message: Arc::<str>::from(launcher_i18n::progress::fetching_metadata()),
                 show_bar: false,
             },
         )]);
@@ -840,7 +838,7 @@ mod tests {
         assert!(matches!(
             &views[0].status,
             InstanceLiveStatus::Installing { message, show_bar: false, .. }
-                if message.as_ref() == "Fetching metadata"
+                if message.as_ref() == launcher_i18n::progress::fetching_metadata()
         ));
     }
 

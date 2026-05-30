@@ -1,0 +1,683 @@
+[common.close]
+en = "Close"
+ru = "Закрыть"
+
+[common.on]
+en = "On"
+ru = "Вкл."
+
+[common.off]
+en = "Off"
+ru = "Выкл."
+
+[common.refresh]
+en = "Refresh"
+ru = "Обновить"
+
+[common.refreshing]
+en = "Refreshing..."
+ru = "Обновление..."
+
+[common.settings]
+en = "Settings"
+ru = "Настройки"
+
+[common.cancel]
+en = "Cancel"
+ru = "Отмена"
+
+[common.default]
+en = "Default"
+ru = "По умолчанию"
+
+[common.details]
+en = "Details"
+ru = "Подробности"
+
+[common.dismiss]
+en = "Dismiss"
+ru = "Закрыть"
+
+[common.select]
+en = "Use"
+ru = "Выбрать"
+
+[common.selected]
+en = "Selected"
+ru = "Выбрано"
+
+[common.remove]
+en = "Remove"
+ru = "Удалить"
+
+[common.retry]
+en = "Retry"
+ru = "Повторить"
+
+[common.local]
+en = "Local"
+ru = "Локальные"
+
+[common.error]
+en = "Error"
+ru = "Ошибка"
+
+[common.warning]
+en = "Warning"
+ru = "Предупреждение"
+
+[common.success]
+en = "Success"
+ru = "Успех"
+
+[common.info]
+en = "Info"
+ru = "Информация"
+
+[nav.configure_backends]
+en = "Configure backends"
+ru = "Настроить бэкенды"
+
+[nav.accounts]
+en = "Accounts"
+ru = "Аккаунты"
+
+[instances.no_instances_yet]
+en = "No instances yet"
+ru = "Пока нет инстансов"
+
+[instances.no_instances_hint]
+en = "Open Backends to add a manifest URL, or create a local instance later."
+ru = "Откройте «Бэкенды», чтобы добавить URL манифеста, или создайте локальный инстанс позже."
+
+[instances.status]
+en = "Status"
+ru = "Статус"
+
+[instances.runtime]
+en = "Runtime"
+ru = "Запуск"
+
+[instances.actions]
+en = "Actions"
+ru = "Действия"
+
+[instances.logs]
+en = "Logs"
+ru = "Логи"
+
+[instances.open_instance_folder]
+en = "Open Instance Folder"
+ru = "Открыть папку инстанса"
+
+[instances.open_latest_launch_log]
+en = "Open Latest Launch Log"
+ru = "Открыть последний лог запуска"
+
+[instances.open_launcher_directory]
+en = "Open Launcher Directory"
+ru = "Открыть папку лаунчера"
+
+[instances.install]
+en = "Install"
+ru = "Установить"
+
+[instances.update]
+en = "Update"
+ru = "Обновить"
+
+[instances.play]
+en = "Play"
+ru = "Играть"
+
+[instances.play_again]
+en = "Play Again"
+ru = "Играть снова"
+
+[instances.launching]
+en = "Launching"
+ru = "Запуск"
+
+[instances.kill]
+en = "Kill"
+ru = "Завершить"
+
+[instances.resync]
+en = "Resync"
+ru = "Синхронизировать"
+
+[instances.hard_resync]
+en = "Hard Resync"
+ru = "Жёсткая синхронизация"
+
+[instances.delete]
+en = "Delete"
+ru = "Удалить"
+
+[instances.confirm_delete]
+en = "Confirm Delete"
+ru = "Подтвердить удаление"
+
+[instances.confirm_delete_hint]
+en = "Click Confirm Delete to remove this instance from disk."
+ru = "Нажмите «Подтвердить удаление», чтобы удалить инстанс с диска."
+
+[instances.add_account]
+en = "Add Account"
+ru = "Добавить аккаунт"
+
+[instances.add_account_card]
+en = "Add account"
+ru = "Добавить аккаунт"
+
+[instances.no_account_selected]
+en = "No account selected"
+ru = "Аккаунт не выбран"
+
+[instances.any_provider]
+en = "Any provider"
+ru = "Любой провайдер"
+
+[instances.override_suffix]
+en = ", Override"
+ru = ", переопределение"
+
+[instances.status_available]
+en = "Available"
+ru = "Доступен"
+
+[instances.status_installed]
+en = "Installed"
+ru = "Установлен"
+
+[instances.status_outdated]
+en = "Outdated"
+ru = "Устарел"
+
+[instances.status_failed]
+en = "Failed"
+ru = "Ошибка"
+
+[instances.status_running]
+en = "Running"
+ru = "Запущен"
+
+[instances.status_launch_failed]
+en = "Launch failed"
+ru = "Ошибка запуска"
+
+[instances.status_orphaned]
+en = "Orphaned"
+ru = "Не в каталоге"
+
+[instances.status_no_account]
+en = "${status: String}, no account"
+ru = "${status: String}, нет аккаунта"
+
+[instances.recommended_memory]
+en = "Recommended memory: ${xmx: u64} MB"
+ru = "Рекомендуемая память: ${xmx: u64} МБ"
+
+[instances.effective_memory]
+en = "Effective memory: ${xmx: u64} MB"
+ru = "Текущая память: ${xmx: u64} МБ"
+
+[instances.jvm_flags]
+en = "JVM flags: ${flags: String}"
+ru = "Флаги JVM: ${flags: String}"
+
+[instances.jvm_flags_default]
+en = "default"
+ru = "по умолчанию"
+
+[instances.set_memory]
+en = "Set Memory"
+ru = "Задать память"
+
+[instances.set_flags]
+en = "Set Flags"
+ru = "Задать флаги"
+
+[instances.used_by_installed]
+en = "Used by installed instances"
+ru = "Используется установленными инстансами"
+
+[accounts.title]
+en = "Accounts"
+ru = "Аккаунты"
+
+[accounts.section]
+en = "Accounts"
+ru = "Аккаунты"
+
+[accounts.add_account_section]
+en = "Add Account"
+ru = "Добавить аккаунт"
+
+[accounts.suggested_account]
+en = "Suggested Account"
+ru = "Рекомендуемый аккаунт"
+
+[accounts.suggested_account_needs]
+en = "This instance needs ${provider: String}"
+ru = "Для этого инстанса нужен ${provider: String}"
+
+[accounts.add_suggested_account]
+en = "Add Suggested Account"
+ru = "Добавить рекомендуемый аккаунт"
+
+[accounts.account_section]
+en = "Account"
+ru = "Аккаунт"
+
+[accounts.account_override_section]
+en = "Account Override"
+ru = "Переопределение аккаунта"
+
+[accounts.required_provider]
+en = "Required provider: ${provider: String}"
+ru = "Требуемый провайдер: ${provider: String}"
+
+[accounts.no_accounts_yet]
+en = "No accounts have been added yet."
+ru = "Аккаунты ещё не добавлены."
+
+[accounts.add_microsoft]
+en = "Add Microsoft"
+ru = "Добавить Microsoft"
+
+[accounts.add_offline]
+en = "Add Offline"
+ru = "Добавить офлайн"
+
+[accounts.add_telegram]
+en = "Add Telegram"
+ru = "Добавить Telegram"
+
+[accounts.add_elyby]
+en = "Add Ely.by"
+ru = "Добавить Ely.by"
+
+[backends.title]
+en = "Backends"
+ru = "Бэкенды"
+
+[backends.add_backend]
+en = "Add Backend"
+ru = "Добавить бэкенд"
+
+[backends.add_backend_section]
+en = "Add Backend"
+ru = "Добавить бэкенд"
+
+[backends.configured]
+en = "Configured"
+ru = "Настроен"
+
+[backends.discovered]
+en = "Discovered"
+ru = "Обнаружен"
+
+[backends.configured_backends]
+en = "Configured Backends"
+ru = "Настроенные бэкенды"
+
+[backends.manifest_url_hint]
+en = "Enter an http(s) manifest URL"
+ru = "Введите URL манифеста (http или https)"
+
+[backends.no_backends_yet]
+en = "No backends configured yet."
+ru = "Бэкенды ещё не настроены."
+
+[backends.local_only]
+en = "local only"
+ru = "только локальные"
+
+[backends.not_fetched]
+en = "not fetched"
+ru = "не загружено"
+
+[backends.offline]
+en = "offline"
+ru = "офлайн"
+
+[backends.published_count]
+en = "${count: usize} instances"
+ru = "${count: usize} инстансов"
+
+[backends.refreshing_title]
+en = "Refreshing ${title: String}"
+ru = "Обновление ${title: String}"
+
+[backends.refreshing_message]
+en = "The backend has not returned an instance list yet."
+ru = "Бэкенд ещё не вернул список инстансов."
+
+[backends.offline_title]
+en = "${title: String} is offline"
+ru = "${title: String} недоступен"
+
+[backends.offline_message]
+en = "Installed instances from this backend will appear here when known locally."
+ru = "Установленные инстансы с этого бэкенда появятся здесь, если они есть локально."
+
+[backends.fetch_failed_title]
+en = "Failed to fetch ${title: String}"
+ru = "Не удалось загрузить ${title: String}"
+
+[backends.not_fetched_title]
+en = "${title: String} has not been fetched"
+ru = "${title: String} ещё не загружался"
+
+[backends.not_fetched_message]
+en = "Use Refresh to try fetching this backend."
+ru = "Нажмите «Обновить», чтобы попробовать загрузить этот бэкенд."
+
+[settings.title]
+en = "Launcher Settings"
+ru = "Настройки лаунчера"
+
+[settings.hide_after_launch_title]
+en = "Hide launcher after launch"
+ru = "Скрывать лаунчер после запуска"
+
+[settings.hide_after_launch_desc]
+en = "Minimize the launcher window when Minecraft starts."
+ru = "Сворачивать окно лаунчера при запуске Minecraft."
+
+[settings.hide_usernames_title]
+en = "Hide usernames in cards"
+ru = "Скрывать имена в карточках"
+
+[settings.hide_usernames_desc]
+en = "Hide the account line on instance cards."
+ru = "Скрывать строку аккаунта на карточках инстансов."
+
+[settings.language_title]
+en = "Language"
+ru = "Язык"
+
+[settings.language_desc]
+en = "Choose the launcher interface language."
+ru = "Выберите язык интерфейса лаунчера."
+
+[settings.language_english]
+en = "English"
+ru = "English"
+
+[settings.language_russian]
+en = "Русский"
+ru = "Русский"
+
+[providers.microsoft]
+en = "Microsoft"
+ru = "Microsoft"
+
+[providers.telegram]
+en = "Telegram"
+ru = "Telegram"
+
+[providers.telegram_with_url]
+en = "Telegram (${url: String})"
+ru = "Telegram (${url: String})"
+
+[providers.elyby]
+en = "Ely.by"
+ru = "Ely.by"
+
+[providers.offline]
+en = "Offline"
+ru = "Офлайн"
+
+[placeholders.manifest_url]
+en = "https://example.com/manifest.json"
+ru = "https://example.com/manifest.json"
+
+[placeholders.offline_nickname]
+en = "Offline nickname"
+ru = "Офлайн-ник"
+
+[placeholders.telegram_auth_base_url]
+en = "Telegram auth base URL"
+ru = "Базовый URL авторизации Telegram"
+
+[placeholders.client_id]
+en = "Client ID"
+ru = "Client ID"
+
+[placeholders.client_secret]
+en = "Client secret"
+ru = "Client secret"
+
+[placeholders.launcher_name]
+en = "Launcher name"
+ru = "Имя лаунчера"
+
+[placeholders.memory_mib]
+en = "Memory MiB"
+ru = "Память (МиБ)"
+
+[placeholders.jvm_flags]
+en = "Extra JVM flags"
+ru = "Дополнительные флаги JVM"
+
+[progress.checking_files]
+en = "Checking files"
+ru = "Проверка файлов"
+
+[progress.downloading_files]
+en = "Downloading files"
+ru = "Загрузка файлов"
+
+[progress.copying_files]
+en = "Copying files"
+ru = "Копирование файлов"
+
+[progress.extracting_files]
+en = "Extracting files"
+ru = "Распаковка файлов"
+
+[progress.downloading_metadata]
+en = "Downloading metadata"
+ru = "Загрузка метаданных"
+
+[progress.installing_java]
+en = "Installing Java"
+ru = "Установка Java"
+
+[progress.installing]
+en = "Installing"
+ru = "Установка"
+
+[progress.checking_install_files]
+en = "Checking install files"
+ru = "Проверка файлов установки"
+
+[progress.downloading_install_files]
+en = "Downloading install files"
+ru = "Загрузка файлов установки"
+
+[progress.extracting_native_libraries]
+en = "Extracting native libraries"
+ru = "Распаковка нативных библиотек"
+
+[progress.java_already_installed]
+en = "Java is already installed"
+ru = "Java уже установлена"
+
+[progress.installing_java_version]
+en = "Installing Java ${version: String}"
+ru = "Установка Java ${version: String}"
+
+[progress.fetching_metadata]
+en = "Fetching metadata"
+ru = "Получение метаданных"
+
+[notifications.install_already_running]
+en = "Install is already running"
+ru = "Установка уже выполняется"
+
+[notifications.preparing_install]
+en = "Preparing install"
+ru = "Подготовка к установке"
+
+[notifications.install_completed]
+en = "Instance install completed"
+ru = "Установка инстанса завершена"
+
+[notifications.failed_save_installed]
+en = "Failed to save installed instance: ${error: String}"
+ru = "Не удалось сохранить установленный инстанс: ${error: String}"
+
+[notifications.install_failed]
+en = "Install failed: ${error: String}"
+ru = "Ошибка установки: ${error: String}"
+
+[notifications.stop_before_delete]
+en = "Stop the instance before deleting it"
+ru = "Остановите инстанс перед удалением"
+
+[notifications.cancel_install_before_delete]
+en = "Cancel the install before deleting this instance"
+ru = "Отмените установку перед удалением инстанса"
+
+[notifications.instance_deleted]
+en = "Instance deleted"
+ru = "Инстанс удалён"
+
+[notifications.instance_not_installed_locally]
+en = "Instance is not installed locally"
+ru = "Инстанс не установлен локально"
+
+[notifications.failed_delete_instance]
+en = "Failed to delete instance: ${error: String}"
+ru = "Не удалось удалить инстанс: ${error: String}"
+
+[notifications.enter_offline_nickname]
+en = "Enter an offline nickname in the instance details"
+ru = "Введите офлайн-ник в настройках инстанса"
+
+[notifications.offline_nickname_empty]
+en = "Offline nickname cannot be empty"
+ru = "Офлайн-ник не может быть пустым"
+
+[notifications.added_offline_account]
+en = "Added offline account ${username: String}"
+ru = "Добавлен офлайн-аккаунт ${username: String}"
+
+[notifications.failed_save_offline_account]
+en = "Failed to save offline account: ${error: String}"
+ru = "Не удалось сохранить офлайн-аккаунт: ${error: String}"
+
+[notifications.account_removed]
+en = "Account removed"
+ru = "Аккаунт удалён"
+
+[notifications.failed_remove_account]
+en = "Failed to remove account: ${error: String}"
+ru = "Не удалось удалить аккаунт: ${error: String}"
+
+[notifications.added_account]
+en = "Added account ${username: String}"
+ru = "Добавлен аккаунт ${username: String}"
+
+[notifications.failed_save_account]
+en = "Failed to save account: ${error: String}"
+ru = "Не удалось сохранить аккаунт: ${error: String}"
+
+[notifications.authentication_failed]
+en = "Authentication failed: ${error: String}"
+ru = "Ошибка авторизации: ${error: String}"
+
+[notifications.use_account_selection_for_required]
+en = "Use Account selection for accounts from the required provider"
+ru = "Используйте выбор аккаунта для провайдера, требуемого инстансом"
+
+[notifications.failed_save_account_override]
+en = "Failed to save account override: ${error: String}"
+ru = "Не удалось сохранить переопределение аккаунта: ${error: String}"
+
+[notifications.selected_account_must_match]
+en = "Selected account must match the instance auth provider"
+ru = "Выбранный аккаунт должен соответствовать провайдеру инстанса"
+
+[notifications.failed_save_selected_account]
+en = "Failed to save selected account: ${error: String}"
+ru = "Не удалось сохранить выбранный аккаунт: ${error: String}"
+
+[notifications.failed_save_launcher_settings]
+en = "Failed to save launcher settings: ${error: String}"
+ru = "Не удалось сохранить настройки лаунчера: ${error: String}"
+
+[notifications.failed_save_memory_override]
+en = "Failed to save memory override: ${error: String}"
+ru = "Не удалось сохранить переопределение памяти: ${error: String}"
+
+[notifications.failed_save_jvm_flags]
+en = "Failed to save JVM flags: ${error: String}"
+ru = "Не удалось сохранить флаги JVM: ${error: String}"
+
+[notifications.already_launching_or_running]
+en = "Instance is already launching or running"
+ru = "Инстанс уже запускается или работает"
+
+[notifications.minecraft_running]
+en = "Minecraft is running"
+ru = "Minecraft запущен"
+
+[notifications.failed_save_refreshed_account]
+en = "Failed to save refreshed account: ${error: String}"
+ru = "Не удалось сохранить обновлённый аккаунт: ${error: String}"
+
+[notifications.minecraft_exited_with_code]
+en = "Minecraft exited with code ${code: i32}"
+ru = "Minecraft завершился с кодом ${code: i32}"
+
+[notifications.minecraft_exited_successfully]
+en = "Minecraft exited successfully"
+ru = "Minecraft успешно завершился"
+
+[notifications.minecraft_terminated]
+en = "Minecraft was terminated"
+ru = "Minecraft был завершён"
+
+[notifications.launch_failed]
+en = "Launch failed: ${error: String}"
+ru = "Ошибка запуска: ${error: String}"
+
+[notifications.failed_add_backend_url]
+en = "Failed to add backend URL: ${error: String}"
+ru = "Не удалось добавить URL бэкенда: ${error: String}"
+
+[notifications.failed_remove_backend_url]
+en = "Failed to remove backend URL: ${error: String}"
+ru = "Не удалось удалить URL бэкенда: ${error: String}"
+
+[notifications.failed_open_instance_folder]
+en = "Failed to open instance folder: ${error: String}"
+ru = "Не удалось открыть папку инстанса: ${error: String}"
+
+[notifications.failed_open_logs]
+en = "Failed to open logs: ${error: String}"
+ru = "Не удалось открыть логи: ${error: String}"
+
+[notifications.failed_open_launcher_directory]
+en = "Failed to open launcher directory: ${error: String}"
+ru = "Не удалось открыть папку лаунчера: ${error: String}"
+
+[instances.launch_blocked]
+en = "Select a compatible account or choose an instance account override before launching."
+ru = "Выберите подходящий аккаунт или переопределение аккаунта перед запуском."
+
+[auth.default_launcher_name]
+en = "Potato Launcher"
+ru = "Potato Launcher"
+
+[auth.continue_in_browser]
+en = "Continue authentication in your browser: ${url: String}"
+ru = "Продолжите авторизацию в браузере: ${url: String}"
+
+[auth.continue_in_browser_with_code]
+en = "Continue authentication in your browser: ${url: String}\nCode: ${code: String}"
+ru = "Продолжите авторизацию в браузере: ${url: String}\nКод: ${code: String}"

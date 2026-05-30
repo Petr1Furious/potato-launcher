@@ -119,15 +119,15 @@ pub(crate) fn bridge_stage(stage: &ProgressStage) -> launcher_bridge::ProgressSt
     }
 }
 
-fn stage_message(stage: &ProgressStage) -> &'static str {
+fn stage_message(stage: &ProgressStage) -> String {
     match stage {
-        ProgressStage::Checking => "Checking files",
-        ProgressStage::Downloading => "Downloading files",
-        ProgressStage::Copying => "Copying files",
-        ProgressStage::Extracting => "Extracting files",
-        ProgressStage::Metadata => "Downloading metadata",
-        ProgressStage::Java => "Installing Java",
-        ProgressStage::Other(_) => "Installing",
+        ProgressStage::Checking => launcher_i18n::progress::checking_files().to_string(),
+        ProgressStage::Downloading => launcher_i18n::progress::downloading_files().to_string(),
+        ProgressStage::Copying => launcher_i18n::progress::copying_files().to_string(),
+        ProgressStage::Extracting => launcher_i18n::progress::extracting_files().to_string(),
+        ProgressStage::Metadata => launcher_i18n::progress::downloading_metadata().to_string(),
+        ProgressStage::Java => launcher_i18n::progress::installing_java().to_string(),
+        ProgressStage::Other(_) => launcher_i18n::progress::installing().to_string(),
     }
 }
 
@@ -146,7 +146,10 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
         &request.client,
         &plan.entry,
         &instance_dir,
-        progress.handle(ProgressStage::Metadata, "Downloading metadata"),
+        progress.handle(
+            ProgressStage::Metadata,
+            launcher_i18n::progress::downloading_metadata(),
+        ),
     )
     .await?;
 
@@ -275,19 +278,26 @@ async fn install_game_files(
         )
         .await?;
 
-    let check_progress = progress.handle(ProgressStage::Checking, "Checking install files");
+    let check_progress = progress.handle(
+        ProgressStage::Checking,
+        launcher_i18n::progress::checking_install_files(),
+    );
     let download_tasks = files::get_download_tasks(check_tasks, check_progress).await?;
 
-    let download_progress =
-        progress.handle(ProgressStage::Downloading, "Downloading install files");
+    let download_progress = progress.handle(
+        ProgressStage::Downloading,
+        launcher_i18n::progress::downloading_install_files(),
+    );
     adaptive_download::download_files(download_tasks, download_progress).await?;
 
     metadata
         .mark_include_downloads_complete(&instance_dir.minecraft_dir())
         .await?;
 
-    let extract_progress =
-        progress.handle(ProgressStage::Extracting, "Extracting native libraries");
+    let extract_progress = progress.handle(
+        ProgressStage::Extracting,
+        launcher_i18n::progress::extracting_native_libraries(),
+    );
     extract_natives(metadata, data_dir, extract_progress).await?;
 
     Ok(())
@@ -301,7 +311,10 @@ async fn ensure_java(
     let java_version = metadata.get_java_version();
     if java::get_java(&java_version, data_dir).await.is_some() {
         progress
-            .handle(ProgressStage::Java, "Java is already installed")
+            .handle(
+                ProgressStage::Java,
+                launcher_i18n::progress::java_already_installed(),
+            )
             .finish();
         return Ok(());
     }
@@ -311,7 +324,7 @@ async fn ensure_java(
         data_dir,
         progress.handle(
             ProgressStage::Java,
-            format!("Installing Java {java_version}"),
+            launcher_i18n::progress::installing_java_version(java_version.clone()),
         ),
     )
     .await?;

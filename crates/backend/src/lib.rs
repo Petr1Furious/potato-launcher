@@ -23,6 +23,7 @@ use launcher_bridge::{
     MessageToBackend, MessageToFrontend, NotificationLevel, ProgressStage,
 };
 use launcher_build_config::default_instance_manifest_urls;
+use launcher_i18n::{detect_system_language_code, resolve_language_code, set_lang};
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -43,6 +44,8 @@ pub struct Settings {
     pub hide_window_after_launch: bool,
     #[serde(default)]
     pub hide_usernames_in_cards: bool,
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -90,17 +93,38 @@ impl Settings {
     async fn load(launcher_dir: &Path) -> anyhow::Result<Self> {
         let path = launcher_dir.join(SETTINGS_FILE);
         if !path.exists() {
-            let settings = Self {
+            let mut settings = Self {
                 backend_urls: default_instance_manifest_urls(),
                 hide_window_after_launch: false,
                 hide_usernames_in_cards: false,
+                language: None,
             };
+            settings.ensure_language_resolved().await?;
             settings.save(launcher_dir).await?;
             return Ok(settings);
         }
 
         let bytes = tokio::fs::read(path).await?;
-        Ok(serde_json::from_slice(&bytes)?)
+        let mut settings: Self = serde_json::from_slice(&bytes)?;
+        if settings.ensure_language_resolved().await? {
+            settings.save(launcher_dir).await?;
+        }
+        Ok(settings)
+    }
+
+    async fn ensure_language_resolved(&mut self) -> anyhow::Result<bool> {
+        if self.language.is_some() {
+            set_lang(self.resolved_language_code());
+            return Ok(false);
+        }
+        let resolved = detect_system_language_code().to_string();
+        self.language = Some(resolved);
+        set_lang(self.resolved_language_code());
+        Ok(true)
+    }
+
+    fn resolved_language_code(&self) -> &str {
+        resolve_language_code(self.language.as_deref(), None)
     }
 
     async fn save(&self, launcher_dir: &Path) -> anyhow::Result<()> {
@@ -393,6 +417,7 @@ impl BackendState {
         LauncherSettingsView {
             hide_window_after_launch: self.settings.hide_window_after_launch,
             hide_usernames_in_cards: self.settings.hide_usernames_in_cards,
+            language: self.settings.resolved_language_code().to_string(),
         }
     }
 
@@ -496,7 +521,7 @@ impl BackendState {
         if self.install_tasks.contains_key(&id) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Info,
-                message: Arc::<str>::from("Install is already running"),
+                message: Arc::from(launcher_i18n::notifications::install_already_running()),
             });
             return;
         }
@@ -508,7 +533,7 @@ impl BackendState {
                 stage: ProgressStage::Metadata,
                 current: 0,
                 total: 0,
-                message: Arc::<str>::from("Preparing install"),
+                message: Arc::from(launcher_i18n::notifications::preparing_install()),
                 show_bar: false,
             },
         );
@@ -579,7 +604,7 @@ impl BackendState {
                         self.install_errors.remove(&output.instance.id);
                         tx.send(MessageToFrontend::Notification {
                             level: NotificationLevel::Success,
-                            message: Arc::<str>::from("Instance install completed"),
+                            message: Arc::from(launcher_i18n::notifications::install_completed()),
                         });
                     }
                     Err(err) => {
@@ -592,9 +617,7 @@ impl BackendState {
                             .insert(output.requested_id, error.clone());
                         tx.send(MessageToFrontend::Notification {
                             level: NotificationLevel::Error,
-                            message: Arc::<str>::from(format!(
-                                "Failed to save installed instance: {error}"
-                            )),
+                            message: Arc::from(launcher_i18n::notifications::failed_save_installed(error.to_string())),
                         });
                     }
                 }
@@ -604,7 +627,7 @@ impl BackendState {
                 self.install_errors.insert(id, error.clone());
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Error,
-                    message: Arc::<str>::from(format!("Install failed: {error}")),
+                    message: Arc::from(launcher_i18n::notifications::install_failed(error.to_string())),
                 });
             }
         }
@@ -624,14 +647,14 @@ impl BackendState {
         if self.running.contains(&id) || self.launching.contains(&id) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
-                message: Arc::<str>::from("Stop the instance before deleting it"),
+                message: Arc::from(launcher_i18n::notifications::stop_before_delete()),
             });
             return;
         }
         if self.install_tasks.contains_key(&id) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
-                message: Arc::<str>::from("Cancel the install before deleting this instance"),
+                message: Arc::from(launcher_i18n::notifications::cancel_install_before_delete()),
             });
             return;
         }
@@ -642,20 +665,20 @@ impl BackendState {
                 self.launch_errors.remove(&id);
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Success,
-                    message: Arc::<str>::from("Instance deleted"),
+                    message: Arc::from(launcher_i18n::notifications::instance_deleted()),
                 });
             }
             Ok(None) => {
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Warning,
-                    message: Arc::<str>::from("Instance is not installed locally"),
+                    message: Arc::from(launcher_i18n::notifications::instance_not_installed_locally()),
                 });
             }
             Err(err) => {
                 log::error!("Failed to delete instance {id}: {err:#}");
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Error,
-                    message: Arc::<str>::from(format!("Failed to delete instance: {err}")),
+                    message: Arc::from(launcher_i18n::notifications::failed_delete_instance(err.to_string())),
                 });
             }
         }
@@ -671,7 +694,7 @@ impl BackendState {
         if matches!(provider, AuthProviderConfig::Offline(_)) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Info,
-                message: Arc::<str>::from("Enter an offline nickname in the instance details"),
+                message: Arc::from(launcher_i18n::notifications::enter_offline_nickname()),
             });
             return;
         }
@@ -691,7 +714,7 @@ impl BackendState {
         if nickname.is_empty() {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
-                message: Arc::<str>::from("Offline nickname cannot be empty"),
+                message: Arc::from(launcher_i18n::notifications::offline_nickname_empty()),
             });
             return;
         }
@@ -701,14 +724,14 @@ impl BackendState {
             Ok(_) => {
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Success,
-                    message: Arc::<str>::from(format!("Added offline account {}", key.1)),
+                    message: Arc::from(launcher_i18n::notifications::added_offline_account(key.1.clone())),
                 });
             }
             Err(err) => {
                 log::error!("Failed to save offline account {key:?}: {err:#}");
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Error,
-                    message: Arc::<str>::from(format!("Failed to save offline account: {err}")),
+                    message: Arc::from(launcher_i18n::notifications::failed_save_offline_account(err.to_string())),
                 });
             }
         }
@@ -720,14 +743,14 @@ impl BackendState {
             Ok(()) => {
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Success,
-                    message: Arc::<str>::from("Account removed"),
+                    message: Arc::from(launcher_i18n::notifications::account_removed()),
                 });
             }
             Err(err) => {
                 log::error!("Failed to remove account {key:?}: {err:#}");
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Error,
-                    message: Arc::<str>::from(format!("Failed to remove account: {err}")),
+                    message: Arc::from(launcher_i18n::notifications::failed_remove_account(err.to_string())),
                 });
             }
         }
@@ -758,14 +781,14 @@ impl BackendState {
                 Ok((_, username)) => {
                     tx.send(MessageToFrontend::Notification {
                         level: NotificationLevel::Success,
-                        message: Arc::<str>::from(format!("Added account {username}")),
+                        message: Arc::from(launcher_i18n::notifications::added_account(username)),
                     });
                 }
                 Err(err) => {
                     log::error!("Failed to save authenticated account: {err:#}");
                     tx.send(MessageToFrontend::Notification {
                         level: NotificationLevel::Error,
-                        message: Arc::<str>::from(format!("Failed to save account: {err}")),
+                        message: Arc::from(launcher_i18n::notifications::failed_save_account(err.to_string())),
                     });
                 }
             },
@@ -773,7 +796,7 @@ impl BackendState {
                 log::error!("Authentication failed: {error}");
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Error,
-                    message: Arc::<str>::from(format!("Authentication failed: {error}")),
+                    message: Arc::from(launcher_i18n::notifications::authentication_failed(error.to_string())),
                 });
             }
         }
@@ -792,9 +815,7 @@ impl BackendState {
         {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
-                message: Arc::<str>::from(
-                    "Use Account selection for accounts from the required provider",
-                ),
+                message: Arc::from(launcher_i18n::notifications::use_account_selection_for_required()),
             });
             return;
         }
@@ -803,7 +824,7 @@ impl BackendState {
             log::error!("Failed to save account override for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
-                message: Arc::<str>::from(format!("Failed to save account override: {err}")),
+                message: Arc::from(launcher_i18n::notifications::failed_save_account_override(err.to_string())),
             });
         }
         self.emit_snapshot(tx);
@@ -821,7 +842,7 @@ impl BackendState {
         {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
-                message: Arc::<str>::from("Selected account must match the instance auth provider"),
+                message: Arc::from(launcher_i18n::notifications::selected_account_must_match()),
             });
             return;
         }
@@ -835,7 +856,7 @@ impl BackendState {
             log::error!("Failed to save selected account for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
-                message: Arc::<str>::from(format!("Failed to save selected account: {err}")),
+                message: Arc::from(launcher_i18n::notifications::failed_save_selected_account(err.to_string())),
             });
         }
         self.emit_snapshot(tx);
@@ -844,11 +865,17 @@ impl BackendState {
     async fn set_launcher_settings(&mut self, settings: LauncherSettingsView, tx: &FrontendSender) {
         self.settings.hide_window_after_launch = settings.hide_window_after_launch;
         self.settings.hide_usernames_in_cards = settings.hide_usernames_in_cards;
+        self.settings.language = Some(
+            resolve_language_code(Some(settings.language.as_str()), None).to_string(),
+        );
+        set_lang(self.settings.resolved_language_code());
         if let Err(err) = self.settings.save(&self.launcher_dir).await {
             log::error!("Failed to save launcher settings: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
-                message: Arc::<str>::from(format!("Failed to save launcher settings: {err}")),
+                message: Arc::from(launcher_i18n::notifications::failed_save_launcher_settings(
+                    err.to_string(),
+                )),
             });
         }
         self.emit_snapshot(tx);
@@ -865,7 +892,7 @@ impl BackendState {
             log::error!("Failed to save memory override for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
-                message: Arc::<str>::from(format!("Failed to save memory override: {err}")),
+                message: Arc::from(launcher_i18n::notifications::failed_save_memory_override(err.to_string())),
             });
         }
         self.emit_snapshot(tx);
@@ -883,7 +910,7 @@ impl BackendState {
             log::error!("Failed to save JVM flags for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
-                message: Arc::<str>::from(format!("Failed to save JVM flags: {err}")),
+                message: Arc::from(launcher_i18n::notifications::failed_save_jvm_flags(err.to_string())),
             });
         }
         self.emit_snapshot(tx);
@@ -899,7 +926,7 @@ impl BackendState {
         if self.launching.contains(&id) || self.running.contains(&id) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Info,
-                message: Arc::<str>::from("Instance is already launching or running"),
+                message: Arc::from(launcher_i18n::notifications::already_launching_or_running()),
             });
             return;
         }
@@ -985,7 +1012,7 @@ impl BackendState {
             stage: ProgressStage::Launch,
             current: 1,
             total: 1,
-            message: Arc::<str>::from("Minecraft is running"),
+            message: Arc::from(launcher_i18n::notifications::minecraft_running()),
         });
         self.emit_snapshot(tx);
     }
@@ -999,7 +1026,7 @@ impl BackendState {
         if let Err(err) = self.auth_storage.insert_account(&provider, account) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
-                message: Arc::<str>::from(format!("Failed to save refreshed account: {err}")),
+                message: Arc::from(launcher_i18n::notifications::failed_save_refreshed_account(err.to_string())),
             });
         }
         self.emit_snapshot(tx);
@@ -1023,7 +1050,7 @@ impl BackendState {
             launcher_bridge::ExitOutcome::ExitCode(code) => {
                 self.launch_errors.insert(
                     id,
-                    Arc::<str>::from(format!("Minecraft exited with code {code}")),
+                    Arc::from(launcher_i18n::notifications::minecraft_exited_with_code(*code)),
                 );
             }
             launcher_bridge::ExitOutcome::Error(error) => {
@@ -1130,7 +1157,7 @@ pub async fn run(
                                 log::error!("Failed to add backend URL {url}: {err:#}");
                                 frontend.send(MessageToFrontend::Notification {
                                     level: NotificationLevel::Error,
-                                    message: Arc::<str>::from(format!("Failed to add backend URL: {err}")),
+                                    message: Arc::from(launcher_i18n::notifications::failed_add_backend_url(err.to_string())),
                                 });
                             }
                         }
@@ -1140,7 +1167,7 @@ pub async fn run(
                             log::error!("Failed to remove backend URL {url}: {err:#}");
                             frontend.send(MessageToFrontend::Notification {
                                 level: NotificationLevel::Error,
-                                message: Arc::<str>::from(format!("Failed to remove backend URL: {err}")),
+                                message: Arc::from(launcher_i18n::notifications::failed_remove_backend_url(err.to_string())),
                             });
                         }
                     }

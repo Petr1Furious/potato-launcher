@@ -1,5 +1,6 @@
 use gpui::{Context, IntoElement, Render, Window, div, prelude::*};
 use gpui_component::{ActiveTheme, Disableable, button::Button, h_flex, v_flex};
+use launcher_i18n as t;
 
 use crate::{entity::DataEntities, pages::instances::InstancesPage};
 use launcher_bridge::{BackendFetchState, MessageToBackend};
@@ -29,9 +30,9 @@ impl Render for LauncherUI {
 
         let refresh = Button::new("refresh")
             .label(if refreshing {
-                "Refreshing..."
+                t::common::refreshing()
             } else {
-                "Refresh"
+                t::common::refresh()
             })
             .disabled(refreshing)
             .on_click({
@@ -39,25 +40,29 @@ impl Render for LauncherUI {
                 move |_, _, _| sender.send(MessageToBackend::Refresh)
             });
         let backends_button = Button::new("open-backends")
-            .label("Configure backends")
+            .label(t::nav::configure_backends())
             .on_click({
                 let instances_page = self.instances_page.clone();
                 move |_, _, cx| {
                     instances_page.update(cx, |page, cx| page.open_backend_settings(cx));
                 }
             });
-        let accounts = Button::new("open-accounts").label("Accounts").on_click({
-            let instances_page = self.instances_page.clone();
-            move |_, _, cx| {
-                instances_page.update(cx, |page, cx| page.open_accounts_panel(cx));
-            }
-        });
-        let settings = Button::new("open-settings").label("Settings").on_click({
-            let instances_page = self.instances_page.clone();
-            move |_, _, cx| {
-                instances_page.update(cx, |page, cx| page.open_global_settings(cx));
-            }
-        });
+        let accounts = Button::new("open-accounts")
+            .label(t::nav::accounts())
+            .on_click({
+                let instances_page = self.instances_page.clone();
+                move |_, _, cx| {
+                    instances_page.update(cx, |page, cx| page.open_accounts_panel(cx));
+                }
+            });
+        let settings = Button::new("open-settings")
+            .label(t::common::settings())
+            .on_click({
+                let instances_page = self.instances_page.clone();
+                move |_, _, cx| {
+                    instances_page.update(cx, |page, cx| page.open_global_settings(cx));
+                }
+            });
 
         v_flex()
             .size_full()
