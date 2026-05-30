@@ -430,7 +430,7 @@ impl Library {
         native_name: &str,
         native_download: &Download,
     ) -> Result<NativePath, LibraryError> {
-        Ok(LibrariesDir::root()
+        LibrariesDir::root()
             .library_path(&self.get_rel_path()?)
             .native_path(
                 native_name,
@@ -443,7 +443,7 @@ impl Library {
             .map_err(|source| LibraryError::PathsLibrary {
                 library: self.name.clone(),
                 source,
-            })?)
+            })
     }
 
     fn get_arch_os_name(os: &str, arch: &str) -> String {
@@ -564,10 +564,9 @@ impl Library {
                 .to_string()
                 + ".sha1",
         );
-        Ok(self
-            .get_url()?
+        self.get_url()?
             .join(path.as_str())
-            .map_err(|source| self.map_url_error(source))?)
+            .map_err(|source| self.map_url_error(source))
     }
 
     pub fn get_group_id(&self) -> String {
