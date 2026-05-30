@@ -601,8 +601,10 @@ mod tests {
             },
         )]);
 
-        let mut fixture = TestBuildFixture::default();
-        fixture.installing = progress;
+        let fixture = TestBuildFixture {
+            installing: progress,
+            ..Default::default()
+        };
         let views = fixture.build(&locals, &catalogs, &[]);
         let view = views.iter().find(|view| view.id == id).unwrap();
 
@@ -625,8 +627,10 @@ mod tests {
             },
         )]);
 
-        let mut fixture = TestBuildFixture::default();
-        fixture.local_metadata = metadata.clone();
+        let fixture = TestBuildFixture {
+            local_metadata: metadata.clone(),
+            ..Default::default()
+        };
         let views = fixture.build(&[local], &HashMap::new(), &[]);
 
         assert_eq!(views.len(), 1);
@@ -652,8 +656,10 @@ mod tests {
             OfflineAuthProvider {},
         ))];
 
-        let mut fixture = TestBuildFixture::default();
-        fixture.local_metadata = metadata.clone();
+        let fixture = TestBuildFixture {
+            local_metadata: metadata.clone(),
+            ..Default::default()
+        };
         let views = fixture.build(&[local], &HashMap::new(), &accounts);
 
         assert!(!views[0].has_required_account);
@@ -686,9 +692,11 @@ mod tests {
             },
         )]);
 
-        let mut fixture = TestBuildFixture::default();
-        fixture.local_metadata = metadata.clone();
-        fixture.user_settings = settings.clone();
+        let fixture = TestBuildFixture {
+            local_metadata: metadata.clone(),
+            user_settings: settings.clone(),
+            ..Default::default()
+        };
         let views = fixture.build(&[local], &HashMap::new(), &[account]);
 
         assert_eq!(views[0].selected_account, Some(selected_key));
@@ -765,8 +773,10 @@ mod tests {
             },
         )]);
 
-        let mut fixture = TestBuildFixture::default();
-        fixture.user_settings = settings.clone();
+        let fixture = TestBuildFixture {
+            user_settings: settings.clone(),
+            ..Default::default()
+        };
         let views = fixture.build(&[], &catalogs, &[override_account]);
 
         assert!(!views[0].locally_installed);
@@ -805,9 +815,11 @@ mod tests {
             OfflineAuthProvider {},
         ))];
 
-        let mut fixture = TestBuildFixture::default();
-        fixture.local_metadata = metadata.clone();
-        fixture.user_settings = settings.clone();
+        let fixture = TestBuildFixture {
+            local_metadata: metadata.clone(),
+            user_settings: settings.clone(),
+            ..Default::default()
+        };
         let views = fixture.build(&[local], &HashMap::new(), &accounts);
 
         assert_eq!(views[0].account_override, Some(override_account));
@@ -831,8 +843,10 @@ mod tests {
             },
         )]);
 
-        let mut fixture = TestBuildFixture::default();
-        fixture.installing = progress;
+        let fixture = TestBuildFixture {
+            installing: progress,
+            ..Default::default()
+        };
         let views = fixture.build(&[local], &HashMap::new(), &[]);
 
         assert!(matches!(

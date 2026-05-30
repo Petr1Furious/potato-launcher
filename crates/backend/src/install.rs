@@ -492,7 +492,7 @@ mod tests {
             })),
         )]);
 
-        let plan = resolve_install_plan(local.id, &[local.clone()], &catalogs).unwrap();
+        let plan = resolve_install_plan(local.id, std::slice::from_ref(&local), &catalogs).unwrap();
 
         assert_eq!(plan.view_id, local.id);
         assert_eq!(plan.dir_name, "Vanilla");
