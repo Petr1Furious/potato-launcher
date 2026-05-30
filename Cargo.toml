@@ -52,7 +52,7 @@ url = "2.5.8"
 relative-path = { version = "2.0.1", features = ["serde"] }
 uuid = { version = "1.23.2", features = ["serde", "v4"] }
 gpui = { git = "https://github.com/zed-industries/zed" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 
 [profile.release-lto]

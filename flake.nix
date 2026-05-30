@@ -54,10 +54,12 @@
           buildInputs = with pkgs; [
             libxcb
             libxkbcommon
+            fontconfig
           ];
           packages = with pkgs; [
             # nightly toolchain
             pkgs.fenix.complete.toolchain
+            pkg-config
 
             (python3.withPackages (
               ps: with ps; [
