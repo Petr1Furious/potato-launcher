@@ -4,7 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow.workspace = true
+fern.workspace = true
 futures.workspace = true
+humantime.workspace = true
 log.workspace = true
 reqwest.workspace = true
 tokio.workspace = true

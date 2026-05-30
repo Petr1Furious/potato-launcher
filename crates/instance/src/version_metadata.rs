@@ -9,12 +9,13 @@ use url::Url;
 
 use utils::{
     files::{self, CheckTask},
+    hash_struct,
     paths::{AssetsDir, BaseUrl, DataDir, LibrariesDir, NativePath, ResourcesUrlBase, VersionsDir},
-    utils::hash_struct,
 };
 
 use crate::{
     assets::{AssetIndex, AssetsMetadata, AssetsMetadataError},
+    authlib::default_authlib_injector_library,
     instance_metadata::InstanceMetadata,
 };
 
@@ -41,6 +42,58 @@ impl Os {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn replacing_download_urls_preserves_libraries() {
+        let metadata = VersionMetadata {
+            arguments: None,
+            asset_index: None,
+            downloads: None,
+            id: "1.21.11".to_string(),
+            java_version: None,
+            libraries: vec![Library {
+                name: "org.apache.logging.log4j:log4j-api:2.25.2".to_string(),
+                downloads: Some(LibraryDownloads {
+                    artifact: Some(Download {
+                        sha1: "abc".to_string(),
+                        url: Url::parse("https://example.invalid/log4j-api.jar").unwrap(),
+                    }),
+                    classifiers: None,
+                }),
+                rules: None,
+                url: None,
+                sha1: None,
+                natives: None,
+            }],
+            main_class: "net.minecraft.client.main.Main".to_string(),
+            inherits_from: None,
+            minecraft_arguments: None,
+        };
+        let data_dir = DataDir::new(std::env::temp_dir());
+        let base_url = BaseUrl::new(Url::parse("http://localhost:8080/").unwrap());
+
+        let replaced = metadata
+            .with_replaced_download_urls(&base_url, &data_dir)
+            .await
+            .unwrap();
+
+        assert_eq!(replaced.libraries.len(), 1);
+        let artifact = replaced.libraries[0]
+            .downloads
+            .as_ref()
+            .and_then(|downloads| downloads.artifact.as_ref())
+            .unwrap();
+        assert_eq!(artifact.sha1, "abc");
+        assert_eq!(
+            artifact.url.as_str(),
+            "http://localhost:8080/libraries/org/apache/logging/log4j/log4j-api/2.25.2/log4j-api-2.25.2.jar"
+        );
     }
 }
 
@@ -171,7 +224,7 @@ impl Download {
     pub fn get_check_task(&self, path: &Path) -> CheckTask {
         CheckTask {
             url: self.url.clone(),
-            remote_sha1: Some(self.sha1.clone()),
+            remote_sha1: (!self.sha1.is_empty()).then(|| self.sha1.clone()),
             path: path.to_path_buf(),
         }
     }
@@ -216,7 +269,7 @@ pub enum VersionMetadataError {
     #[error("failed to parse downloaded version metadata JSON: {0}")]
     DownloadFileParsed(#[from] files::DownloadFileParsedError),
     #[error("failed to hash version metadata for manifest: {0}")]
-    HashStruct(#[from] utils::utils::HashStructError),
+    HashStruct(#[from] utils::HashStructError),
     #[error("missing minecraft arguments for legacy version metadata")]
     MissingMinecraftArguments,
     #[error("failed to write version metadata JSON file: {0}")]
@@ -295,6 +348,14 @@ impl Library {
         Ok(LibrariesDir::root()
             .library_path(&self.get_rel_path()?)
             .to_fs(data_dir))
+    }
+
+    pub fn get_artifact_path(&self, data_dir: &DataDir) -> Result<Option<PathBuf>, LibraryError> {
+        if self.has_artifact_to_download() {
+            Ok(Some(self.get_path(data_dir)?))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn get_url(&self) -> Result<Url, LibraryError> {
@@ -595,8 +656,9 @@ impl VersionMetadata {
             name: self.id.clone(),
             auth_backend: None,
             include: vec![],
-            resources_url_base: None,
+            resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: vec![],
+            authlib_injector: default_authlib_injector_library(),
             default_xmx: None,
             versions: vec![self],
             overrides_applied: false,
@@ -690,6 +752,7 @@ impl VersionMetadata {
                 natives: library.natives.clone(),
             });
         }
+        replaced_metadata.libraries = replaced_libraries;
 
         Ok(replaced_metadata)
     }

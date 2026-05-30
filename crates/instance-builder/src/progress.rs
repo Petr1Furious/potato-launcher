@@ -1,38 +1,41 @@
-use utils::progress::ProgressTracker;
+use utils::progress::{ProgressEvent, ProgressHandle, ProgressReporter, ProgressStage};
 
 #[derive(Clone)]
-pub struct TerminalProgressBar {
+pub struct TerminalProgress {
     bar: indicatif::ProgressBar,
 }
 
-impl TerminalProgressBar {
-    pub fn new(message: &str) -> Self {
+impl TerminalProgress {
+    pub fn new() -> Self {
         let bar = indicatif::ProgressBar::new(0);
         bar.set_style(
             indicatif::ProgressStyle::default_bar()
                 .template("{msg} {bar:40.cyan/blue} {pos}/{len}")
                 .unwrap(),
         );
-        bar.set_message(message.to_string());
         Self { bar }
+    }
+
+    pub fn handle(self, stage: ProgressStage, message: impl Into<String>) -> ProgressHandle<Self> {
+        ProgressHandle::new(self, stage).with_message(message)
     }
 }
 
-impl ProgressTracker for TerminalProgressBar {
-    fn set_length(&self, length: u64) {
-        self.bar.set_length(length);
+impl Default for TerminalProgress {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    fn inc(&self, amount: u64) {
-        self.bar.inc(amount);
-    }
-
-    fn finish(&self) {
-        self.bar.finish();
-    }
-
-    fn reset(&self) {
-        self.bar.set_length(0);
-        self.bar.set_position(0);
+impl ProgressReporter for TerminalProgress {
+    fn event(&self, event: ProgressEvent) {
+        self.bar.set_length(event.total);
+        self.bar.set_position(event.current);
+        if let Some(message) = event.message {
+            self.bar.set_message(message);
+        }
+        if event.finished {
+            self.bar.finish();
+        }
     }
 }

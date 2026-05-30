@@ -2091,6 +2091,7 @@ dependencies = [
  "async-trait",
  "instance",
  "launcher-auth",
+ "lazy_static",
  "log",
  "rand 0.10.1",
  "relative-path",
@@ -2853,6 +2854,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
+name = "humantime"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "135b12329e5e3ce057a9f972339ea52bc954fe1e9358ef27f95e89716fbc5424"
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3189,6 +3196,7 @@ dependencies = [
  "tokio",
  "url",
  "utils",
+ "uuid",
 ]
 
 [[package]]
@@ -3197,7 +3205,6 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
- "fern",
  "generate",
  "indicatif",
  "instance",
@@ -3463,6 +3470,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "launcher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "launcher-backend",
+ "launcher-bridge",
+ "launcher-build-config",
+ "launcher-frontend",
+ "log",
+ "tokio",
+ "utils",
+]
+
+[[package]]
 name = "launcher-auth"
 version = "0.1.0"
 dependencies = [
@@ -3483,13 +3505,59 @@ dependencies = [
 ]
 
 [[package]]
-name = "launcher-gpui"
+name = "launcher-backend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "instance",
+ "launcher-auth",
+ "launcher-bridge",
+ "launcher-build-config",
+ "log",
+ "relative-path",
+ "reqwest 0.13.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "url",
+ "utils",
+ "uuid",
+ "zip",
+]
+
+[[package]]
+name = "launcher-bridge"
+version = "0.1.0"
+dependencies = [
+ "launcher-auth",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "launcher-build-config"
+version = "0.1.0"
+dependencies = [
+ "url",
+]
+
+[[package]]
+name = "launcher-frontend"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
  "gpui-component",
  "gpui_platform",
+ "launcher-auth",
+ "launcher-bridge",
+ "launcher-build-config",
+ "log",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -7076,9 +7144,12 @@ dependencies = [
 name = "utils"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "fern",
  "flate2",
  "futures",
  "hex",
+ "humantime",
  "lazy_static",
  "log",
  "num_cpus",

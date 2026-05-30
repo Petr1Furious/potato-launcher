@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use launcher_auth::providers::AuthProviderConfig;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -112,38 +113,19 @@ pub struct InstanceManifestEntry {
     pub name: String,
     pub url: Url,
     pub sha1: String,
-    pub versions: Vec<VersionMetadataInfo>,
+    /// Must always match `InstanceMetadata.auth_backend` for the entry's metadata.
+    #[serde(default)]
+    pub auth_backend: Option<AuthProviderConfig>,
 }
 
 impl InstanceManifestEntry {
-    pub fn get_check_tasks(&self, instance_dir: &InstanceDirFS) -> Vec<CheckTask> {
-        let mut result = Vec::with_capacity(1 + self.versions.len());
-        result.push(CheckTask {
+    pub fn to_check_task(&self, instance_dir: &InstanceDirFS) -> CheckTask {
+        CheckTask {
             url: self.url.clone(),
             remote_sha1: Some(self.sha1.clone()),
             path: instance_dir.meta_path(),
-        });
-        result.extend(
-            self.versions
-                .iter()
-                .map(|v| v.to_check_task(instance_dir.data_dir())),
-        );
-        result
+        }
     }
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
-pub struct AuthlibInjectorDownload {
-    pub url: Url,
-    #[serde(default)]
-    pub sha1: Option<String>,
-}
-
-lazy_static::lazy_static! {
-    pub static ref DEFAULT_AUTHLIB_INJECTOR: AuthlibInjectorDownload = AuthlibInjectorDownload {
-        url: Url::parse("https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.7/authlib-injector-1.2.7.jar").unwrap(),
-        sha1: None,
-    };
 }
 
 /// Replaces the vanilla version manifest.
@@ -151,8 +133,6 @@ lazy_static::lazy_static! {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct InstanceManifest {
     pub instances: Vec<InstanceManifestEntry>,
-    #[serde(default)]
-    pub authlib_injector: Option<AuthlibInjectorDownload>,
 }
 
 impl InstanceManifest {

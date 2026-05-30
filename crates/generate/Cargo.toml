@@ -18,3 +18,4 @@ relative-path.workspace = true
 log.workspace = true
 rand.workspace = true
 serde-xml-rs = "0.8.2"
+lazy_static.workspace = true

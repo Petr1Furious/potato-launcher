@@ -1,4 +1,5 @@
 use instance::{
+    authlib::default_authlib_injector_library,
     instance_metadata::{Include, InstanceMetadata, Object},
     manifest::VanillaVersionManifest,
     overrides::with_overrides,
@@ -12,20 +13,23 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
+use url::Url;
 use utils::{
     files::{self, CheckTask, CopyTask},
     paths::{
         AssetsDir, BaseUrl, DataDir, InstanceDir, InstanceDirFS, LibrariesDir, ResourcesUrlBase,
-        VersionsDir,
     },
     progress,
-    utils::{MOJANG_RESOURCES_URL_BASE, VANILLA_MANIFEST_URL},
 };
 
 use crate::loader::{
     fabric::FabricGenerator,
     forge::{self, ForgeGenerator},
 };
+
+lazy_static::lazy_static! {
+    pub static ref VANILLA_MANIFEST_URL: Url = Url::parse("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").unwrap();
+}
 
 #[derive(PartialEq, Eq)]
 pub enum Loader {
@@ -47,10 +51,15 @@ async fn get_objects(
 
     let mut objects = Vec::with_capacity(files.len());
     for (path, hash) in files.iter().zip(hashes.iter()) {
+        let object_path = RelativePathBuf::from_path(path.strip_prefix(from_base_path)?)?;
+        let object_url = instance_dir
+            .minecraft_dir()
+            .instance_object_path(&object_path)
+            .to_url(base_url);
         objects.push(Object {
-            path: RelativePathBuf::from_path(path.strip_prefix(from_base_path)?)?,
+            path: object_path,
             sha1: hash.clone(),
-            url: instance_dir.to_url(base_url),
+            url: object_url,
         });
     }
 
@@ -79,6 +88,8 @@ pub enum GetObjectsError {
     StripPrefix(#[from] std::path::StripPrefixError),
     #[error("failed to convert include path to relative path: {0}")]
     RelativePath(#[from] relative_path::FromPathError),
+    #[error("failed to build include object URL: {0}")]
+    Url(#[from] url::ParseError),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -219,6 +230,8 @@ pub enum GenerateError {
     ExtraForgeLibs(#[from] GetExtraForgeLibsError),
     #[error("failed while collecting include objects: {0}")]
     GetObjects(#[from] GetObjectsError),
+    #[error("failed while building authlib-injector check tasks: {0}")]
+    AuthlibLibrary(#[from] instance::version_metadata::LibraryError),
 }
 
 pub struct GeneratorResult {
@@ -243,6 +256,7 @@ impl InstanceGenerator {
         os_arch: &OsArch,
     ) -> Result<GeneratorResult, GenerateError> {
         let output_dir = instance_dir.data_dir();
+        let work_data_dir = DataDir::new(work_dir.to_path_buf());
 
         info!("Fetching version manifest");
         let vanilla_manifest =
@@ -253,7 +267,7 @@ impl InstanceGenerator {
             .to_metadata_info();
 
         let vanilla_metadata =
-            VersionMetadata::read_or_download(&self.client, &metadata_info, output_dir).await?;
+            VersionMetadata::read_or_download(&self.client, &metadata_info, &work_data_dir).await?;
 
         let mut metadata = vec![vanilla_metadata];
         let vanilla_metadata = metadata.first().expect("Vanilla metadata present");
@@ -296,12 +310,11 @@ impl InstanceGenerator {
                 )
                 .await?;
                 copy_tasks.extend(result.extra_libs_copy_tasks);
-                copy_tasks.push(result.metadata_copy_task);
             }
             Loader::Fabric => {
                 let result =
                     FabricGenerator::new(&self.minecraft_version, self.loader_version.clone())
-                        .generate(&self.client, output_dir)
+                        .generate(&self.client)
                         .await?;
                 metadata.push(result);
             }
@@ -310,13 +323,6 @@ impl InstanceGenerator {
         for metadata in metadata.iter_mut() {
             metadata.libraries = with_overrides(&metadata.libraries, &metadata.id);
         }
-
-        // add the version metadata files to the other generated files
-        other_generated_files.extend(metadata.iter().map(|metadata| {
-            VersionsDir::root()
-                .metadata_path(&metadata.id)
-                .to_fs(output_dir)
-        }));
 
         let mut include = vec![];
         if let Some(include_config) = &self.include_config {
@@ -327,7 +333,7 @@ impl InstanceGenerator {
                             .get_check_tasks(
                                 &self.client,
                                 output_dir,
-                                &ResourcesUrlBase::new(MOJANG_RESOURCES_URL_BASE.clone()),
+                                &ResourcesUrlBase::default(),
                                 os_arch,
                             )
                             .await?,
@@ -378,41 +384,26 @@ impl InstanceGenerator {
             if include_config.replace_download_urls {
                 let vanilla_metadata = metadata.first_mut().expect("Vanilla metadata present");
                 info!(
-                    "Adding check tasks for {} metadata's files",
-                    &vanilla_metadata.id
-                );
-                check_tasks.extend(
-                    vanilla_metadata
-                        .get_check_tasks(
-                            &self.client,
-                            output_dir,
-                            &AssetsDir::root()
-                                .assets_object_dir()
-                                .to_resources_url_base(&include_config.download_server_base),
-                            &OsArch::All,
-                        )
-                        .await?,
-                );
-                info!(
                     "Replacing download URLs in metadata for {}",
                     &vanilla_metadata.id
                 );
                 *vanilla_metadata = vanilla_metadata
                     .with_replaced_download_urls(&include_config.download_server_base, output_dir)
                     .await?;
-                vanilla_metadata.save(output_dir).await?;
             }
         }
 
-        let resources_url_base = if let Some(include_config) = &self.include_config {
+        let mut resources_url_base = ResourcesUrlBase::default();
+        if let Some(include_config) = &self.include_config {
             if include_config.replace_download_urls {
-                Some(AssetsDir::root().to_url(&include_config.download_server_base))
-            } else {
-                None
+                resources_url_base = AssetsDir::root()
+                    .assets_object_dir()
+                    .to_resources_url_base(&include_config.download_server_base);
             }
-        } else {
-            None
-        };
+        }
+
+        let authlib_injector = default_authlib_injector_library();
+        check_tasks.extend(authlib_injector.get_check_tasks(output_dir, os_arch)?);
 
         Ok(GeneratorResult {
             metadata: InstanceMetadata {
@@ -421,6 +412,7 @@ impl InstanceGenerator {
                 include,
                 resources_url_base,
                 extra_forge_libs,
+                authlib_injector,
                 default_xmx: self.default_xmx,
                 versions: metadata,
                 overrides_applied: true,

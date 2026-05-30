@@ -4,9 +4,9 @@ use std::{
 };
 
 use relative_path::{RelativePath, RelativePathBuf};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use url::Url;
 
-const AUTHLIB_INJECTOR_NAME: &str = "authlib-injector.jar";
 const INSTANCES_DIR_NAME: &str = "instances";
 const VERSIONS_DIR_NAME: &str = "versions";
 const VERSIONS_REPLACED_DIR_NAME: &str = "versions_replaced";
@@ -20,6 +20,10 @@ const NATIVES_DIR_NAME: &str = "natives";
 const INDEXES_DIR_NAME: &str = "indexes";
 const OBJECTS_DIR_NAME: &str = "objects";
 const ASSETS_DIR_NAME: &str = "assets";
+
+lazy_static::lazy_static! {
+    pub static ref MOJANG_RESOURCES_URL_BASE: Url = Url::parse("https://resources.download.minecraft.net/").unwrap();
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -154,8 +158,8 @@ path_type!(LibraryPath, file);
 path_type!(NativePath, file);
 path_type!(ClientJarPath, file);
 path_type!(AssetIndexPath, file);
-path_type!(AuthlibInjectorPath, file);
 path_type!(AssetObjectPath, file);
+path_type!(InstanceObjectPath, file);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DataDir(PathBuf);
@@ -258,6 +262,12 @@ impl InstanceDir {
     }
 }
 
+impl MinecraftDir {
+    pub fn instance_object_path(&self, object_path: &RelativePath) -> InstanceObjectPath {
+        InstanceObjectPath(self.0.join(object_path))
+    }
+}
+
 impl AuthDataPath {
     pub fn root() -> Self {
         Self(Rel::new(AUTH_DATA_FILE_NAME))
@@ -289,10 +299,6 @@ impl LogsDir {
 impl LibrariesDir {
     pub fn root() -> Self {
         Self(Rel::new(LIBRARIES_DIR_NAME))
-    }
-
-    pub fn authlib_injector_path(&self) -> AuthlibInjectorPath {
-        AuthlibInjectorPath(self.0.join(AUTHLIB_INJECTOR_NAME))
     }
 
     pub fn library_path(&self, rel_library_path: &RelativePath) -> LibraryPath {
@@ -378,13 +384,10 @@ fn object_rel_path(object_hash: &str) -> RelativePathBuf {
     RelativePathBuf::from(format!("{}/{}", &object_hash[..2], object_hash))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ResourcesUrlBase(Url);
 
 impl ResourcesUrlBase {
-    pub fn new(url: Url) -> Self {
-        Self(url)
-    }
-
     pub fn as_url(&self) -> &Url {
         &self.0
     }
@@ -394,9 +397,36 @@ impl ResourcesUrlBase {
     }
 }
 
+impl Default for ResourcesUrlBase {
+    fn default() -> Self {
+        Self(MOJANG_RESOURCES_URL_BASE.clone())
+    }
+}
+
+impl Serialize for ResourcesUrlBase {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.0.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ResourcesUrlBase {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Url::parse(&s)
+            .map(ResourcesUrlBase)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 impl AssetsObjectsDir {
     pub fn to_resources_url_base(&self, base_url: &BaseUrl) -> ResourcesUrlBase {
-        ResourcesUrlBase(self.0.to_url(base_url.as_url()))
+        ResourcesUrlBase(ensure_trailing_slash(&self.0.to_url(base_url.as_url())))
     }
 
     pub fn object_path(&self, object_hash: &str) -> AssetObjectPath {

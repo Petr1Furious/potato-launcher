@@ -21,7 +21,6 @@ relative-path.workspace = true
 shell-words = "1.1.1"
 thiserror.workspace = true
 tokio.workspace = true
-fern = "0.7.1"
 
 [target.'cfg(windows)'.dependencies]
 winapi.workspace = true

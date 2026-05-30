@@ -1,0 +1,16 @@
+[package]
+name = "launcher-frontend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true
+gpui_platform.workspace = true
+launcher-build-config = { path = "../build-config" }
+launcher-bridge = { path = "../bridge" }
+launcher-auth = { path = "../auth" }
+log.workspace = true
+url.workspace = true
+uuid.workspace = true

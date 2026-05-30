@@ -2,7 +2,6 @@ use instance::version_metadata::VersionMetadata;
 use log::info;
 use reqwest::Client;
 use serde::Deserialize;
-use utils::paths::DataDir;
 
 const FABRIC_META_BASE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader/";
 
@@ -61,13 +60,10 @@ async fn download_fabric_metadata(
     client: &Client,
     minecraft_version: &str,
     loader_version: &str,
-    data_dir: &DataDir,
 ) -> Result<VersionMetadata, FabricGeneratorError> {
     let fabric_metadata_url =
         format!("{FABRIC_META_BASE_URL}{minecraft_version}/{loader_version}/profile/json");
-    let version_metadata = VersionMetadata::fetch(client, &fabric_metadata_url).await?;
-    version_metadata.save(data_dir).await?;
-    Ok(version_metadata)
+    Ok(VersionMetadata::fetch(client, &fabric_metadata_url).await?)
 }
 
 pub struct FabricGenerator {
@@ -85,11 +81,7 @@ impl FabricGenerator {
 }
 
 impl FabricGenerator {
-    pub async fn generate(
-        &self,
-        client: &Client,
-        output_dir: &DataDir,
-    ) -> Result<VersionMetadata, FabricGeneratorError> {
+    pub async fn generate(&self, client: &Client) -> Result<VersionMetadata, FabricGeneratorError> {
         info!(
             "Generating Fabric {}, minecraft version {}",
             self.loader_version.as_deref().unwrap_or("<auto>"),
@@ -112,8 +104,7 @@ impl FabricGenerator {
 
         info!("Downloading Fabric version metadata");
         let fabric_metadata =
-            download_fabric_metadata(client, &self.minecraft_version, &fabric_version, output_dir)
-                .await?;
+            download_fabric_metadata(client, &self.minecraft_version, &fabric_version).await?;
 
         info!("Fabric \"{}\" generated", &fabric_version);
 

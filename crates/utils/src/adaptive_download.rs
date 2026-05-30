@@ -232,20 +232,21 @@ fn is_transient_network_error(e: &DownloadFileError) -> bool {
     }
 }
 
-/// Download a single file, returning (success, latency_ms).
-/// On success, we return Ok(Some(latency_ms)).
-/// If it's a timeout, we return Ok(None). If it's another error, we return Err(e).
+enum DownloadOutcome {
+    Success(u128),
+    TransientFailure(DownloadFileError),
+}
+
 async fn do_download(
     client: &Client,
     task: &DownloadTask,
-) -> Result<Option<u128>, DownloadFileError> {
+) -> Result<DownloadOutcome, DownloadFileError> {
     let latency_ms = match download_file(client, task).await {
         Ok(r) => r,
         Err(e) => {
-            // If it's a timeout, we return Ok(None), else Err
             if is_transient_network_error(&e) {
-                debug!("Timeout downloading {}", task.url);
-                return Ok(None);
+                debug!("Transient error downloading {}: {:?}", task.url, e);
+                return Ok(DownloadOutcome::TransientFailure(e));
             } else {
                 debug!("Error downloading {}: {:?}", task.url, e);
                 return Err(e);
@@ -253,13 +254,15 @@ async fn do_download(
         }
     };
 
-    Ok(Some(latency_ms))
+    Ok(DownloadOutcome::Success(latency_ms))
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum AdaptiveDownloadError {
-    #[error("Connection timed out")]
-    ConnectionTimeout,
+    #[error("connection timed out after retries; latest error: {source}")]
+    ConnectionTimeout { source: DownloadFileError },
+    #[error("connection timed out after retries")]
+    ConnectionTimeoutWithoutSource,
     #[error("failed to build HTTP client for adaptive downloader: {0}")]
     ClientBuild(reqwest::Error),
     #[error("download failed: {0}")]
@@ -283,6 +286,7 @@ pub async fn download_files(
 
     let mut cur_tasks = download_tasks;
     let mut active = FuturesUnordered::new();
+    let mut last_transient_error = None;
 
     fn can_spawn_more(active_count: usize, concurrency: &Arc<AtomicUsize>) -> bool {
         active_count < concurrency.load(Ordering::SeqCst)
@@ -313,11 +317,12 @@ pub async fn download_files(
         };
 
         let (success, latency_ms) = match result {
-            Ok(Some(latency_ms)) => {
+            Ok(DownloadOutcome::Success(latency_ms)) => {
                 progress_bar.inc(1);
                 (true, latency_ms)
             }
-            Ok(None) => {
+            Ok(DownloadOutcome::TransientFailure(error)) => {
+                last_transient_error = Some(error);
                 cur_tasks.push(task);
                 (false, 0)
             }
@@ -344,7 +349,10 @@ pub async fn download_files(
                 if current == MIN_CONCURRENCY {
                     timeouts_at_min_concurrency += 1;
                     if timeouts_at_min_concurrency >= MAX_TIMEOUTS_AT_MIN_CONCURRENCY {
-                        return Err(AdaptiveDownloadError::ConnectionTimeout);
+                        if let Some(source) = last_transient_error {
+                            return Err(AdaptiveDownloadError::ConnectionTimeout { source });
+                        }
+                        return Err(AdaptiveDownloadError::ConnectionTimeoutWithoutSource);
                     }
                     warn!("Timeouts at min concurrency: {timeouts_at_min_concurrency}");
                 }

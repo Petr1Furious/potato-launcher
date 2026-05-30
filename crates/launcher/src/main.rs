@@ -1,63 +1,39 @@
-use gpui::*;
-use gpui_component::{
-    ActiveTheme, Root, button::Button, h_flex, scroll::ScrollableElement, v_flex,
-};
-use gpui_platform::application;
+use std::path::PathBuf;
 
-pub struct MainView;
-impl Render for MainView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let title = div()
-            .w_full()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .text_xl()
-            .child("Instances");
+use launcher_build_config::lower_launcher_name;
+use log::LevelFilter;
+use utils::logging::setup_logger;
 
-        let children = (0..1000_usize)
-            .map(|i| {
-                Button::new(("inst", i))
-                    .w_10()
-                    .h_10()
-                    .on_click(move |_, _, _| {
-                        println!("Clicked instance {i}");
-                    })
-            })
-            .collect::<Vec<_>>();
-        let grid = h_flex()
-            .flex_wrap()
-            .flex_1()
-            .gap_2()
-            .px_4()
-            .py_2()
-            .children(children);
-        let grid_wrapper = div()
-            .flex_1()
-            .size_full()
-            .overflow_y_scrollbar()
-            .child(grid);
-        v_flex()
-            .gap_2()
-            .size_full()
-            .child(title)
-            .child(grid_wrapper)
-    }
+fn main() -> anyhow::Result<()> {
+    let launcher_dir = launcher_dir();
+    setup_logger(
+        &launcher_dir.join("logs").join("launcher.log"),
+        true,
+        LevelFilter::Info,
+    )?;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()?;
+
+    let (backend_sender, backend_receiver, frontend_sender, frontend_receiver) =
+        launcher_bridge::channel();
+
+    let backend_dir = launcher_dir.clone();
+    runtime.spawn(async move {
+        if let Err(err) =
+            launcher_backend::run(backend_dir, backend_receiver, frontend_sender).await
+        {
+            log::error!("Launcher backend stopped with an error: {err:?}");
+        }
+    });
+
+    launcher_frontend::start(launcher_dir, backend_sender, frontend_receiver)
 }
 
-fn main() {
-    application().run(move |cx| {
-        gpui_component::init(cx);
-
-        cx.spawn(async move |cx| {
-            cx.open_window(WindowOptions::default(), |window, cx| {
-                let view = cx.new(|_| MainView);
-                cx.new(|cx| Root::new(view, window, cx))
-            })?;
-
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach();
-    });
+fn launcher_dir() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+        .join(lower_launcher_name())
 }

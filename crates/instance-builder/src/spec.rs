@@ -1,6 +1,7 @@
 use generate::instance::{IncludeConfig, IncludeRule, InstanceGenerator, Loader};
-use instance::manifest::{AuthlibInjectorDownload, DEFAULT_AUTHLIB_INJECTOR, InstanceManifest};
-use instance::version_metadata::OsArch;
+use instance::{
+    authlib::mirror_authlib_injector_library, manifest::InstanceManifest, version_metadata::OsArch,
+};
 use launcher_auth::providers::AuthProviderConfig;
 use log::{info, warn};
 use relative_path::RelativePathBuf;
@@ -14,11 +15,12 @@ use url::Url;
 use utils::adaptive_download;
 use utils::{
     files::{self, CheckTask, CopyTask},
-    paths::{BaseUrl, DataDir, InstancesDir, LibrariesDir},
-    utils::get_unique_name,
+    get_unique_name,
+    paths::{BaseUrl, DataDir, InstancesDir},
+    progress::ProgressStage,
 };
 
-use crate::progress::TerminalProgressBar;
+use crate::progress::TerminalProgress;
 
 fn vanilla() -> String {
     "vanilla".to_string()
@@ -88,16 +90,6 @@ impl Spec {
         let manifest_path = output_dir.join(INSTANCE_MANIFEST_FILENAME);
 
         let mut all_metadata = vec![];
-        let authlib_injector_custom_url = LibrariesDir::root()
-            .authlib_injector_path()
-            .to_url(&download_server_base);
-        all_check_tasks.push(CheckTask {
-            url: DEFAULT_AUTHLIB_INJECTOR.url.clone(),
-            remote_sha1: None,
-            path: LibrariesDir::root()
-                .authlib_injector_path()
-                .to_fs(&data_dir),
-        });
 
         for instance in self.instances {
             let unique_name = get_unique_name(&existing_instance_names, &instance.name);
@@ -176,9 +168,11 @@ impl Spec {
                 result.other_generated_files.len()
             );
 
-            result.metadata.save(&instance_dir).await?;
             all_metadata.push(result.metadata);
             all_other_generated_files.extend(result.other_generated_files);
+            // add instance metadata path to the list of other generated files
+            // even though we save it later, after downloads
+            // this is needed because we will know authlib
             all_other_generated_files.push(instance_dir.meta_path());
             all_check_tasks.extend(result.check_tasks);
             all_copy_tasks.extend(result.copy_tasks);
@@ -189,7 +183,7 @@ impl Spec {
         let deduped_check_tasks = files::dedup_check_tasks(all_check_tasks);
         let deduped_copy_tasks = files::dedup_copy_tasks(all_copy_tasks);
         info!(
-            "Running {} deduplicated check tasks and {} deduplicated copy tasks",
+            "Running {} check tasks and {} copy tasks",
             deduped_check_tasks.len(),
             deduped_copy_tasks.len()
         );
@@ -201,34 +195,38 @@ impl Spec {
         keep_files.extend(deduped_copy_tasks.iter().map(|task| task.target.clone()));
         keep_files.insert(manifest_path.clone());
 
-        let check_progress = TerminalProgressBar::new("Checking files");
+        let check_progress =
+            TerminalProgress::new().handle(ProgressStage::Checking, "Checking files");
         let download_tasks = files::get_download_tasks(deduped_check_tasks, check_progress).await?;
 
         info!("Got {} download tasks", download_tasks.len());
 
-        let download_progress = TerminalProgressBar::new("Downloading files");
+        let download_progress =
+            TerminalProgress::new().handle(ProgressStage::Downloading, "Downloading files");
         adaptive_download::download_files(download_tasks, download_progress).await?;
 
-        let copy_progress = TerminalProgressBar::new("Copying files");
+        let copy_progress = TerminalProgress::new().handle(ProgressStage::Copying, "Copying files");
         files::copy_files_if_different(deduped_copy_tasks, copy_progress).await?;
 
-        let authlib_injector_sha1 = files::hash_file(
-            &LibrariesDir::root()
-                .authlib_injector_path()
-                .to_fs(&data_dir),
-        )
-        .await?;
+        let authlib_injector_library =
+            mirror_authlib_injector_library(&data_dir, &download_server_base).await?;
+        for metadata in &mut all_metadata {
+            if self.replace_download_urls {
+                metadata.authlib_injector = authlib_injector_library.clone();
+            }
+            let instance_dir = InstancesDir::root()
+                .instance_dir(metadata.get_name())
+                .with_data_dir(data_dir.clone());
+            metadata.save(&instance_dir).await?;
+        }
+
         let manifest = InstanceManifest {
             instances: all_metadata
                 .iter()
                 .map(|metadata| {
-                    metadata.get_manifest_entry(metadata.get_name(), &download_server_base)
+                    metadata.to_manifest_entry(metadata.get_name(), &download_server_base)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
-            authlib_injector: Some(AuthlibInjectorDownload {
-                url: authlib_injector_custom_url.clone(),
-                sha1: Some(authlib_injector_sha1),
-            }),
         };
         manifest.save_to_file(&manifest_path).await?;
 

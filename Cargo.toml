@@ -2,6 +2,10 @@
 members = [
     "crates/instance-builder",
     "crates/auth",
+    "crates/backend",
+    "crates/bridge",
+    "crates/build-config",
+    "crates/frontend",
     "crates/instance",
     "crates/utils",
     "crates/generate",
@@ -25,6 +29,8 @@ tokio = { version = "1.52.3", features = [
     "sync",
 ] }
 log = "0.4.29"
+fern = "0.7.1"
+humantime = "2"
 async-trait = "0.1.89"
 anyhow = "1.0.102"
 open = "5.3.5"
@@ -44,6 +50,10 @@ winreg = "0.56.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
 url = "2.5.8"
 relative-path = { version = "2.0.1", features = ["serde"] }
+uuid = { version = "1.23.1", features = ["serde", "v4"] }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 
 [profile.release-lto]
 inherits = "release"

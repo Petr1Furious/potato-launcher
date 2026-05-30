@@ -2,46 +2,11 @@ mod progress;
 mod spec;
 
 use clap::{Arg, Command};
-use fern::Dispatch;
 use log::LevelFilter;
 use spec::Spec;
-use std::fs::OpenOptions;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
 use tokio::runtime::Runtime;
-
-fn setup_logger_with_options(
-    logs_path: &Path,
-    append: bool,
-    default_level: LevelFilter,
-) -> anyhow::Result<()> {
-    let log_file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(append)
-        .truncate(!append)
-        .open(logs_path)?;
-
-    let level = std::env::var("RUST_LOG")
-        .ok()
-        .and_then(|value| value.parse::<LevelFilter>().ok())
-        .unwrap_or(default_level);
-
-    Dispatch::new()
-        .level(level)
-        .format(|out, message, record| {
-            let ts = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_millis())
-                .unwrap_or(0);
-            out.finish(format_args!("{} {} - {}", ts, record.level(), message));
-        })
-        .chain(std::io::stdout())
-        .chain(log_file)
-        .apply()?;
-
-    Ok(())
-}
+use utils::logging::setup_logger;
 
 fn parse_path(v: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(v);
@@ -98,7 +63,7 @@ fn main() -> anyhow::Result<()> {
     let work_dir_path = work_dir.clone();
 
     std::fs::create_dir_all(&work_dir_path)?;
-    setup_logger_with_options(&work_dir_path.join("builder.log"), true, LevelFilter::Info)?;
+    setup_logger(&work_dir_path.join("builder.log"), true, LevelFilter::Info)?;
 
     let rt = Runtime::new().unwrap();
     let spec = rt.block_on(Spec::from_file(&spec_file_path))?;

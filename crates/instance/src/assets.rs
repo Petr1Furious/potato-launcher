@@ -120,3 +120,36 @@ impl AssetsMetadata {
         Ok(files::write_file_json(&get_asset_index_path(data_dir, asset_id), self).await?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use utils::paths::BaseUrl;
+
+    use super::*;
+
+    #[test]
+    fn asset_object_urls_are_built_from_download_server_root() {
+        let data_dir = DataDir::new(std::env::temp_dir());
+        let base_url = BaseUrl::new(Url::parse("http://localhost:8080").unwrap());
+        let resources_url_base = AssetsDir::root()
+            .assets_object_dir()
+            .to_resources_url_base(&base_url);
+        let metadata = AssetsMetadata {
+            objects: HashMap::from([(
+                "example".to_string(),
+                ObjectData {
+                    hash: "e15a8f7fdce4175e05fe4799f5bd28468aedfa8c".to_string(),
+                },
+            )]),
+        };
+
+        let tasks = metadata
+            .get_check_tasks(&data_dir, &resources_url_base, false)
+            .unwrap();
+
+        assert_eq!(
+            tasks[0].url.as_str(),
+            "http://localhost:8080/assets/objects/e1/e15a8f7fdce4175e05fe4799f5bd28468aedfa8c"
+        );
+    }
+}

@@ -85,11 +85,15 @@ where
 
     let max_concurrent_tasks = num_cpus::get();
     let mut results = vec![None; files.len()];
+    let hash_inputs = files
+        .iter()
+        .enumerate()
+        .map(|(index, path)| (index, path.as_ref().to_path_buf()))
+        .collect::<Vec<_>>();
     let mut tasks = stream::iter(
-        files
-            .iter()
-            .enumerate()
-            .map(|(index, path)| async move { (index, hash_file(path.as_ref()).await) }),
+        hash_inputs
+            .into_iter()
+            .map(|(index, path)| async move { (index, hash_file(&path).await) }),
     )
     .buffer_unordered(max_concurrent_tasks);
 
@@ -339,6 +343,8 @@ pub enum DownloadFileParsedError {
     Reqwest(#[from] reqwest::Error),
     #[error("failed to parse downloaded JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("file I/O failed while saving downloaded JSON file: {0}")]
+    Io(#[from] io::Error),
 }
 
 pub async fn download_file_parsed<T>(
@@ -348,9 +354,22 @@ pub async fn download_file_parsed<T>(
 where
     T: serde::de::DeserializeOwned,
 {
-    let response = client.get(task.url.as_str()).send().await?;
+    let response = client
+        .get(task.url.as_str())
+        .send()
+        .await?
+        .error_for_status()?;
     let bytes = response.bytes().await?;
-    Ok(serde_json::from_slice(&bytes)?)
+    let parsed = serde_json::from_slice(&bytes)?;
+
+    if let Some(parent) = task.path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    let tmp_path = temp_path_for(&task.path);
+    fs::write(&tmp_path, bytes.as_ref()).await?;
+    atomic_replace_file(&tmp_path, &task.path).await?;
+
+    Ok(parsed)
 }
 
 pub async fn download_files(

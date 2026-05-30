@@ -203,4 +203,8 @@ impl AuthStorage {
         result.sort();
         result
     }
+
+    pub fn accounts(&self) -> impl Iterator<Item = &StorageAccountEntry> {
+        self.storage.accounts.iter()
+    }
 }

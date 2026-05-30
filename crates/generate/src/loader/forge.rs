@@ -552,7 +552,6 @@ pub struct ForgeGenerator<'a> {
 pub struct GeneratorResult {
     pub metadata: VersionMetadata,
     pub extra_libs_copy_tasks: Vec<CopyTask>,
-    pub metadata_copy_task: CopyTask,
     pub installer_work_dir: PathBuf,
 }
 
@@ -610,12 +609,6 @@ impl<'a> ForgeGenerator<'a> {
         info!("Reading forge version metadata");
         let forge_metadata = VersionMetadata::read_local(&installer_data_dir, &id).await?;
 
-        let metadata_path = VersionsDir::root().metadata_path(&id);
-        let metadata_copy_task = CopyTask {
-            source: metadata_path.to_fs(&installer_data_dir),
-            target: metadata_path.to_fs(output_dir),
-        };
-
         let installer_libraries_dir = LibrariesDir::root().to_fs(&installer_data_dir);
         let installer_extra_libs_paths = files::get_files_in_dir(&installer_libraries_dir)?
             .into_iter()
@@ -655,7 +648,6 @@ impl<'a> ForgeGenerator<'a> {
         Ok(GeneratorResult {
             metadata: forge_metadata,
             extra_libs_copy_tasks,
-            metadata_copy_task,
             installer_work_dir,
         })
     }
