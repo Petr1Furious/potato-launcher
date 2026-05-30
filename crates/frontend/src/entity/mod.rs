@@ -1,6 +1,7 @@
 pub mod account;
 pub mod backend;
 pub mod instance;
+pub mod local_create;
 pub mod notification;
 pub mod settings;
 
@@ -9,6 +10,7 @@ use backend::BackendList;
 use gpui::Entity;
 use instance::InstanceEntries;
 use launcher_bridge::BackendSender;
+use local_create::LocalCreateEntries;
 use notification::NotificationEntries;
 use settings::LauncherSettingsEntries;
 use std::path::PathBuf;
@@ -20,6 +22,7 @@ pub struct DataEntities {
     pub accounts: Entity<AccountEntries>,
     pub notifications: Entity<NotificationEntries>,
     pub settings: Entity<LauncherSettingsEntries>,
+    pub local_create: Entity<LocalCreateEntries>,
     pub backend_sender: BackendSender,
     pub launcher_dir: PathBuf,
 }

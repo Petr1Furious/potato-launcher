@@ -15,6 +15,7 @@ pub enum MessageToBackend {
         force_overwrite: bool,
     },
     CancelInstall(Uuid),
+    RetryCreateLocal(Uuid),
     DeleteInstance(Uuid),
     Launch {
         instance: Uuid,
@@ -43,7 +44,26 @@ pub enum MessageToBackend {
         instance: Uuid,
         flags: Option<String>,
     },
+    CreateLocalInstance {
+        display_name: String,
+        minecraft_version: String,
+        loader: LocalLoader,
+        loader_version: Option<String>,
+    },
+    FetchLocalCreateVersions,
+    FetchLoaderVersions {
+        minecraft_version: String,
+        loader: LocalLoader,
+    },
     Quit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalLoader {
+    Vanilla,
+    Fabric,
+    Forge,
+    Neoforge,
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +89,17 @@ pub enum MessageToFrontend {
     LaunchFinished {
         instance: Uuid,
         exit: ExitOutcome,
+    },
+    LocalCreateVersionsUpdated {
+        versions: Arc<[(String, String)]>,
+        latest_release: String,
+        error: Option<Arc<str>>,
+    },
+    LoaderVersionsUpdated {
+        minecraft_version: String,
+        loader: LocalLoader,
+        versions: Arc<[String]>,
+        error: Option<Arc<str>>,
     },
     Quit,
 }

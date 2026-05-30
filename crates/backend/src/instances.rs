@@ -12,7 +12,7 @@ use launcher_bridge::{
 use url::Url;
 use uuid::Uuid;
 
-use crate::catalog::BackendCatalogState;
+use crate::catalog::BackendCatalogEntry;
 
 #[derive(Clone, Debug)]
 pub struct InstallProgressView {
@@ -41,6 +41,7 @@ pub struct InstanceUserSettingsView {
 
 pub struct InstanceLiveState<'a> {
     pub installing: &'a ProgressMap,
+    pub creating_local: &'a HashMap<Uuid, Arc<str>>,
     pub install_errors: &'a HashMap<Uuid, Arc<str>>,
     pub installed_overrides: &'a HashSet<Uuid>,
     pub launching: &'a HashSet<Uuid>,
@@ -50,7 +51,7 @@ pub struct InstanceLiveState<'a> {
 
 pub struct InstanceViewBuildInput<'a> {
     pub local_instances: &'a [LocalInstance],
-    pub catalogs: &'a HashMap<Url, BackendCatalogState>,
+    pub catalogs: &'a HashMap<Url, BackendCatalogEntry>,
     pub live_state: InstanceLiveState<'a>,
     pub local_metadata: &'a HashMap<Uuid, LocalMetadataView>,
     pub user_settings: &'a HashMap<Uuid, InstanceUserSettingsView>,
@@ -68,6 +69,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
     } = input;
     let InstanceLiveState {
         installing,
+        creating_local,
         install_errors,
         installed_overrides,
         launching,
@@ -182,6 +184,50 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
         });
     }
 
+    for (id, dir_name) in creating_local.iter() {
+        if local_instances.iter().any(|local| local.id == *id) {
+            continue;
+        }
+        let status = if let Some(progress) = installing.get(id) {
+            InstanceLiveStatus::Installing {
+                stage: progress.stage,
+                current: progress.current,
+                total: progress.total,
+                message: progress.message.clone(),
+                show_bar: progress.show_bar,
+            }
+        } else if let Some(error) = install_errors.get(id) {
+            InstanceLiveStatus::InstallFailed(error.clone())
+        } else {
+            InstanceLiveStatus::Installing {
+                stage: launcher_bridge::ProgressStage::Metadata,
+                current: 0,
+                total: 0,
+                message: Arc::from(launcher_i18n::notifications::preparing_local_instance()),
+                show_bar: false,
+            }
+        };
+        views.push(InstanceView {
+            id: *id,
+            display_name: dir_name.clone(),
+            dir_name: dir_name.clone(),
+            origin: InstanceOrigin::Local,
+            status,
+            locally_installed: false,
+            orphaned: false,
+            auth_provider: None,
+            default_xmx_mb: None,
+            selected_account: None,
+            account_override: None,
+            has_required_account: true,
+            launch_blocked_reason: None,
+            effective_account_username: None,
+            effective_auth_provider: None,
+            effective_xmx_mb: None,
+            jvm_flags: None,
+        });
+    }
+
     for (url, manifest) in fetched_manifests {
         for entry in &manifest.instances {
             if covered_remote_keys.contains(&remote_key(url, &entry.name)) {
@@ -260,14 +306,11 @@ pub fn remote_entry_id(url: &Url, name: &str) -> Uuid {
 }
 
 fn fetched_manifests(
-    catalogs: &HashMap<Url, BackendCatalogState>,
+    catalogs: &HashMap<Url, BackendCatalogEntry>,
 ) -> HashMap<&Url, Arc<InstanceManifest>> {
     catalogs
         .iter()
-        .filter_map(|(url, state)| match state {
-            BackendCatalogState::Fetched(manifest) => Some((url, manifest.clone())),
-            _ => None,
-        })
+        .filter_map(|(url, state)| state.manifest().map(|manifest| (url, manifest.clone())))
         .collect()
 }
 
@@ -401,9 +444,16 @@ mod tests {
     use super::*;
     use instance::{manifest::InstanceManifestEntry, storage::RemoteSource};
 
+    use crate::catalog::{BackendCatalogEntry, BackendFetchStatus};
+
+    fn ok_catalog(manifest: InstanceManifest) -> BackendCatalogEntry {
+        BackendCatalogEntry::with_manifest(manifest, BackendFetchStatus::Ok)
+    }
+
     #[derive(Default)]
     struct TestBuildFixture {
         installing: ProgressMap,
+        creating_local: HashMap<Uuid, Arc<str>>,
         install_errors: HashMap<Uuid, Arc<str>>,
         installed_overrides: HashSet<Uuid>,
         launching: HashSet<Uuid>,
@@ -417,7 +467,7 @@ mod tests {
         fn build<'a>(
             &'a self,
             local_instances: &'a [LocalInstance],
-            catalogs: &'a HashMap<Url, BackendCatalogState>,
+            catalogs: &'a HashMap<Url, BackendCatalogEntry>,
             accounts: &'a [AccountView],
         ) -> Vec<InstanceView> {
             build_instance_views(&InstanceViewBuildInput {
@@ -425,6 +475,7 @@ mod tests {
                 catalogs,
                 live_state: InstanceLiveState {
                     installing: &self.installing,
+                    creating_local: &self.creating_local,
                     install_errors: &self.install_errors,
                     installed_overrides: &self.installed_overrides,
                     launching: &self.launching,
@@ -486,15 +537,15 @@ mod tests {
         let catalogs = HashMap::from([
             (
                 url_a.clone(),
-                BackendCatalogState::Fetched(Arc::new(manifest([
+                ok_catalog(manifest([
                     ("Installed", "installed-sha1"),
                     ("Outdated", "new-sha1"),
                     ("RemoteOnly", "remote-sha1"),
-                ]))),
+                ])),
             ),
             (
                 url_b.clone(),
-                BackendCatalogState::Fetched(Arc::new(manifest([("Other", "other-sha1")]))),
+                ok_catalog(manifest([("Other", "other-sha1")])),
             ),
         ]);
 
@@ -516,14 +567,8 @@ mod tests {
         let url_a = Url::parse("https://a.example/manifest.json").unwrap();
         let url_b = Url::parse("https://b.example/manifest.json").unwrap();
         let catalogs = HashMap::from([
-            (
-                url_a.clone(),
-                BackendCatalogState::Fetched(Arc::new(manifest([("Vanilla", "a-sha1")]))),
-            ),
-            (
-                url_b.clone(),
-                BackendCatalogState::Fetched(Arc::new(manifest([("Vanilla", "b-sha1")]))),
-            ),
+            (url_a.clone(), ok_catalog(manifest([("Vanilla", "a-sha1")]))),
+            (url_b.clone(), ok_catalog(manifest([("Vanilla", "b-sha1")]))),
         ]);
 
         let fixture = TestBuildFixture::default();
@@ -559,10 +604,7 @@ mod tests {
             }),
             last_synced_sha1: Some("old".to_string()),
         }];
-        let catalogs = HashMap::from([(
-            url.clone(),
-            BackendCatalogState::Fetched(Arc::new(manifest([("New Pack", "new")]))),
-        )]);
+        let catalogs = HashMap::from([(url.clone(), ok_catalog(manifest([("New Pack", "new")])))]);
 
         let fixture = TestBuildFixture::default();
         let views = fixture.build(&locals, &catalogs, &[]);
@@ -586,10 +628,7 @@ mod tests {
             }),
             last_synced_sha1: Some("old".to_string()),
         }];
-        let catalogs = HashMap::from([(
-            url,
-            BackendCatalogState::Fetched(Arc::new(manifest([("New Pack", "new")]))),
-        )]);
+        let catalogs = HashMap::from([(url, ok_catalog(manifest([("New Pack", "new")])))]);
         let progress = HashMap::from([(
             id,
             InstallProgressView {
@@ -725,9 +764,9 @@ mod tests {
         };
         let catalogs = HashMap::from([(
             url,
-            BackendCatalogState::Fetched(Arc::new(InstanceManifest {
+            ok_catalog(InstanceManifest {
                 instances: vec![entry],
-            })),
+            }),
         )]);
 
         let fixture = TestBuildFixture::default();
@@ -759,9 +798,9 @@ mod tests {
         let id = remote_entry_id(&url, &entry.name);
         let catalogs = HashMap::from([(
             url.clone(),
-            BackendCatalogState::Fetched(Arc::new(InstanceManifest {
+            ok_catalog(InstanceManifest {
                 instances: vec![entry],
-            })),
+            }),
         )]);
         let settings = HashMap::from([(
             id,

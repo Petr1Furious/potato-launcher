@@ -26,6 +26,63 @@ const FORGE_PROMOTIONS_URL: &str =
 const NEOFORGE_MAVEN_METADATA_URL: &str =
     "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum VersionFragment {
+    Alpha,
+    Beta,
+    Snapshot,
+    String(String),
+    Number(usize),
+}
+
+impl VersionFragment {
+    fn string_to_parts(version: &str) -> Vec<Self> {
+        version
+            .split(&['.', '-', '+'])
+            .map(|part| {
+                if let Ok(number) = part.parse::<usize>() {
+                    VersionFragment::Number(number)
+                } else if part.eq_ignore_ascii_case("alpha") {
+                    VersionFragment::Alpha
+                } else if part.eq_ignore_ascii_case("beta") {
+                    VersionFragment::Beta
+                } else if part.eq_ignore_ascii_case("snapshot") {
+                    VersionFragment::Snapshot
+                } else {
+                    VersionFragment::String(part.to_string())
+                }
+            })
+            .collect()
+    }
+}
+
+fn neoforge_minecraft_version_prefix(minecraft_version: &str) -> Vec<VersionFragment> {
+    let mut parts = VersionFragment::string_to_parts(minecraft_version);
+    if parts.is_empty() {
+        return parts;
+    }
+
+    // 25w14craftmine -> 0.25w14craftmine
+    if parts[0] == VersionFragment::String("25w14craftmine".into()) {
+        parts.insert(0, VersionFragment::Number(0));
+    } else {
+        // 26.1 -> 26.1.0, 1.21 -> 1.21.0
+        if parts.len() < 3 {
+            parts.push(VersionFragment::Number(0));
+        }
+        // 1.21.4 -> 21.4 (legacy NeoForge versioning)
+        if parts[0] == VersionFragment::Number(1) {
+            parts.remove(0);
+        }
+    }
+
+    parts
+}
+
+fn version_fragments_start_with(version: &str, prefix: &[VersionFragment]) -> bool {
+    VersionFragment::string_to_parts(version).starts_with(prefix)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ForgeMavenMetadata {
     versions: HashMap<String, Vec<String>>,
@@ -108,39 +165,29 @@ impl NeoforgeMavenMetadata {
     }
 
     pub fn get_matching_versions(&self, minecraft_version: &str) -> Vec<String> {
-        let mut mc_version_parts: Vec<&str> = minecraft_version.split('.').collect();
-        if mc_version_parts.len() < 2 {
+        let prefix = neoforge_minecraft_version_prefix(minecraft_version);
+        if prefix.is_empty() {
             return vec![];
         }
-        if mc_version_parts.len() == 2 {
-            mc_version_parts.push("0");
-        }
 
-        let mc_version_prefix = format!("{}.{}", mc_version_parts[1], mc_version_parts[2]);
-        self.versioning
+        let mut matched: Vec<String> = self
+            .versioning
             .versions
             .version
             .iter()
-            .rev()
-            .filter(|&version| version.starts_with(&mc_version_prefix))
+            .filter(|version| version_fragments_start_with(version, &prefix))
             .cloned()
-            .collect()
+            .collect();
+
+        matched.sort_by_cached_key(|version| VersionFragment::string_to_parts(version));
+        matched.reverse();
+        matched
     }
 
     pub fn get_latest_matching_version(&self, minecraft_version: &str) -> Option<String> {
         self.get_matching_versions(minecraft_version)
             .into_iter()
-            .max_by(|a, b| {
-                let a_parts: Vec<u32> = a
-                    .split(|c: char| !c.is_ascii_digit())
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
-                let b_parts: Vec<u32> = b
-                    .split(|c: char| !c.is_ascii_digit())
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
-                a_parts.cmp(&b_parts)
-            })
+            .next()
     }
 
     pub fn has_version(&self, version: &str) -> bool {
@@ -367,6 +414,17 @@ fn to_abs_path_str(path: &Path) -> Result<String, ToAbsPathError> {
     }
 }
 
+fn log_forge_installer_output(label: &str, stdout: &[u8], stderr: &[u8]) {
+    let stdout_str = String::from_utf8_lossy(stdout);
+    let stderr_str = String::from_utf8_lossy(stderr);
+    if !stdout_str.trim().is_empty() {
+        error!("{label} stdout:\n{stdout_str}");
+    }
+    if !stderr_str.trim().is_empty() {
+        error!("{label} stderr:\n{stderr_str}");
+    }
+}
+
 async fn run_forge_command(
     java_path: &Path,
     forge_installer_path: &Path,
@@ -392,12 +450,17 @@ async fn run_forge_command(
                 .arg(&to_abs_path_str(forge_installer_path)?);
             let retry_output = retry_cmd.output().await?;
             if !retry_output.status.success() {
+                log_forge_installer_output(
+                    "Forge installer retry",
+                    &retry_output.stdout,
+                    &retry_output.stderr,
+                );
                 return Err(RunForgeCommandError::RetryFailed(
                     String::from_utf8_lossy(&retry_output.stderr).to_string(),
                 ));
             }
         } else {
-            error!("Command failed: {output:?}");
+            log_forge_installer_output("Forge installer", &output.stdout, &output.stderr);
             return Err(RunForgeCommandError::CommandFailed(stderr_str.to_string()));
         }
     }
@@ -407,13 +470,12 @@ async fn run_forge_command(
 
 pub async fn install_forge(
     forge_work_dir: &Path,
+    launcher_data_dir: &DataDir,
     forge_version: &str,
     vanilla_metadata: &VersionMetadata,
     loader: &Loader,
 ) -> Result<String, InstallForgeError> {
     std::fs::create_dir_all(forge_work_dir)?;
-
-    let data_dir = DataDir::new(forge_work_dir.to_path_buf());
 
     let minecraft_version = &vanilla_metadata.id;
 
@@ -431,13 +493,17 @@ pub async fn install_forge(
 
         info!("Getting java {}", &java_version);
         let java_installation;
-        if let Some(existing_java_installation) = get_java(&java_version, &data_dir).await {
+        if let Some(existing_java_installation) = get_java(&java_version, launcher_data_dir).await {
             java_installation = existing_java_installation;
         } else {
             info!("Java installation not found, downloading");
 
-            java_installation =
-                download_java(&java_version, &data_dir, progress::no_progress_bar()).await?;
+            java_installation = download_java(
+                &java_version,
+                launcher_data_dir,
+                progress::no_progress_bar(),
+            )
+            .await?;
         }
 
         info!("Downloading forge installer");
@@ -596,8 +662,10 @@ impl<'a> ForgeGenerator<'a> {
         let installer_work_dir = work_dir
             .join(format!(".{:?}", self.loader))
             .join(get_full_version(&minecraft_version, &forge_version));
+        let launcher_data_dir = DataDir::new(work_dir.to_path_buf());
         let id = install_forge(
             &installer_work_dir,
+            &launcher_data_dir,
             &forge_version,
             self.vanilla_metadata,
             &self.loader,
@@ -650,5 +718,66 @@ impl<'a> ForgeGenerator<'a> {
             extra_libs_copy_tasks,
             installer_work_dir,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn neoforge_metadata(versions: &[&str]) -> NeoforgeMavenMetadata {
+        NeoforgeMavenMetadata {
+            versioning: Versioning {
+                versions: Versions {
+                    version: versions
+                        .iter()
+                        .map(|version| (*version).to_string())
+                        .collect(),
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn neoforge_matching_supports_26x_versions() {
+        let metadata = neoforge_metadata(&[
+            "21.4.123",
+            "26.1.0.1-beta",
+            "26.1.0.10-beta",
+            "26.1.2.1",
+            "26.2.0.1-beta",
+        ]);
+
+        let matched = metadata.get_matching_versions("26.1");
+        assert_eq!(
+            matched,
+            vec!["26.1.0.10-beta".to_string(), "26.1.0.1-beta".to_string(),]
+        );
+        assert_eq!(
+            metadata.get_latest_matching_version("26.1"),
+            Some("26.1.0.10-beta".to_string())
+        );
+    }
+
+    #[test]
+    fn neoforge_matching_supports_legacy_versions() {
+        let metadata = neoforge_metadata(&["21.4.123", "21.4.130", "21.5.1"]);
+
+        let matched = metadata.get_matching_versions("1.21.4");
+        assert_eq!(
+            matched,
+            vec!["21.4.130".to_string(), "21.4.123".to_string()]
+        );
+    }
+
+    #[test]
+    fn neoforge_matching_supports_three_part_minecraft_versions() {
+        let metadata = neoforge_metadata(&["26.1.2.1", "26.1.2.2", "26.1.0.10-beta"]);
+
+        let matched = metadata.get_matching_versions("26.1.2");
+        assert_eq!(
+            matched,
+            vec!["26.1.2.2".to_string(), "26.1.2.1".to_string()]
+        );
     }
 }

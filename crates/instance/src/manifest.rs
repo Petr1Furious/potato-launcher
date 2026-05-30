@@ -15,6 +15,8 @@ pub enum ManifestError {
     Reqwest(#[from] reqwest::Error),
     #[error("failed to write manifest JSON file: {0}")]
     WriteFileJson(#[from] files::WriteFileJsonError),
+    #[error("failed to read manifest JSON file: {0}")]
+    ReadFileJson(#[from] files::ReadFileParsedError),
 }
 
 /// A single entry in the vanilla version manifest
@@ -80,6 +82,14 @@ impl VanillaVersionManifest {
 
     pub fn get_entry(&self, minecraft_version: &str) -> Option<&VanillaManifestEntry> {
         self.versions.iter().find(|v| v.id == minecraft_version)
+    }
+
+    pub fn list_minecraft_versions(&self, include_snapshots: bool) -> Vec<String> {
+        self.versions
+            .iter()
+            .filter(|entry| include_snapshots || entry.type_ != "snapshot")
+            .map(|entry| entry.id.clone())
+            .collect()
     }
 
     pub async fn save_to_file(&self, manifest_path: &Path) -> Result<(), ManifestError> {
@@ -149,5 +159,9 @@ impl InstanceManifest {
 
     pub async fn save_to_file(&self, manifest_path: &Path) -> Result<(), ManifestError> {
         Ok(files::write_file_json(manifest_path, self).await?)
+    }
+
+    pub async fn load_from_file(manifest_path: &Path) -> Result<Self, ManifestError> {
+        Ok(files::read_file_parsed(manifest_path).await?)
     }
 }

@@ -20,8 +20,13 @@ thiserror.workspace = true
 url.workspace = true
 uuid.workspace = true
 launcher-i18n = { path = "../i18n" }
+generate = { path = "../generate" }
 utils = { path = "../utils" }
+sha1.workspace = true
 zip.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 winapi.workspace = true

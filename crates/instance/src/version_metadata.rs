@@ -4,7 +4,7 @@ use std::{
 };
 
 use relative_path::RelativePathBuf;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use url::Url;
 
 use utils::{
@@ -217,7 +217,37 @@ pub struct JavaVersion {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Download {
     pub sha1: String,
+    #[serde(
+        deserialize_with = "deserialize_download_url",
+        serialize_with = "serialize_download_url"
+    )]
     pub url: Url,
+}
+
+/// Workaround for metadata that has `"url": ""` on locally-built artifacts (e.g. Forge).
+const EMPTY_DOWNLOAD_URL: &str = "launcher-empty://download";
+
+fn deserialize_download_url<'de, D>(deserializer: D) -> Result<Url, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    if raw.is_empty() {
+        Url::parse(EMPTY_DOWNLOAD_URL).map_err(serde::de::Error::custom)
+    } else {
+        Url::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
+fn serialize_download_url<S>(url: &Url, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if url.as_str() == EMPTY_DOWNLOAD_URL {
+        serializer.serialize_str("")
+    } else {
+        serializer.serialize_str(url.as_str())
+    }
 }
 
 impl Download {
@@ -242,22 +272,40 @@ pub struct LibraryDownloads {
 
 #[derive(thiserror::Error, Debug)]
 pub enum LibraryError {
-    #[error("invalid library path")]
-    InvalidLibraryPath,
-    #[error("invalid library name")]
-    InvalidLibraryName,
-    #[error("missing library URL")]
-    MissingLibraryUrl,
-    #[error("invalid native URL")]
-    InvalidNativeUrl,
-    #[error("failed to construct library URL: {0}")]
-    Url(#[from] url::ParseError),
-    #[error("failed to construct library path: {0}")]
-    PathsLibrary(#[from] utils::paths::LibraryError),
+    #[error(
+        "library '{library}': invalid library name (expected group:artifact:version[:classifier], got {library:?})"
+    )]
+    InvalidLibraryName { library: String },
+    #[error(
+        "library '{library}': missing download URL (no `url` base URL and no `downloads.artifact`)"
+    )]
+    MissingLibraryUrl { library: String },
+    #[error("library '{library}': invalid native URL in classifier download")]
+    InvalidNativeUrl { library: String },
+    #[error("library '{library}': invalid library path '{path}'")]
+    InvalidLibraryPath { library: String, path: String },
+    #[error("library '{library}': failed to construct download URL: {source}")]
+    Url {
+        library: String,
+        #[source]
+        source: url::ParseError,
+    },
+    #[error("library '{library}': failed to construct library path: {source}")]
+    PathsLibrary {
+        library: String,
+        #[source]
+        source: utils::paths::LibraryError,
+    },
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum VersionMetadataError {
+    #[error("version '{version_id}': failed while processing library metadata: {source}")]
+    LibraryInVersion {
+        version_id: String,
+        #[source]
+        source: LibraryError,
+    },
     #[error("failed while processing version library metadata: {0}")]
     Library(#[from] LibraryError),
     #[error("failed to read local version metadata JSON: {0}")]
@@ -327,7 +375,9 @@ impl Library {
         let full_name = self.name.clone();
         let parts: Vec<&str> = full_name.split(':').collect();
         if parts.len() != 3 && parts.len() != 4 {
-            return Err(LibraryError::InvalidLibraryName);
+            return Err(LibraryError::InvalidLibraryName {
+                library: self.name.clone(),
+            });
         }
         let (pkg, name, version) = (parts[0], parts[1], parts[2]);
         let suffix = *parts.get(3).unwrap_or(&"");
@@ -359,7 +409,9 @@ impl Library {
     }
 
     pub fn get_url(&self) -> Result<Url, LibraryError> {
-        self.url.clone().ok_or(LibraryError::MissingLibraryUrl)
+        self.url.clone().ok_or(LibraryError::MissingLibraryUrl {
+            library: self.name.clone(),
+        })
     }
 
     fn get_native_name(&self, os_arch: &str) -> Option<&str> {
@@ -384,8 +436,14 @@ impl Library {
                 native_name,
                 native_download
                     .get_filename()
-                    .ok_or(LibraryError::InvalidNativeUrl)?,
-            )?)
+                    .ok_or(LibraryError::InvalidNativeUrl {
+                        library: self.name.clone(),
+                    })?,
+            )
+            .map_err(|source| LibraryError::PathsLibrary {
+                library: self.name.clone(),
+                source,
+            })?)
     }
 
     fn get_arch_os_name(os: &str, arch: &str) -> String {
@@ -440,7 +498,10 @@ impl Library {
         } else {
             // else infer it from the library name
             Ok(Some(CheckTask {
-                url: self.get_url()?.join(self.get_rel_path()?.as_str())?,
+                url: self
+                    .get_url()?
+                    .join(self.get_rel_path()?.as_str())
+                    .map_err(|source| self.map_url_error(source))?,
                 remote_sha1: self.sha1.clone(),
                 path: self.get_path(data_dir)?,
             }))
@@ -496,11 +557,17 @@ impl Library {
         let mut path = self.get_rel_path()?;
         path.set_file_name(
             path.file_name()
-                .ok_or(LibraryError::InvalidLibraryPath)?
+                .ok_or(LibraryError::InvalidLibraryPath {
+                    library: self.name.clone(),
+                    path: path.to_string(),
+                })?
                 .to_string()
                 + ".sha1",
         );
-        Ok(self.get_url()?.join(path.as_str())?)
+        Ok(self
+            .get_url()?
+            .join(path.as_str())
+            .map_err(|source| self.map_url_error(source))?)
     }
 
     pub fn get_group_id(&self) -> String {
@@ -510,6 +577,13 @@ impl Library {
 
     pub fn get_full_name(&self) -> String {
         self.name.clone()
+    }
+
+    fn map_url_error(&self, source: url::ParseError) -> LibraryError {
+        LibraryError::Url {
+            library: self.name.clone(),
+            source,
+        }
     }
 
     pub fn get_name_and_version(&self) -> (String, String) {
@@ -806,7 +880,12 @@ impl VersionMetadata {
             );
         }
         for library in &self.libraries {
-            let check_tasks = library.get_check_tasks(data_dir, target)?;
+            let check_tasks = library
+                .get_check_tasks(data_dir, target)
+                .map_err(|source| VersionMetadataError::LibraryInVersion {
+                    version_id: self.id.clone(),
+                    source,
+                })?;
             tasks.extend(check_tasks);
         }
 

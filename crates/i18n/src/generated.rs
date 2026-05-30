@@ -431,6 +431,7 @@ pub mod instances {
             "kill" => Some(kill()),
             "launch_blocked" => Some(launch_blocked()),
             "launching" => Some(launching()),
+            "local_empty_hint" => Some(local_empty_hint()),
             "logs" => Some(logs()),
             "no_account_selected" => Some(no_account_selected()),
             "no_instances_hint" => Some(no_instances_hint()),
@@ -441,6 +442,7 @@ pub mod instances {
             "override_suffix" => Some(override_suffix()),
             "play" => Some(play()),
             "play_again" => Some(play_again()),
+            "remove" => Some(remove()),
             "resync" => Some(resync()),
             "runtime" => Some(runtime()),
             "set_flags" => Some(set_flags()),
@@ -550,6 +552,12 @@ pub mod instances {
             _ => "Launching",
         }
     }
+    pub fn local_empty_hint() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Локальных инстансов пока нет. Нажмите «Добавить локальный», чтобы создать.",
+            _ => "No local instances yet. Use Add local to create one.",
+        }
+    }
     pub fn logs() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Логи",
@@ -565,9 +573,9 @@ pub mod instances {
     pub fn no_instances_hint() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => {
-                "Откройте «Бэкенды», чтобы добавить URL манифеста, или создайте локальный инстанс позже."
+                "Откройте «Бэкенды», чтобы добавить URL манифеста, или создайте локальный инстанс ниже."
             }
-            _ => "Open Backends to add a manifest URL, or create a local instance later.",
+            _ => "Open Backends to add a manifest URL, or create a local instance below.",
         }
     }
     pub fn no_instances_yet() -> &'static str {
@@ -616,6 +624,12 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Рекомендуемая память: {xmx} МБ"),
             _ => format!("Recommended memory: {xmx} MB"),
+        }
+    }
+    pub fn remove() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Убрать",
+            _ => "Remove",
         }
     }
     pub fn resync() -> &'static str {
@@ -709,6 +723,132 @@ pub mod instances {
         }
     }
 }
+pub mod local {
+    pub fn get(key: &str) -> Option<&'static str> {
+        match key {
+            "add" => Some(add()),
+            "create" => Some(create()),
+            "create_title" => Some(create_title()),
+            "instance_name" => Some(instance_name()),
+            "loader" => Some(loader()),
+            "loader_fabric" => Some(loader_fabric()),
+            "loader_forge" => Some(loader_forge()),
+            "loader_neoforge" => Some(loader_neoforge()),
+            "loader_vanilla" => Some(loader_vanilla()),
+            "loader_version" => Some(loader_version()),
+            "loader_versions_error" => Some(loader_versions_error()),
+            "loader_versions_loading" => Some(loader_versions_loading()),
+            "minecraft_version" => Some(minecraft_version()),
+            "show_snapshots" => Some(show_snapshots()),
+            "versions_error" => Some(versions_error()),
+            "versions_loading_game_versions" => Some(versions_loading_game_versions()),
+            "versions_reload" => Some(versions_reload()),
+            _ => None,
+        }
+    }
+    pub fn add() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Добавить локальный",
+            _ => "Add local",
+        }
+    }
+    pub fn create() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Создать",
+            _ => "Create",
+        }
+    }
+    pub fn create_title() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Создать локальный инстанс",
+            _ => "Create local instance",
+        }
+    }
+    pub fn instance_name() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Имя инстанса",
+            _ => "Instance name",
+        }
+    }
+    pub fn loader() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Загрузчик",
+            _ => "Loader",
+        }
+    }
+    pub fn loader_fabric() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Fabric",
+            _ => "Fabric",
+        }
+    }
+    pub fn loader_forge() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Forge",
+            _ => "Forge",
+        }
+    }
+    pub fn loader_neoforge() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "NeoForge",
+            _ => "NeoForge",
+        }
+    }
+    pub fn loader_vanilla() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Vanilla",
+            _ => "Vanilla",
+        }
+    }
+    pub fn loader_version() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Версия загрузчика",
+            _ => "Loader version",
+        }
+    }
+    pub fn loader_versions_error() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Не удалось загрузить версии загрузчика",
+            _ => "Failed to load loader versions",
+        }
+    }
+    pub fn loader_versions_loading() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Загрузка версий загрузчика...",
+            _ => "Loading loader versions...",
+        }
+    }
+    pub fn minecraft_version() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Версия Minecraft",
+            _ => "Minecraft version",
+        }
+    }
+    pub fn show_snapshots() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Показывать снимки",
+            _ => "Show snapshots",
+        }
+    }
+    pub fn versions_error() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Не удалось загрузить версии игры",
+            _ => "Failed to load game versions",
+        }
+    }
+    pub fn versions_loading_game_versions() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Загрузка версий игры...",
+            _ => "Loading game versions...",
+        }
+    }
+    pub fn versions_reload() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Повторить",
+            _ => "Reload",
+        }
+    }
+}
 pub mod nav {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
@@ -741,11 +881,16 @@ pub mod notifications {
             "install_completed" => Some(install_completed()),
             "instance_deleted" => Some(instance_deleted()),
             "instance_not_installed_locally" => Some(instance_not_installed_locally()),
+            "local_instance_loader_version_required" => {
+                Some(local_instance_loader_version_required())
+            }
+            "local_instance_name_empty" => Some(local_instance_name_empty()),
             "minecraft_exited_successfully" => Some(minecraft_exited_successfully()),
             "minecraft_running" => Some(minecraft_running()),
             "minecraft_terminated" => Some(minecraft_terminated()),
             "offline_nickname_empty" => Some(offline_nickname_empty()),
             "preparing_install" => Some(preparing_install()),
+            "preparing_local_instance" => Some(preparing_local_instance()),
             "selected_account_must_match" => Some(selected_account_must_match()),
             "stop_before_delete" => Some(stop_before_delete()),
             "use_account_selection_for_required" => Some(use_account_selection_for_required()),
@@ -926,6 +1071,24 @@ pub mod notifications {
             _ => format!("Launch failed: {error}"),
         }
     }
+    pub fn local_instance_loader_version_required() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Для Forge и NeoForge нужна версия загрузчика",
+            _ => "Loader version is required for Forge and NeoForge",
+        }
+    }
+    pub fn local_instance_name_empty() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Имя инстанса не может быть пустым",
+            _ => "Instance name cannot be empty",
+        }
+    }
+    pub fn local_instance_name_exists(name: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Инстанс с именем «{name}» уже существует"),
+            _ => format!("An instance named \"{name}\" already exists"),
+        }
+    }
     pub fn minecraft_exited_successfully() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Minecraft успешно завершился",
@@ -962,6 +1125,12 @@ pub mod notifications {
             _ => "Preparing install",
         }
     }
+    pub fn preparing_local_instance() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Подготовка локального инстанса",
+            _ => "Preparing local instance",
+        }
+    }
     pub fn selected_account_must_match() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Выбранный аккаунт должен соответствовать провайдеру инстанса",
@@ -986,10 +1155,13 @@ pub mod placeholders {
         match key {
             "client_id" => Some(client_id()),
             "client_secret" => Some(client_secret()),
+            "instance_name" => Some(instance_name()),
             "jvm_flags" => Some(jvm_flags()),
             "launcher_name" => Some(launcher_name()),
+            "loader_version" => Some(loader_version()),
             "manifest_url" => Some(manifest_url()),
             "memory_mib" => Some(memory_mib()),
+            "minecraft_version" => Some(minecraft_version()),
             "offline_nickname" => Some(offline_nickname()),
             "telegram_auth_base_url" => Some(telegram_auth_base_url()),
             _ => None,
@@ -1007,6 +1179,12 @@ pub mod placeholders {
             _ => "Client secret",
         }
     }
+    pub fn instance_name() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Мой инстанс",
+            _ => "My Instance",
+        }
+    }
     pub fn jvm_flags() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Дополнительные флаги JVM",
@@ -1019,6 +1197,12 @@ pub mod placeholders {
             _ => "Launcher name",
         }
     }
+    pub fn loader_version() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Версия загрузчика",
+            _ => "Latest loader version",
+        }
+    }
     pub fn manifest_url() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "https://example.com/manifest.json",
@@ -1029,6 +1213,12 @@ pub mod placeholders {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Память (МиБ)",
             _ => "Memory MiB",
+        }
+    }
+    pub fn minecraft_version() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "1.21.1",
+            _ => "1.21.1",
         }
     }
     pub fn offline_nickname() -> &'static str {
@@ -1056,6 +1246,7 @@ pub mod progress {
             "extracting_files" => Some(extracting_files()),
             "extracting_native_libraries" => Some(extracting_native_libraries()),
             "fetching_metadata" => Some(fetching_metadata()),
+            "generating_local_instance" => Some(generating_local_instance()),
             "installing" => Some(installing()),
             "installing_java" => Some(installing_java()),
             "java_already_installed" => Some(java_already_installed()),
@@ -1114,6 +1305,12 @@ pub mod progress {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Получение метаданных",
             _ => "Fetching metadata",
+        }
+    }
+    pub fn generating_local_instance() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Генерация метаданных инстанса",
+            _ => "Generating instance metadata",
         }
     }
     pub fn installing() -> &'static str {

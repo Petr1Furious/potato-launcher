@@ -15,3 +15,4 @@ log.workspace = true
 url.workspace = true
 uuid.workspace = true
 launcher-i18n = { path = "../i18n" }
+instance = { path = "../instance" }

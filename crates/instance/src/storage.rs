@@ -79,12 +79,13 @@ pub enum InstanceStorageError {
 
 impl LocalInstance {
     pub fn new_remote(
+        id: Uuid,
         dir_name: String,
         source: RemoteSource,
         last_synced_sha1: Option<String>,
     ) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id,
             dir_name,
             source: Some(source),
             last_synced_sha1,
@@ -280,7 +281,7 @@ pub fn allocate_dir_name(taken: &HashSet<&str>, base: &str) -> String {
     unreachable!("usize counter should not overflow while allocating an instance directory")
 }
 
-fn sanitize_dir_name(name: &str) -> String {
+pub fn sanitize_dir_name(name: &str) -> String {
     let sanitized = name
         .chars()
         .map(|ch| match ch {
@@ -332,11 +333,13 @@ mod tests {
         };
 
         let first = LocalInstance::new_remote(
+            Uuid::new_v4(),
             "Vanilla".to_string(),
             source.clone(),
             Some("first-sha1".to_string()),
         );
         let second = LocalInstance::new_remote(
+            Uuid::new_v4(),
             "Vanilla (1)".to_string(),
             source.clone(),
             Some("second-sha1".to_string()),

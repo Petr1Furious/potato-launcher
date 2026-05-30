@@ -1,33 +1,165 @@
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use instance::manifest::{InstanceManifest, ManifestError};
 use launcher_bridge::{BackendFetchState, BackendStatus};
+use sha1::{Digest, Sha1};
 use url::Url;
+use utils::files;
 
-#[derive(Clone)]
-pub enum BackendCatalogState {
+pub const CATALOG_CACHE_DIR: &str = "catalog_cache";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackendFetchStatus {
     NotFetched,
     Fetching,
-    Fetched(Arc<InstanceManifest>),
+    Ok,
     Offline,
-    Error(Arc<str>),
+    Error,
 }
 
-impl BackendCatalogState {
+#[derive(Clone)]
+pub struct BackendCatalogEntry {
+    pub manifest: Option<Arc<InstanceManifest>>,
+    pub status: BackendFetchStatus,
+    pub error: Option<Arc<str>>,
+}
+
+impl BackendCatalogEntry {
+    pub fn new_not_fetched() -> Self {
+        Self {
+            manifest: None,
+            status: BackendFetchStatus::NotFetched,
+            error: None,
+        }
+    }
+
+    pub fn from_cache(manifest: Arc<InstanceManifest>) -> Self {
+        Self {
+            manifest: Some(manifest),
+            status: BackendFetchStatus::NotFetched,
+            error: None,
+        }
+    }
+
+    pub fn with_manifest(manifest: InstanceManifest, status: BackendFetchStatus) -> Self {
+        Self {
+            manifest: Some(Arc::new(manifest)),
+            status,
+            error: None,
+        }
+    }
+
+    pub fn manifest(&self) -> Option<&Arc<InstanceManifest>> {
+        self.manifest.as_ref()
+    }
+
     pub fn to_fetch_state(&self) -> BackendFetchState {
-        match self {
-            Self::NotFetched => BackendFetchState::NotFetched,
-            Self::Fetching => BackendFetchState::Fetching,
-            Self::Fetched(manifest) => BackendFetchState::Fetched {
-                instance_count: manifest.instances.len(),
+        match self.status {
+            BackendFetchStatus::NotFetched => BackendFetchState::NotFetched,
+            BackendFetchStatus::Fetching => BackendFetchState::Fetching,
+            BackendFetchStatus::Ok => BackendFetchState::Fetched {
+                instance_count: self
+                    .manifest
+                    .as_ref()
+                    .map(|manifest| manifest.instances.len())
+                    .unwrap_or(0),
             },
-            Self::Offline => BackendFetchState::Offline,
-            Self::Error(error) => BackendFetchState::Error(error.clone()),
+            BackendFetchStatus::Offline => BackendFetchState::Offline,
+            BackendFetchStatus::Error => BackendFetchState::Error(
+                self.error
+                    .clone()
+                    .unwrap_or_else(|| Arc::from("unknown catalog error")),
+            ),
+        }
+    }
+
+    pub fn set_fetching(&mut self) {
+        self.status = BackendFetchStatus::Fetching;
+    }
+
+    pub fn apply_fetch_success(&mut self, manifest: Arc<InstanceManifest>) {
+        self.manifest = Some(manifest);
+        self.status = BackendFetchStatus::Ok;
+        self.error = None;
+    }
+
+    pub fn apply_fetch_failure(&mut self, failure: FetchFailure) {
+        match failure {
+            FetchFailure::Offline => {
+                self.status = BackendFetchStatus::Offline;
+                self.error = None;
+            }
+            FetchFailure::Error(message) => {
+                self.status = BackendFetchStatus::Error;
+                self.error = Some(message);
+            }
         }
     }
 }
 
-pub async fn fetch_backend_catalog(client: reqwest::Client, url: Url) -> BackendCatalogState {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FetchFailure {
+    Offline,
+    Error(Arc<str>),
+}
+
+pub enum CatalogFetchResult {
+    Success(InstanceManifest),
+    Failed(FetchFailure),
+}
+
+fn catalog_cache_dir(launcher_dir: &Path) -> PathBuf {
+    launcher_dir.join(CATALOG_CACHE_DIR)
+}
+
+fn catalog_cache_path(launcher_dir: &Path, url: &Url) -> PathBuf {
+    let mut hasher = Sha1::new();
+    hasher.update(url.as_str().as_bytes());
+    let hash = hasher.finalize();
+    let mut filename = String::with_capacity(40);
+    for byte in hash {
+        use std::fmt::Write as _;
+        let _ = write!(filename, "{byte:02x}");
+    }
+    catalog_cache_dir(launcher_dir).join(format!("{filename}.json"))
+}
+
+pub async fn load_cached_manifest(
+    launcher_dir: &Path,
+    url: &Url,
+) -> Result<InstanceManifest, ManifestError> {
+    InstanceManifest::load_from_file(&catalog_cache_path(launcher_dir, url)).await
+}
+
+pub async fn save_cached_manifest(
+    launcher_dir: &Path,
+    url: &Url,
+    manifest: &InstanceManifest,
+) -> Result<(), ManifestError> {
+    let cache_dir = catalog_cache_dir(launcher_dir);
+    if let Err(err) = tokio::fs::create_dir_all(&cache_dir).await {
+        return Err(ManifestError::WriteFileJson(files::WriteFileJsonError::Io(
+            err,
+        )));
+    }
+    manifest
+        .save_to_file(&catalog_cache_path(launcher_dir, url))
+        .await
+}
+
+pub async fn delete_cached_manifest(launcher_dir: &Path, url: &Url) -> std::io::Result<()> {
+    let path = catalog_cache_path(launcher_dir, url);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+pub async fn fetch_backend_catalog(client: reqwest::Client, url: Url) -> CatalogFetchResult {
     log::info!("Fetching backend manifest from {url}");
     match InstanceManifest::fetch(&client, &url).await {
         Ok(manifest) => {
@@ -35,47 +167,46 @@ pub async fn fetch_backend_catalog(client: reqwest::Client, url: Url) -> Backend
                 "Fetched backend manifest from {url}: {} published instances",
                 manifest.instances.len()
             );
-            BackendCatalogState::Fetched(Arc::new(manifest))
+            CatalogFetchResult::Success(manifest)
         }
         Err(error) => {
             let detailed_error = format!("{error:?}");
-            let state = classify_manifest_error(error);
-            match &state {
-                BackendCatalogState::Offline => {
+            let failure = classify_manifest_error(error);
+            match &failure {
+                FetchFailure::Offline => {
                     log::warn!(
                         "Backend manifest at {url} is offline or timed out: {detailed_error}"
                     );
                 }
-                BackendCatalogState::Error(message) => {
+                FetchFailure::Error(message) => {
                     log::error!(
                         "Failed to fetch backend manifest at {url}: {message}; details: {detailed_error}"
                     );
                 }
-                _ => {}
             }
-            state
+            CatalogFetchResult::Failed(failure)
         }
     }
 }
 
-pub fn classify_manifest_error(error: ManifestError) -> BackendCatalogState {
+pub fn classify_manifest_error(error: ManifestError) -> FetchFailure {
     match &error {
         ManifestError::Reqwest(err) if err.is_connect() || err.is_timeout() => {
-            BackendCatalogState::Offline
+            FetchFailure::Offline
         }
-        _ => BackendCatalogState::Error(Arc::<str>::from(error.to_string())),
+        _ => FetchFailure::Error(Arc::<str>::from(error.to_string())),
     }
 }
 
 pub fn backend_status(
     url: &Url,
-    state: &BackendCatalogState,
+    entry: &BackendCatalogEntry,
     configured: bool,
     referenced_by_instances: bool,
 ) -> BackendStatus {
     BackendStatus {
         url: url.clone(),
-        fetch_state: state.to_fetch_state(),
+        fetch_state: entry.to_fetch_state(),
         configured,
         referenced_by_instances,
     }
@@ -126,9 +257,13 @@ mod tests {
         let ok = fetch_backend_catalog(client.clone(), ok_url).await;
         let fail = fetch_backend_catalog(client, fail_url).await;
 
-        assert!(
-            matches!(ok, BackendCatalogState::Fetched(manifest) if manifest.instances.len() == 1)
-        );
-        assert!(matches!(fail, BackendCatalogState::Error(_)));
+        assert!(matches!(
+            ok,
+            CatalogFetchResult::Success(manifest) if manifest.instances.len() == 1
+        ));
+        assert!(matches!(
+            fail,
+            CatalogFetchResult::Failed(FetchFailure::Error(_))
+        ));
     }
 }

@@ -22,7 +22,7 @@ use utils::{
 };
 use uuid::Uuid;
 
-use crate::{BackendEvent, catalog::BackendCatalogState, instances::remote_entry_id};
+use crate::{BackendEvent, catalog::BackendCatalogEntry, instances::remote_entry_id};
 
 #[derive(Clone)]
 pub(crate) struct InstallRequest {
@@ -31,14 +31,13 @@ pub(crate) struct InstallRequest {
     pub(crate) launcher_dir: PathBuf,
     pub(crate) client: reqwest::Client,
     pub(crate) local_instances: Vec<LocalInstance>,
-    pub(crate) catalogs: HashMap<Url, BackendCatalogState>,
+    pub(crate) catalogs: HashMap<Url, BackendCatalogEntry>,
     pub(crate) frontend: FrontendSender,
     pub(crate) internal: mpsc::UnboundedSender<BackendEvent>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct InstallOutput {
-    pub(crate) requested_id: Uuid,
     pub(crate) instance: LocalInstance,
 }
 
@@ -170,26 +169,28 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
         existing.last_synced_sha1 = Some(plan.entry.sha1);
         existing
     } else {
-        LocalInstance::new_remote(plan.dir_name, plan.source, Some(plan.entry.sha1))
+        LocalInstance::new_remote(
+            plan.view_id,
+            plan.dir_name,
+            plan.source,
+            Some(plan.entry.sha1),
+        )
     };
 
-    Ok(InstallOutput {
-        requested_id: request.id,
-        instance,
-    })
+    Ok(InstallOutput { instance })
 }
 
 fn resolve_install_plan(
     id: Uuid,
     local_instances: &[LocalInstance],
-    catalogs: &HashMap<Url, BackendCatalogState>,
+    catalogs: &HashMap<Url, BackendCatalogEntry>,
 ) -> anyhow::Result<InstallPlan> {
     if let Some(local) = local_instances.iter().find(|instance| instance.id == id) {
         return resolve_local_install_plan(local.clone(), catalogs);
     }
 
     for (url, state) in catalogs {
-        let BackendCatalogState::Fetched(manifest) = state else {
+        let Some(manifest) = state.manifest() else {
             continue;
         };
         for entry in &manifest.instances {
@@ -216,22 +217,17 @@ fn resolve_install_plan(
 
 fn resolve_local_install_plan(
     local: LocalInstance,
-    catalogs: &HashMap<Url, BackendCatalogState>,
+    catalogs: &HashMap<Url, BackendCatalogEntry>,
 ) -> anyhow::Result<InstallPlan> {
     let source = local
         .source
         .clone()
         .ok_or_else(|| anyhow::anyhow!("local-only instance cannot be updated from a backend"))?;
     let manifest = match catalogs.get(&source.manifest_url) {
-        Some(BackendCatalogState::Fetched(manifest)) => manifest,
-        Some(BackendCatalogState::Fetching) => {
-            return Err(anyhow::anyhow!("backend is still fetching"));
-        }
-        Some(BackendCatalogState::Offline) => return Err(anyhow::anyhow!("backend is offline")),
-        Some(BackendCatalogState::Error(error)) => return Err(anyhow::anyhow!("{error}")),
-        Some(BackendCatalogState::NotFetched) | None => {
-            return Err(anyhow::anyhow!("backend has not been fetched"));
-        }
+        Some(state) => state
+            .manifest()
+            .ok_or_else(|| anyhow::anyhow!("backend catalog is not available"))?,
+        None => return Err(anyhow::anyhow!("backend has not been fetched")),
     };
     let entry = manifest
         .instances
@@ -261,7 +257,7 @@ async fn install_metadata(
     Ok(metadata)
 }
 
-async fn install_game_files(
+pub(crate) async fn install_game_files(
     client: &reqwest::Client,
     metadata: &InstanceMetadata,
     data_dir: &DataDir,
@@ -303,7 +299,7 @@ async fn install_game_files(
     Ok(())
 }
 
-async fn ensure_java(
+pub(crate) async fn ensure_java(
     metadata: &InstanceMetadata,
     data_dir: &DataDir,
     progress: &BackendProgressReporter,
@@ -430,6 +426,12 @@ mod tests {
         );
     }
 
+    use crate::catalog::{BackendCatalogEntry, BackendFetchStatus};
+
+    fn ok_catalog(manifest: InstanceManifest) -> BackendCatalogEntry {
+        BackendCatalogEntry::with_manifest(manifest, BackendFetchStatus::Ok)
+    }
+
     #[test]
     fn resolves_remote_install_plan_from_fetched_catalog() {
         let url = Url::parse("https://example.com/manifest.json").unwrap();
@@ -442,9 +444,9 @@ mod tests {
         let id = remote_entry_id(&url, &entry.name);
         let catalogs = HashMap::from([(
             url.clone(),
-            BackendCatalogState::Fetched(Arc::new(InstanceManifest {
+            ok_catalog(InstanceManifest {
                 instances: vec![entry],
-            })),
+            }),
         )]);
 
         let plan = resolve_install_plan(id, &[], &catalogs).unwrap();
@@ -472,6 +474,7 @@ mod tests {
     fn resolves_existing_remote_instance_for_update() {
         let url = Url::parse("https://example.com/manifest.json").unwrap();
         let local = LocalInstance::new_remote(
+            Uuid::new_v4(),
             "Vanilla".to_string(),
             RemoteSource {
                 manifest_url: url.clone(),
@@ -487,9 +490,9 @@ mod tests {
         };
         let catalogs = HashMap::from([(
             url.clone(),
-            BackendCatalogState::Fetched(Arc::new(InstanceManifest {
+            ok_catalog(InstanceManifest {
                 instances: vec![entry],
-            })),
+            }),
         )]);
 
         let plan = resolve_install_plan(local.id, std::slice::from_ref(&local), &catalogs).unwrap();

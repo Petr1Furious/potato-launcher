@@ -122,23 +122,16 @@ impl Spec {
                 })
                 .collect::<Vec<_>>();
 
-            let include_config = if self.replace_download_urls
-                || instance.include_from.is_some()
-                || !include_rules.is_empty()
-            {
-                Some(IncludeConfig {
-                    include_rules,
-                    include_from: instance.include_from.as_ref().map(PathBuf::from),
-                    download_server_base: download_server_base.clone(),
-                    replace_download_urls: self.replace_download_urls,
-                })
-            } else {
-                None
+            let include_config = IncludeConfig {
+                include_rules,
+                include_from: instance.include_from.as_ref().map(PathBuf::from),
+                download_server_base: download_server_base.clone(),
+                replace_download_urls: self.replace_download_urls,
             };
 
             if !self.replace_download_urls
-                && include_config.is_none()
                 && instance.include_from.is_some()
+                && include_config.include_rules.is_empty()
             {
                 warn!("include_from set but include rules are empty");
             }
@@ -153,7 +146,7 @@ impl Spec {
                 minecraft_version: instance.minecraft_version.clone(),
                 loader,
                 loader_version: instance.loader_version.clone(),
-                include_config,
+                include_config: Some(include_config),
                 auth_backend: instance.auth_backend.clone(),
                 default_xmx: instance.recommended_xmx.clone(),
             }

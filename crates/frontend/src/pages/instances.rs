@@ -4,29 +4,40 @@ use std::{
     process::Command,
 };
 
-use gpui::{Context, IntoElement, Render, Window, div, prelude::*, px, relative};
+use gpui::{
+    App, Context, IntoElement, Render, SharedString, Window, div, prelude::*, px, relative, rems,
+};
 use gpui_component::{
-    ActiveTheme, Disableable, StyledExt,
+    ActiveTheme, Disableable, IndexPath, StyledExt,
     button::Button,
+    checkbox::Checkbox,
     h_flex,
     input::{Input, InputState},
     scroll::ScrollableElement,
+    select::{Select, SelectDelegate, SelectEvent, SelectItem, SelectState},
+    skeleton::Skeleton,
     v_flex,
 };
+use instance::storage::sanitize_dir_name;
 use launcher_auth::providers::{
     AuthProviderConfig, ElyByAuthProvider, MicrosoftAuthProvider, TGAuthProvider,
 };
 use launcher_bridge::{
     AccountView, BackendFetchState, BackendSender, BackendStatus, InstanceLiveStatus,
-    InstanceOrigin, InstanceView, LauncherSettingsView, MessageToBackend, NotificationLevel,
+    InstanceOrigin, InstanceView, LauncherSettingsView, LocalLoader, MessageToBackend,
+    NotificationLevel,
 };
 use launcher_i18n as t;
 use url::Url;
 use uuid::Uuid;
 
 use crate::entity::{
-    DataEntities, account::AccountsUpdatedEvent, backend::BackendsUpdatedEvent,
-    instance::InstancesUpdatedEvent, notification::NotificationEntries,
+    DataEntities,
+    account::AccountsUpdatedEvent,
+    backend::BackendsUpdatedEvent,
+    instance::InstancesUpdatedEvent,
+    local_create::{LoaderVersionsUpdatedEvent, LocalCreateVersionsUpdatedEvent},
+    notification::NotificationEntries,
     settings::LauncherSettingsUpdatedEvent,
 };
 
@@ -36,6 +47,8 @@ pub struct InstancesPage {
     show_global_settings: bool,
     show_backend_settings: bool,
     show_accounts_panel: bool,
+    show_create_local_modal: bool,
+    create_local_loader: LocalLoader,
     preferred_add_provider: Option<AuthProviderConfig>,
     pending_delete: Option<Uuid>,
     hidden_launches: HashSet<Uuid>,
@@ -47,10 +60,19 @@ pub struct InstancesPage {
     elyby_launcher_name_input: gpui::Entity<InputState>,
     memory_input: gpui::Entity<InputState>,
     jvm_flags_input: gpui::Entity<InputState>,
+    create_local_name_input: gpui::Entity<InputState>,
+    create_local_mc_version_select: gpui::Entity<SelectState<VersionList>>,
+    create_local_loader_version_select: gpui::Entity<SelectState<VersionList>>,
+    create_local_show_snapshots: bool,
+    create_local_sync_mc_dropdown: bool,
+    create_local_sync_loader_dropdown: bool,
     _instances_subscription: gpui::Subscription,
     _backends_subscription: gpui::Subscription,
     _accounts_subscription: gpui::Subscription,
     _settings_subscription: gpui::Subscription,
+    _local_create_subscription: gpui::Subscription,
+    _local_loader_subscription: gpui::Subscription,
+    _mc_version_selected_subscription: gpui::Subscription,
 }
 
 impl InstancesPage {
@@ -88,6 +110,30 @@ impl InstancesPage {
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::memory_mib()));
         let jvm_flags_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::jvm_flags()));
+        let create_local_name_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::instance_name()));
+        let create_local_mc_version_select = cx
+            .new(|cx| SelectState::new(VersionList::default(), None, window, cx).searchable(true));
+        let create_local_loader_version_select = cx
+            .new(|cx| SelectState::new(VersionList::default(), None, window, cx).searchable(true));
+        let _mc_version_selected_subscription =
+            cx.subscribe(&create_local_mc_version_select, |page, _, event, cx| {
+                page.on_minecraft_version_selected(event, cx);
+            });
+        let _local_create_subscription = cx.subscribe(
+            &data.local_create,
+            |page, _, _: &LocalCreateVersionsUpdatedEvent, cx| {
+                page.create_local_sync_mc_dropdown = true;
+                cx.notify();
+            },
+        );
+        let _local_loader_subscription = cx.subscribe(
+            &data.local_create,
+            |page, _, _: &LoaderVersionsUpdatedEvent, cx| {
+                page.create_local_sync_loader_dropdown = true;
+                cx.notify();
+            },
+        );
 
         Self {
             data: data.clone(),
@@ -95,6 +141,11 @@ impl InstancesPage {
             show_global_settings: false,
             show_backend_settings: false,
             show_accounts_panel: false,
+            show_create_local_modal: false,
+            create_local_loader: LocalLoader::Vanilla,
+            create_local_show_snapshots: false,
+            create_local_sync_mc_dropdown: false,
+            create_local_sync_loader_dropdown: false,
             preferred_add_provider: None,
             pending_delete: None,
             hidden_launches: HashSet::new(),
@@ -106,10 +157,16 @@ impl InstancesPage {
             elyby_launcher_name_input,
             memory_input,
             jvm_flags_input,
+            create_local_name_input,
+            create_local_mc_version_select,
+            create_local_loader_version_select,
             _instances_subscription,
             _backends_subscription,
             _accounts_subscription,
             _settings_subscription,
+            _local_create_subscription,
+            _local_loader_subscription,
+            _mc_version_selected_subscription,
         }
     }
 
@@ -177,18 +234,6 @@ impl Render for InstancesPage {
         }
 
         let mut sections = Vec::new();
-        if let Some(local) = groups.local
-            && !local.is_empty()
-        {
-            sections.push(section(
-                t::common::local().to_string(),
-                None,
-                local,
-                launcher_settings.hide_usernames_in_cards,
-                &self.data.backend_sender,
-                cx,
-            ));
-        }
 
         for backend in &backends {
             let instances = groups
@@ -208,82 +253,464 @@ impl Render for InstancesPage {
             }
 
             sections.push(section(
-                backend_names
-                    .get(backend.url.as_str())
-                    .cloned()
-                    .unwrap_or_else(|| backend_display_name(&backend.url, false)),
-                Some(backend),
-                instances,
-                launcher_settings.hide_usernames_in_cards,
-                &self.data.backend_sender,
+                SectionParams {
+                    title: backend_names
+                        .get(backend.url.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| backend_display_name(&backend.url, false)),
+                    backend: Some(backend),
+                    instances,
+                    empty_hint: None,
+                    header_action: None,
+                    hide_usernames: launcher_settings.hide_usernames_in_cards,
+                    sender: self.data.backend_sender.clone(),
+                },
                 cx,
             ));
         }
 
-        if sections.is_empty()
-            && !self.show_global_settings
-            && !self.show_backend_settings
-            && !self.show_accounts_panel
-            && self.selected_instance.is_none()
+        let local_instances = groups.local.unwrap_or_default();
+        let add_local = Button::new("add-local-instance")
+            .label(t::local::add())
+            .on_click(cx.listener(|page, _, _, cx| {
+                page.open_create_local_modal(cx);
+            }));
+        sections.push(section(
+            SectionParams {
+                title: t::common::local().to_string(),
+                backend: None,
+                instances: local_instances,
+                empty_hint: Some(t::instances::local_empty_hint().to_string()),
+                header_action: Some(add_local),
+                hide_usernames: launcher_settings.hide_usernames_in_cards,
+                sender: self.data.backend_sender.clone(),
+            },
+            cx,
+        ));
+
+        let separated_sections = separated_backend_sections(sections, cx);
+        let scrollable_list = v_flex()
+            .size_full()
+            .p_4()
+            .overflow_y_scrollbar()
+            .children(separated_sections);
+        let list = div()
+            .size_full()
+            .relative()
+            .child(scrollable_list)
+            .when(self.show_create_local_modal, |this| {
+                this.child(self.create_local_modal(window, cx))
+            });
+        let side_panel = if let Some(selected) = self
+            .selected_instance
+            .and_then(|id| instances.iter().find(|instance| instance.id == id).cloned())
         {
-            v_flex()
+            Some(
+                self.settings_panel(selected, accounts.clone(), cx)
+                    .into_any_element(),
+            )
+        } else if self.show_backend_settings {
+            Some(
+                self.backend_settings_panel(backends.clone(), backend_names.clone(), cx)
+                    .into_any_element(),
+            )
+        } else if self.show_accounts_panel {
+            Some(self.accounts_panel(accounts.clone(), cx).into_any_element())
+        } else if self.show_global_settings {
+            Some(
+                self.global_settings_panel(launcher_settings, cx)
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
+        if let Some(side_panel) = side_panel {
+            h_flex()
                 .size_full()
-                .items_center()
-                .justify_center()
-                .gap_2()
-                .child(div().text_xl().child(t::instances::no_instances_yet()))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(t::instances::no_instances_hint()),
-                )
+                .child(div().flex_1().min_w_0().size_full().child(list))
+                .child(side_panel)
                 .into_any_element()
         } else {
-            let separated_sections = separated_backend_sections(sections, cx);
-            let list = v_flex()
-                .size_full()
-                .p_4()
-                .overflow_y_scrollbar()
-                .children(separated_sections);
-            let side_panel = if let Some(selected) = self
-                .selected_instance
-                .and_then(|id| instances.iter().find(|instance| instance.id == id).cloned())
-            {
-                Some(
-                    self.settings_panel(selected, accounts.clone(), cx)
-                        .into_any_element(),
-                )
-            } else if self.show_backend_settings {
-                Some(
-                    self.backend_settings_panel(backends.clone(), backend_names.clone(), cx)
-                        .into_any_element(),
-                )
-            } else if self.show_accounts_panel {
-                Some(self.accounts_panel(accounts.clone(), cx).into_any_element())
-            } else if self.show_global_settings {
-                Some(
-                    self.global_settings_panel(launcher_settings, cx)
-                        .into_any_element(),
-                )
-            } else {
-                None
-            };
-
-            if let Some(side_panel) = side_panel {
-                h_flex()
-                    .size_full()
-                    .child(div().flex_1().min_w_0().size_full().child(list))
-                    .child(side_panel)
-                    .into_any_element()
-            } else {
-                list.into_any_element()
-            }
+            list.into_any_element()
         }
     }
 }
 
 impl InstancesPage {
+    fn open_create_local_modal(&mut self, cx: &mut Context<Self>) {
+        self.show_create_local_modal = true;
+        self.create_local_show_snapshots = false;
+        self.data
+            .backend_sender
+            .send(MessageToBackend::FetchLocalCreateVersions);
+        self.data.local_create.update(cx, |entries, cx| {
+            entries.set_minecraft_loading(cx);
+        });
+        cx.notify();
+    }
+
+    fn on_minecraft_version_selected(
+        &mut self,
+        event: &SelectEvent<VersionList>,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(value) = event;
+        let Some(value) = value else {
+            return;
+        };
+        self.request_loader_versions(value.as_str(), cx);
+    }
+
+    fn request_loader_versions(&mut self, minecraft_version: &str, cx: &mut Context<Self>) {
+        if matches!(self.create_local_loader, LocalLoader::Vanilla) {
+            return;
+        }
+
+        self.data
+            .backend_sender
+            .send(MessageToBackend::FetchLoaderVersions {
+                minecraft_version: minecraft_version.to_string(),
+                loader: self.create_local_loader,
+            });
+        self.data.local_create.update(cx, |entries, cx| {
+            entries.set_loader_loading(minecraft_version.to_string(), self.create_local_loader, cx);
+        });
+    }
+
+    fn filtered_minecraft_versions(&self, cx: &App) -> Vec<SharedString> {
+        let state = self.data.local_create.read(cx).state.clone();
+        state
+            .minecraft_versions
+            .iter()
+            .filter(|(_, version_type)| {
+                self.create_local_show_snapshots || version_type != "snapshot"
+            })
+            .map(|(id, _)| SharedString::from(id.as_str()))
+            .collect()
+    }
+
+    fn update_minecraft_version_dropdown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.data.local_create.read(cx).state.clone();
+        let versions = self.filtered_minecraft_versions(cx);
+        let latest_release = SharedString::from(state.latest_release.as_str());
+
+        self.create_local_mc_version_select
+            .update(cx, |dropdown, cx| {
+                let mut to_select = dropdown.selected_value().cloned();
+                if to_select
+                    .as_ref()
+                    .is_none_or(|selected| !versions.contains(selected))
+                {
+                    to_select = None;
+                }
+                if to_select.is_none() && versions.contains(&latest_release) {
+                    to_select = Some(latest_release.clone());
+                }
+                if to_select.is_none() {
+                    to_select = versions.first().cloned();
+                }
+
+                dropdown.set_items(
+                    VersionList {
+                        versions: versions.clone(),
+                        matched_versions: versions.clone(),
+                    },
+                    window,
+                    cx,
+                );
+
+                if let Some(to_select) = to_select {
+                    dropdown.set_selected_value(&to_select, window, cx);
+                }
+            });
+
+        if let Some(selected) = self
+            .create_local_mc_version_select
+            .read(cx)
+            .selected_value()
+            .cloned()
+        {
+            let needs_fetch = !matches!(self.create_local_loader, LocalLoader::Vanilla)
+                && (state.loader_minecraft_version.as_deref() != Some(selected.as_str())
+                    || state.loader_kind != Some(self.create_local_loader)
+                    || (!state.loader_loading
+                        && state.loader_versions.is_empty()
+                        && state.loader_error.is_none()));
+            if needs_fetch {
+                self.request_loader_versions(selected.as_str(), cx);
+            }
+        }
+    }
+
+    fn update_loader_version_dropdown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.create_local_loader, LocalLoader::Vanilla) {
+            return;
+        }
+
+        let state = self.data.local_create.read(cx).state.clone();
+        let versions: Vec<SharedString> = state
+            .loader_versions
+            .iter()
+            .map(|version| SharedString::from(version.as_str()))
+            .collect();
+
+        self.create_local_loader_version_select
+            .update(cx, |dropdown, cx| {
+                let mut to_select = dropdown.selected_value().cloned();
+                if to_select
+                    .as_ref()
+                    .is_none_or(|selected| !versions.contains(selected))
+                {
+                    to_select = versions.first().cloned();
+                }
+
+                dropdown.set_items(
+                    VersionList {
+                        versions: versions.clone(),
+                        matched_versions: versions.clone(),
+                    },
+                    window,
+                    cx,
+                );
+
+                if let Some(to_select) = to_select {
+                    dropdown.set_selected_value(&to_select, window, cx);
+                }
+            });
+    }
+
+    fn create_local_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        if self.create_local_sync_mc_dropdown {
+            self.create_local_sync_mc_dropdown = false;
+            self.update_minecraft_version_dropdown(window, cx);
+        }
+        if self.create_local_sync_loader_dropdown {
+            self.create_local_sync_loader_dropdown = false;
+            self.update_loader_version_dropdown(window, cx);
+        }
+
+        let sender = self.data.backend_sender.clone();
+        let name_input = self.create_local_name_input.clone();
+        let mc_select = self.create_local_mc_version_select.clone();
+        let loader_version_select = self.create_local_loader_version_select.clone();
+        let selected_loader = self.create_local_loader;
+        let local_create_state = self.data.local_create.read(cx).state.clone();
+        let loader_version_disabled = matches!(selected_loader, LocalLoader::Vanilla);
+        let minecraft_loading = local_create_state.minecraft_loading;
+        let minecraft_has_error = local_create_state.minecraft_error.is_some();
+        let minecraft_error = local_create_state.minecraft_error.clone();
+        let loader_loading = local_create_state.loader_loading;
+        let loader_error = local_create_state.loader_error.clone();
+        let show_snapshots = self.create_local_show_snapshots;
+        let instances = self.data.instances.read(cx).entries.clone();
+        let form_issue = create_local_form_issue(self, &instances, cx);
+        let form_valid = form_issue.is_none();
+
+        let version_section = if let Some(error) = minecraft_error {
+            v_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(error.to_string()),
+                )
+                .child(
+                    Button::new("reload-local-create-versions")
+                        .label(t::local::versions_reload())
+                        .on_click({
+                            let sender = sender.clone();
+                            cx.listener(move |page, _, _, cx| {
+                                sender.send(MessageToBackend::FetchLocalCreateVersions);
+                                page.data.local_create.update(cx, |entries, cx| {
+                                    entries.set_minecraft_loading(cx);
+                                });
+                            })
+                        }),
+                )
+                .into_any_element()
+        } else if minecraft_loading {
+            Skeleton::new()
+                .w_full()
+                .min_h_8()
+                .max_h_8()
+                .rounded_md()
+                .into_any_element()
+        } else {
+            v_flex()
+                .gap_2()
+                .child(Select::new(&mc_select).w_full().menu_max_h(rems(16.)))
+                .child(
+                    Checkbox::new("show-local-create-snapshots")
+                        .checked(show_snapshots)
+                        .label(t::local::show_snapshots())
+                        .on_click(cx.listener(|page, checked, window, cx| {
+                            page.create_local_show_snapshots = *checked;
+                            page.update_minecraft_version_dropdown(window, cx);
+                            cx.notify();
+                        })),
+                )
+                .into_any_element()
+        };
+
+        let loader_version_section = if loader_version_disabled {
+            div().into_any_element()
+        } else if let Some(error) = loader_error {
+            div()
+                .text_sm()
+                .text_color(cx.theme().danger)
+                .child(error.to_string())
+                .into_any_element()
+        } else if loader_loading {
+            Skeleton::new()
+                .w_full()
+                .min_h_8()
+                .max_h_8()
+                .rounded_md()
+                .into_any_element()
+        } else {
+            Select::new(&loader_version_select)
+                .w_full()
+                .menu_max_h(rems(16.))
+                .into_any_element()
+        };
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().background.opacity(0.88))
+            .child(
+                v_flex()
+                    .w(px(420.0))
+                    .gap_3()
+                    .p_4()
+                    .rounded(cx.theme().radius_lg)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().popover)
+                    .shadow_lg()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_semibold()
+                            .child(t::local::create_title()),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child(t::local::instance_name()))
+                            .child(Input::new(&name_input)),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child(t::local::minecraft_version()))
+                            .child(version_section),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child(t::local::loader()))
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .flex_wrap()
+                                    .child(local_loader_button(
+                                        LocalLoader::Vanilla,
+                                        selected_loader,
+                                        cx,
+                                    ))
+                                    .child(local_loader_button(
+                                        LocalLoader::Fabric,
+                                        selected_loader,
+                                        cx,
+                                    ))
+                                    .child(local_loader_button(
+                                        LocalLoader::Forge,
+                                        selected_loader,
+                                        cx,
+                                    ))
+                                    .child(local_loader_button(
+                                        LocalLoader::Neoforge,
+                                        selected_loader,
+                                        cx,
+                                    )),
+                            ),
+                    )
+                    .when(!loader_version_disabled, |this| {
+                        this.child(
+                            v_flex()
+                                .gap_1()
+                                .child(div().text_sm().child(t::local::loader_version()))
+                                .child(loader_version_section),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("cancel-create-local")
+                                    .label(t::common::cancel())
+                                    .on_click(cx.listener(|page, _, _, cx| {
+                                        page.show_create_local_modal = false;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("submit-create-local")
+                                    .label(t::local::create())
+                                    .disabled(
+                                        !form_valid || minecraft_loading || minecraft_has_error,
+                                    )
+                                    .on_click({
+                                        let sender = sender.clone();
+                                        cx.listener(move |page, _, _, cx| {
+                                            let instances =
+                                                page.data.instances.read(cx).entries.clone();
+                                            if create_local_form_issue(page, &instances, cx)
+                                                .is_some()
+                                            {
+                                                return;
+                                            }
+                                            let display_name =
+                                                page.create_local_name_input.read(cx).value();
+                                            let Some(minecraft_version) = page
+                                                .create_local_mc_version_select
+                                                .read(cx)
+                                                .selected_value()
+                                                .cloned()
+                                            else {
+                                                return;
+                                            };
+                                            let loader_version = page
+                                                .create_local_loader_version_select
+                                                .read(cx)
+                                                .selected_value()
+                                                .cloned();
+                                            sender.send(MessageToBackend::CreateLocalInstance {
+                                                display_name: display_name.trim().to_string(),
+                                                minecraft_version: minecraft_version.to_string(),
+                                                loader: page.create_local_loader,
+                                                loader_version: loader_version
+                                                    .map(|version| version.to_string()),
+                                            });
+                                            page.show_create_local_modal = false;
+                                            cx.notify();
+                                        })
+                                    }),
+                            ),
+                    )
+                    .when_some(form_issue, |this, hint| {
+                        this.child(div().text_sm().text_color(cx.theme().danger).child(hint))
+                    }),
+            )
+    }
+
     fn settings_panel(
         &self,
         instance: InstanceView,
@@ -671,32 +1098,40 @@ fn separated_backend_sections(
     separated
 }
 
-fn section(
+struct SectionParams<'a> {
     title: String,
-    backend: Option<&BackendStatus>,
+    backend: Option<&'a BackendStatus>,
     instances: Vec<InstanceView>,
+    empty_hint: Option<String>,
+    header_action: Option<Button>,
     hide_usernames: bool,
-    sender: &BackendSender,
-    cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+    sender: BackendSender,
+}
+
+fn section(params: SectionParams<'_>, cx: &mut Context<InstancesPage>) -> gpui::Div {
+    let SectionParams {
+        title,
+        backend,
+        instances,
+        empty_hint,
+        header_action,
+        hide_usernames,
+        sender,
+    } = params;
     let cards = instances
         .into_iter()
         .map(|instance| instance_card(instance, hide_usernames, sender.clone(), cx))
         .collect::<Vec<_>>();
 
-    let fetch_state = backend
-        .map(|backend| fetch_state_label(&backend.fetch_state))
-        .unwrap_or_else(|| t::backends::local_only().to_string());
-    let fetch_color = if let Some(backend) = backend {
-        match &backend.fetch_state {
+    let backend_fetch = backend.map(|backend| {
+        let fetch_color = match &backend.fetch_state {
             BackendFetchState::Offline | BackendFetchState::Error(_) => cx.theme().red,
             BackendFetchState::Fetching => cx.theme().yellow,
             BackendFetchState::Fetched { .. } => cx.theme().foreground,
             BackendFetchState::NotFetched => cx.theme().muted_foreground,
-        }
-    } else {
-        cx.theme().muted_foreground
-    };
+        };
+        (fetch_state_label(&backend.fetch_state), fetch_color)
+    });
 
     v_flex()
         .gap_3()
@@ -704,10 +1139,65 @@ fn section(
             h_flex()
                 .justify_between()
                 .items_center()
+                .gap_2()
                 .child(div().text_lg().font_semibold().child(title))
-                .child(div().text_sm().text_color(fetch_color).child(fetch_state)),
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .when_some(header_action, |this, action| this.child(action))
+                        .when_some(backend_fetch, |this, (fetch_state, fetch_color)| {
+                            this.child(div().text_sm().text_color(fetch_color).child(fetch_state))
+                        }),
+                ),
         )
-        .child(h_flex().flex_wrap().gap_3().children(cards))
+        .when(cards.is_empty(), |this| {
+            this.when_some(empty_hint, |this, hint| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(hint),
+                )
+            })
+        })
+        .when(!cards.is_empty(), |this| {
+            this.child(h_flex().flex_wrap().gap_3().children(cards))
+        })
+}
+
+fn local_loader_button(
+    loader: LocalLoader,
+    selected: LocalLoader,
+    cx: &mut Context<InstancesPage>,
+) -> Button {
+    let label = match loader {
+        LocalLoader::Vanilla => t::local::loader_vanilla(),
+        LocalLoader::Fabric => t::local::loader_fabric(),
+        LocalLoader::Forge => t::local::loader_forge(),
+        LocalLoader::Neoforge => t::local::loader_neoforge(),
+    };
+    let id = match loader {
+        LocalLoader::Vanilla => "vanilla",
+        LocalLoader::Fabric => "fabric",
+        LocalLoader::Forge => "forge",
+        LocalLoader::Neoforge => "neoforge",
+    };
+    Button::new(format!("create-local-loader-{id}"))
+        .label(label)
+        .disabled(selected == loader)
+        .on_click(cx.listener(move |page, _, _, cx| {
+            page.create_local_loader = loader;
+            if let Some(minecraft_version) = page
+                .create_local_mc_version_select
+                .read(cx)
+                .selected_value()
+                .cloned()
+            {
+                page.request_loader_versions(minecraft_version.as_str(), cx);
+            }
+            cx.notify();
+        }))
 }
 
 fn backend_empty_state_section(
@@ -945,18 +1435,24 @@ fn action_button(
             .label(t::common::cancel())
             .on_click(move |_, _, _| sender.send(MessageToBackend::CancelInstall(instance.id))),
         InstanceLiveStatus::NotInstalled | InstanceLiveStatus::Outdated => {
-            Button::new(format!("install-{}", instance.id))
-                .label(if matches!(instance.status, InstanceLiveStatus::Outdated) {
-                    t::instances::update()
-                } else {
-                    t::instances::install()
-                })
-                .on_click(move |_, _, _| {
-                    sender.send(MessageToBackend::InstallInstance {
-                        id: instance.id,
-                        force_overwrite: false,
-                    });
-                })
+            if matches!(instance.origin, InstanceOrigin::Local) {
+                Button::new(format!("local-unavailable-{}", instance.id))
+                    .label(t::instances::install())
+                    .disabled(true)
+            } else {
+                Button::new(format!("install-{}", instance.id))
+                    .label(if matches!(instance.status, InstanceLiveStatus::Outdated) {
+                        t::instances::update()
+                    } else {
+                        t::instances::install()
+                    })
+                    .on_click(move |_, _, _| {
+                        sender.send(MessageToBackend::InstallInstance {
+                            id: instance.id,
+                            force_overwrite: false,
+                        });
+                    })
+            }
         }
         InstanceLiveStatus::Launching => Button::new(format!("launching-{}", instance.id))
             .label(t::instances::launching())
@@ -987,14 +1483,24 @@ fn action_button(
                     });
                 })
         }
-        InstanceLiveStatus::InstallFailed(_) => Button::new(format!("retry-{}", instance.id))
-            .label(t::common::retry())
-            .on_click(move |_, _, _| {
-                sender.send(MessageToBackend::InstallInstance {
-                    id: instance.id,
-                    force_overwrite: false,
-                });
-            }),
+        InstanceLiveStatus::InstallFailed(_) => {
+            if matches!(instance.origin, InstanceOrigin::Local) {
+                Button::new(format!("retry-failed-local-{}", instance.id))
+                    .label(t::common::retry())
+                    .on_click(move |_, _, _| {
+                        sender.send(MessageToBackend::RetryCreateLocal(instance.id))
+                    })
+            } else {
+                Button::new(format!("retry-{}", instance.id))
+                    .label(t::common::retry())
+                    .on_click(move |_, _, _| {
+                        sender.send(MessageToBackend::InstallInstance {
+                            id: instance.id,
+                            force_overwrite: false,
+                        });
+                    })
+            }
+        }
         InstanceLiveStatus::LaunchFailed(_) => Button::new(format!("play-again-{}", instance.id))
             .label(if instance.launch_blocked_reason.is_some() {
                 t::instances::add_account()
@@ -1786,6 +2292,9 @@ fn action_section(
             | InstanceLiveStatus::LaunchFailed(_)
     );
     let launch_blocked = instance.launch_blocked_reason.is_some();
+    let show_remove = matches!(instance.status, InstanceLiveStatus::InstallFailed(_))
+        && !instance.locally_installed
+        && matches!(instance.origin, InstanceOrigin::Local);
     v_flex()
         .gap_2()
         .child(
@@ -1818,66 +2327,79 @@ fn action_section(
         .child(
             h_flex()
                 .gap_2()
-                .child(
-                    Button::new(format!("detail-resync-{id}"))
-                        .label(t::instances::resync())
-                        .disabled(matches!(
-                            instance.status,
-                            InstanceLiveStatus::Installing { .. }
-                        ))
-                        .on_click({
-                            let sender = sender.clone();
-                            move |_, _, _| {
-                                sender.send(MessageToBackend::InstallInstance {
-                                    id,
-                                    force_overwrite: false,
-                                });
-                            }
-                        }),
-                )
-                .child(
-                    Button::new(format!("detail-hard-resync-{id}"))
-                        .label(t::instances::hard_resync())
-                        .disabled(matches!(
-                            instance.status,
-                            InstanceLiveStatus::Installing { .. }
-                        ))
-                        .on_click({
-                            let sender = sender.clone();
-                            move |_, _, _| {
-                                sender.send(MessageToBackend::InstallInstance {
-                                    id,
-                                    force_overwrite: true,
-                                });
-                            }
-                        }),
-                ),
+                .when(!matches!(instance.origin, InstanceOrigin::Local), |this| {
+                    this.child(
+                        Button::new(format!("detail-resync-{id}"))
+                            .label(t::instances::resync())
+                            .disabled(matches!(
+                                instance.status,
+                                InstanceLiveStatus::Installing { .. }
+                            ))
+                            .on_click({
+                                let sender = sender.clone();
+                                move |_, _, _| {
+                                    sender.send(MessageToBackend::InstallInstance {
+                                        id,
+                                        force_overwrite: false,
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new(format!("detail-hard-resync-{id}"))
+                            .label(t::instances::hard_resync())
+                            .disabled(matches!(
+                                instance.status,
+                                InstanceLiveStatus::Installing { .. }
+                            ))
+                            .on_click({
+                                let sender = sender.clone();
+                                move |_, _, _| {
+                                    sender.send(MessageToBackend::InstallInstance {
+                                        id,
+                                        force_overwrite: true,
+                                    });
+                                }
+                            }),
+                    )
+                }),
         )
-        .child(
-            h_flex().gap_2().child(
-                Button::new(format!("detail-delete-{id}"))
-                    .label(if pending_delete {
-                        t::instances::confirm_delete()
-                    } else {
-                        t::instances::delete()
+        .child(h_flex().gap_2().child(if show_remove {
+            Button::new(format!("detail-remove-{id}"))
+                .label(t::instances::remove())
+                .on_click({
+                    let sender = sender.clone();
+                    cx.listener(move |page, _, _, cx| {
+                        page.selected_instance = None;
+                        sender.send(MessageToBackend::CancelInstall(id));
+                        cx.notify();
                     })
-                    .disabled(!instance.locally_installed)
-                    .on_click({
-                        let sender = sender.clone();
-                        cx.listener(move |page, _, _, cx| {
-                            if page.pending_delete == Some(id) {
-                                page.pending_delete = None;
-                                page.selected_instance = None;
-                                sender.send(MessageToBackend::DeleteInstance(id));
-                            } else {
-                                page.pending_delete = Some(id);
-                            }
-                            cx.notify();
-                        })
-                    }),
-            ),
-        )
-        .when(pending_delete, |this| {
+                })
+                .into_any_element()
+        } else {
+            Button::new(format!("detail-delete-{id}"))
+                .label(if pending_delete {
+                    t::instances::confirm_delete()
+                } else {
+                    t::instances::delete()
+                })
+                .disabled(!instance.locally_installed)
+                .on_click({
+                    let sender = sender.clone();
+                    cx.listener(move |page, _, _, cx| {
+                        if page.pending_delete == Some(id) {
+                            page.pending_delete = None;
+                            page.selected_instance = None;
+                            sender.send(MessageToBackend::DeleteInstance(id));
+                        } else {
+                            page.pending_delete = Some(id);
+                        }
+                        cx.notify();
+                    })
+                })
+                .into_any_element()
+        }))
+        .when(pending_delete && !show_remove, |this| {
             this.child(
                 div()
                     .text_sm()
@@ -1894,7 +2416,8 @@ fn action_section(
             )
         })
         .when(
-            matches!(instance.status, InstanceLiveStatus::Outdated),
+            matches!(instance.status, InstanceLiveStatus::Outdated)
+                && !matches!(instance.origin, InstanceOrigin::Local),
             |this| {
                 this.child(
                     Button::new(format!("detail-update-{id}"))
@@ -2080,4 +2603,144 @@ fn progress_ratio(status: &InstanceLiveStatus) -> Option<f32> {
 #[allow(dead_code)]
 fn _url_key(url: &Url) -> String {
     url.as_str().to_string()
+}
+
+fn create_local_form_issue(
+    page: &InstancesPage,
+    instances: &[InstanceView],
+    cx: &App,
+) -> Option<String> {
+    let name = page
+        .create_local_name_input
+        .read(cx)
+        .value()
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return Some(t::notifications::local_instance_name_empty().to_string());
+    }
+
+    let sanitized = sanitize_dir_name(&name);
+    for instance in instances {
+        if instance.dir_name.as_ref() == sanitized
+            || instance.display_name.as_ref() == name
+            || instance.display_name.as_ref() == sanitized
+        {
+            return Some(t::notifications::local_instance_name_exists(name));
+        }
+    }
+
+    if page
+        .create_local_mc_version_select
+        .read(cx)
+        .selected_value()
+        .is_none()
+    {
+        return Some(format!(
+            "{} {}",
+            t::common::select(),
+            t::local::minecraft_version()
+        ));
+    }
+
+    let local_create = page.data.local_create.read(cx);
+    let state = &local_create.state;
+    if state.minecraft_loading {
+        return Some(t::local::versions_loading_game_versions().to_string());
+    }
+    if state.minecraft_error.is_some() {
+        return Some(t::local::versions_error().to_string());
+    }
+
+    let selected_mc = page
+        .create_local_mc_version_select
+        .read(cx)
+        .selected_value()
+        .map(|version| version.to_string());
+
+    match page.create_local_loader {
+        LocalLoader::Vanilla => {}
+        LocalLoader::Fabric => {
+            if state.loader_loading
+                && state.loader_minecraft_version == selected_mc
+                && state.loader_kind == Some(LocalLoader::Fabric)
+            {
+                return Some(t::local::loader_versions_loading().to_string());
+            }
+            if state.loader_error.is_some()
+                && state.loader_minecraft_version == selected_mc
+                && state.loader_kind == Some(LocalLoader::Fabric)
+            {
+                return Some(t::local::loader_versions_error().to_string());
+            }
+        }
+        LocalLoader::Forge | LocalLoader::Neoforge => {
+            if page
+                .create_local_loader_version_select
+                .read(cx)
+                .selected_value()
+                .is_none()
+            {
+                return Some(
+                    t::notifications::local_instance_loader_version_required().to_string(),
+                );
+            }
+            if state.loader_loading
+                && state.loader_minecraft_version == selected_mc
+                && state.loader_kind == Some(page.create_local_loader)
+            {
+                return Some(t::local::loader_versions_loading().to_string());
+            }
+            if state.loader_error.is_some()
+                && state.loader_minecraft_version == selected_mc
+                && state.loader_kind == Some(page.create_local_loader)
+            {
+                return Some(t::local::loader_versions_error().to_string());
+            }
+        }
+    }
+
+    None
+}
+
+#[derive(Default)]
+struct VersionList {
+    versions: Vec<SharedString>,
+    matched_versions: Vec<SharedString>,
+}
+
+impl SelectDelegate for VersionList {
+    type Item = SharedString;
+
+    fn items_count(&self, _section: usize) -> usize {
+        self.matched_versions.len()
+    }
+
+    fn item(&self, ix: IndexPath) -> Option<&Self::Item> {
+        self.matched_versions.get(ix.row)
+    }
+
+    fn position<V>(&self, value: &V) -> Option<IndexPath>
+    where
+        Self::Item: SelectItem<Value = V>,
+        V: PartialEq,
+    {
+        for (index, item) in self.matched_versions.iter().enumerate() {
+            if item.value() == value {
+                return Some(IndexPath::default().row(index));
+            }
+        }
+        None
+    }
+
+    fn perform_search(&mut self, query: &str, _window: &mut Window, _: &mut App) -> gpui::Task<()> {
+        let lower_query = query.to_lowercase();
+        self.matched_versions = self
+            .versions
+            .iter()
+            .filter(|item| item.to_lowercase().starts_with(&lower_query))
+            .cloned()
+            .collect();
+        gpui::Task::ready(())
+    }
 }

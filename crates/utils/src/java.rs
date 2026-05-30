@@ -295,6 +295,38 @@ pub fn get_temp_dir() -> PathBuf {
     temp_dir
 }
 
+/// Zulu macOS archives ship as .app bundles where the JRE lives under
+/// {archive_root}/Contents/Home, while Linux/Windows archives use a flat layout.
+fn resolve_java_home_dir(extracted_root: &Path) -> PathBuf {
+    let bundle_home = extracted_root.join("Contents").join("Home");
+    if bundle_home.is_dir() {
+        bundle_home
+    } else {
+        extracted_root.to_path_buf()
+    }
+}
+
+fn install_extracted_java(
+    java_dir: &Path,
+    filename: &str,
+    target_dir: &Path,
+) -> Result<(), JavaDownloadError> {
+    let extracted_root = java_dir.join(filename);
+    let java_home_src = resolve_java_home_dir(&extracted_root);
+
+    if target_dir.exists() {
+        fs::remove_dir_all(target_dir)?;
+    }
+
+    fs::rename(&java_home_src, target_dir)?;
+
+    if java_home_src != extracted_root && extracted_root.exists() {
+        fs::remove_dir_all(&extracted_root)?;
+    }
+
+    Ok(())
+}
+
 pub async fn download_java(
     required_version: &str,
     data_dir: &DataDir,
@@ -363,7 +395,7 @@ pub async fn download_java(
             .ok_or(JavaDownloadError::NoFileNameInURL)?
             .strip_suffix(&format!(".{archive_type}"))
             .ok_or(JavaDownloadError::NoFileExtensionInURL)?;
-        fs::rename(java_dir.join(filename), &target_dir)?;
+        install_extracted_java(&java_dir, filename, &target_dir)?;
 
         let java_path = JavaDir::root()
             .java_version_dir(required_version)

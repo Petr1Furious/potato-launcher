@@ -9,7 +9,8 @@ use std::path::PathBuf;
 
 use entity::{
     DataEntities, account::AccountEntries, backend::BackendList, instance::InstanceEntries,
-    notification::NotificationEntries, settings::LauncherSettingsEntries,
+    local_create::LocalCreateEntries, notification::NotificationEntries,
+    settings::LauncherSettingsEntries,
 };
 use gpui::{
     App, AppContext, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, actions, px,
@@ -46,12 +47,14 @@ pub fn start(
         let accounts = cx.new(|_| AccountEntries::default());
         let notifications = cx.new(|_| NotificationEntries::default());
         let settings = cx.new(|_| LauncherSettingsEntries::default());
+        let local_create = cx.new(|_| LocalCreateEntries::default());
         let data = DataEntities {
             instances,
             backends,
             accounts,
             notifications,
             settings,
+            local_create,
             backend_sender,
             launcher_dir,
         };

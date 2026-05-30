@@ -2,6 +2,8 @@ mod catalog;
 mod install;
 pub mod instances;
 mod launch;
+mod local;
+mod versions;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -10,7 +12,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use catalog::{BackendCatalogState, backend_status, fetch_backend_catalog};
+use catalog::{
+    BackendCatalogEntry, CatalogFetchResult, backend_status, delete_cached_manifest,
+    fetch_backend_catalog, load_cached_manifest, save_cached_manifest,
+};
 use instance::{instance_metadata::InstanceMetadata, storage::InstanceStorage};
 use launcher_auth::{
     AccountData,
@@ -141,9 +146,11 @@ pub struct BackendState {
     instance_settings: InstanceUserSettings,
     instance_storage: InstanceStorage,
     auth_storage: AuthStorage,
-    catalogs: HashMap<Url, BackendCatalogState>,
+    catalogs: HashMap<Url, BackendCatalogEntry>,
     client: reqwest::Client,
     installing: HashMap<Uuid, instances::InstallProgressView>,
+    creating_local: HashMap<Uuid, Arc<str>>,
+    creating_local_params: HashMap<Uuid, local::CreateLocalParams>,
     install_tasks: HashMap<Uuid, JoinHandle<()>>,
     install_errors: HashMap<Uuid, Arc<str>>,
     installed_overrides: HashSet<Uuid>,
@@ -161,7 +168,7 @@ struct LaunchHandle {
 enum BackendEvent {
     FetchFinished {
         url: Url,
-        state: BackendCatalogState,
+        result: CatalogFetchResult,
     },
     InstallProgress {
         id: Uuid,
@@ -255,12 +262,23 @@ impl BackendState {
                 log::warn!("Failed to load instance user settings: {err:?}");
                 InstanceUserSettings::default()
             });
-        let catalogs = settings
-            .backend_urls
-            .iter()
-            .cloned()
-            .map(|url| (url, BackendCatalogState::NotFetched))
-            .collect();
+        let mut catalogs = HashMap::new();
+        for url in &settings.backend_urls {
+            let entry = match load_cached_manifest(&launcher_dir, url).await {
+                Ok(manifest) => {
+                    log::info!(
+                        "Loaded cached backend manifest from {url}: {} published instances",
+                        manifest.instances.len()
+                    );
+                    BackendCatalogEntry::from_cache(Arc::new(manifest))
+                }
+                Err(err) => {
+                    log::warn!("Failed to load cached backend manifest for {url}: {err:#}");
+                    BackendCatalogEntry::new_not_fetched()
+                }
+            };
+            catalogs.insert(url.clone(), entry);
+        }
         let instance_storage = InstanceStorage::load(&data_dir)
             .await
             .unwrap_or_else(|err| {
@@ -279,6 +297,8 @@ impl BackendState {
             catalogs,
             client: reqwest::Client::new(),
             installing: HashMap::new(),
+            creating_local: HashMap::new(),
+            creating_local_params: HashMap::new(),
             install_tasks: HashMap::new(),
             install_errors: HashMap::new(),
             installed_overrides: HashSet::new(),
@@ -293,11 +313,12 @@ impl BackendState {
         self.visible_backend_urls()
             .into_iter()
             .map(|(url, configured, referenced_by_instances)| {
-                let state = self
+                let entry = self
                     .catalogs
                     .get(&url)
-                    .unwrap_or(&BackendCatalogState::NotFetched);
-                backend_status(&url, state, configured, referenced_by_instances)
+                    .cloned()
+                    .unwrap_or_else(BackendCatalogEntry::new_not_fetched);
+                backend_status(&url, &entry, configured, referenced_by_instances)
             })
             .collect::<Vec<_>>()
             .into()
@@ -379,6 +400,7 @@ impl BackendState {
             catalogs: &self.catalogs,
             live_state: instances::InstanceLiveState {
                 installing: &self.installing,
+                creating_local: &self.creating_local,
                 install_errors: &self.install_errors,
                 installed_overrides: &self.installed_overrides,
                 launching: &self.launching,
@@ -464,7 +486,8 @@ impl BackendState {
             .any(|existing| existing == &url);
         if inserted {
             self.settings.backend_urls.push(url.clone());
-            self.catalogs.insert(url, BackendCatalogState::NotFetched);
+            self.catalogs
+                .insert(url, BackendCatalogEntry::new_not_fetched());
             self.settings.save(&self.launcher_dir).await?;
         }
         self.emit_snapshot(tx);
@@ -482,6 +505,9 @@ impl BackendState {
             .any(|source| &source.manifest_url == url)
         {
             self.catalogs.remove(url);
+            if let Err(err) = delete_cached_manifest(&self.launcher_dir, url).await {
+                log::warn!("Failed to delete cached manifest for {url}: {err:#}");
+            }
         }
         self.settings.save(&self.launcher_dir).await?;
         self.emit_snapshot(tx);
@@ -497,18 +523,110 @@ impl BackendState {
 
     fn start_fetch(&mut self, url: Url, internal: &mpsc::UnboundedSender<BackendEvent>) {
         self.catalogs
-            .insert(url.clone(), BackendCatalogState::Fetching);
+            .entry(url.clone())
+            .and_modify(BackendCatalogEntry::set_fetching)
+            .or_insert_with(|| {
+                let mut entry = BackendCatalogEntry::new_not_fetched();
+                entry.set_fetching();
+                entry
+            });
         let client = self.client.clone();
         let internal = internal.clone();
         tokio::spawn(async move {
-            let state = fetch_backend_catalog(client, url.clone()).await;
-            let _ = internal.send(BackendEvent::FetchFinished { url, state });
+            let result = fetch_backend_catalog(client, url.clone()).await;
+            let _ = internal.send(BackendEvent::FetchFinished { url, result });
         });
     }
 
-    fn handle_fetch_finished(&mut self, url: Url, state: BackendCatalogState, tx: &FrontendSender) {
-        self.catalogs.insert(url, state);
+    fn handle_fetch_finished(&mut self, url: Url, result: CatalogFetchResult, tx: &FrontendSender) {
+        let entry = self
+            .catalogs
+            .entry(url.clone())
+            .or_insert_with(BackendCatalogEntry::new_not_fetched);
+        match result {
+            CatalogFetchResult::Success(manifest) => {
+                let manifest = Arc::new(manifest);
+                entry.apply_fetch_success(manifest.clone());
+                let launcher_dir = self.launcher_dir.clone();
+                tokio::spawn(async move {
+                    if let Err(err) =
+                        save_cached_manifest(&launcher_dir, &url, manifest.as_ref()).await
+                    {
+                        log::warn!("Failed to save cached backend manifest for {url}: {err:#}");
+                    }
+                });
+            }
+            CatalogFetchResult::Failed(failure) => entry.apply_fetch_failure(failure),
+        }
         self.emit_snapshot(tx);
+    }
+
+    fn start_create_local(
+        &mut self,
+        display_name: String,
+        minecraft_version: String,
+        loader: launcher_bridge::LocalLoader,
+        loader_version: Option<String>,
+        tx: FrontendSender,
+        internal: mpsc::UnboundedSender<BackendEvent>,
+    ) {
+        let dir_name = match local::validate_create_local(
+            &display_name,
+            loader,
+            &loader_version,
+            &self.instance_storage,
+            &self.catalogs,
+        ) {
+            Ok(dir_name) => dir_name,
+            Err(message) => {
+                tx.send(MessageToFrontend::Notification {
+                    level: NotificationLevel::Error,
+                    message,
+                });
+                return;
+            }
+        };
+
+        let id = Uuid::new_v4();
+        self.install_errors.remove(&id);
+        self.creating_local.insert(id, Arc::from(dir_name.clone()));
+        self.creating_local_params.insert(
+            id,
+            local::CreateLocalParams {
+                dir_name: dir_name.clone(),
+                minecraft_version: minecraft_version.clone(),
+                loader,
+                loader_version: loader_version.clone(),
+            },
+        );
+        self.installing.insert(
+            id,
+            instances::InstallProgressView {
+                stage: ProgressStage::Metadata,
+                current: 0,
+                total: 0,
+                message: Arc::from(launcher_i18n::notifications::preparing_local_instance()),
+                show_bar: false,
+            },
+        );
+
+        let request = local::CreateLocalRequest {
+            id,
+            dir_name,
+            minecraft_version,
+            loader,
+            loader_version,
+            launcher_dir: self.launcher_dir.clone(),
+            client: self.client.clone(),
+            frontend: tx.clone(),
+            internal: internal.clone(),
+        };
+
+        let handle = tokio::spawn(async move {
+            let result = local::create_local_instance(request).await;
+            let _ = internal.send(BackendEvent::InstallFinished { id, result });
+        });
+        self.install_tasks.insert(id, handle);
     }
 
     fn start_install(
@@ -569,6 +687,8 @@ impl BackendState {
 
         match result {
             Ok(output) => {
+                self.creating_local.remove(&id);
+                self.creating_local_params.remove(&id);
                 let data_dir = DataDir::new(self.launcher_dir.clone());
                 let save_result = if self.instance_storage.get(output.instance.id).is_some() {
                     self.instance_storage
@@ -582,25 +702,6 @@ impl BackendState {
 
                 match save_result {
                     Ok(()) => {
-                        if output.requested_id != output.instance.id
-                            && let Some(settings) = self
-                                .instance_settings
-                                .instances
-                                .remove(&output.requested_id)
-                        {
-                            self.instance_settings
-                                .instances
-                                .insert(output.instance.id, settings);
-                            if let Err(err) = self.instance_settings.save(&self.launcher_dir).await
-                            {
-                                log::error!(
-                                    "Failed to transfer settings from remote view {} to installed instance {}: {err:#}",
-                                    output.requested_id,
-                                    output.instance.id
-                                );
-                            }
-                        }
-                        self.install_errors.remove(&output.requested_id);
                         self.install_errors.remove(&output.instance.id);
                         tx.send(MessageToFrontend::Notification {
                             level: NotificationLevel::Success,
@@ -614,7 +715,7 @@ impl BackendState {
                         );
                         let error = Arc::<str>::from(err.to_string());
                         self.install_errors
-                            .insert(output.requested_id, error.clone());
+                            .insert(output.instance.id, error.clone());
                         tx.send(MessageToFrontend::Notification {
                             level: NotificationLevel::Error,
                             message: Arc::from(
@@ -646,7 +747,93 @@ impl BackendState {
             handle.abort();
         }
         self.installing.remove(&id);
+        let params = self.creating_local_params.remove(&id);
+        let dir_name = self
+            .creating_local
+            .remove(&id)
+            .map(|name| name.to_string())
+            .or_else(|| params.as_ref().map(|params| params.dir_name.clone()));
+        self.install_errors.remove(&id);
+
+        if let Some(dir_name) = dir_name
+            && self.instance_storage.get(id).is_none()
+        {
+            let launcher_dir = self.launcher_dir.clone();
+            tokio::spawn(async move {
+                let data_dir = DataDir::new(launcher_dir);
+                let instance_path = InstancesDir::root()
+                    .instance_dir(&dir_name)
+                    .with_data_dir(data_dir)
+                    .to_fs();
+                if instance_path.exists()
+                    && let Err(err) = tokio::fs::remove_dir_all(&instance_path).await
+                {
+                    log::warn!(
+                        "Failed to remove partial local instance directory {}: {err:#}",
+                        instance_path.display()
+                    );
+                }
+            });
+        }
+
         self.emit_snapshot(tx);
+    }
+
+    fn retry_create_local(
+        &mut self,
+        id: Uuid,
+        tx: FrontendSender,
+        internal: mpsc::UnboundedSender<BackendEvent>,
+    ) {
+        if self.install_tasks.contains_key(&id) {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Info,
+                message: Arc::from(launcher_i18n::notifications::install_already_running()),
+            });
+            return;
+        }
+
+        let Some(params) = self.creating_local_params.get(&id).cloned() else {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::install_failed(
+                    "no stored create parameters for retry".to_string(),
+                )),
+            });
+            return;
+        };
+
+        self.install_errors.remove(&id);
+        self.creating_local
+            .insert(id, Arc::from(params.dir_name.clone()));
+        self.installing.insert(
+            id,
+            instances::InstallProgressView {
+                stage: ProgressStage::Metadata,
+                current: 0,
+                total: 0,
+                message: Arc::from(launcher_i18n::notifications::preparing_local_instance()),
+                show_bar: false,
+            },
+        );
+
+        let request = local::CreateLocalRequest {
+            id,
+            dir_name: params.dir_name,
+            minecraft_version: params.minecraft_version,
+            loader: params.loader,
+            loader_version: params.loader_version,
+            launcher_dir: self.launcher_dir.clone(),
+            client: self.client.clone(),
+            frontend: tx.clone(),
+            internal: internal.clone(),
+        };
+
+        let handle = tokio::spawn(async move {
+            let result = local::create_local_instance(request).await;
+            let _ = internal.send(BackendEvent::InstallFinished { id, result });
+        });
+        self.install_tasks.insert(id, handle);
     }
 
     async fn delete_instance(&mut self, id: Uuid, tx: &FrontendSender) {
@@ -1169,6 +1356,10 @@ pub async fn run(
                     MessageToBackend::CancelInstall(id) => {
                         state.cancel_install(id, &frontend);
                     }
+                    MessageToBackend::RetryCreateLocal(id) => {
+                        state.retry_create_local(id, frontend.clone(), internal_sender.clone());
+                        state.emit_snapshot(&frontend);
+                    }
                     MessageToBackend::DeleteInstance(id) => {
                         state.delete_instance(id, &frontend).await;
                     }
@@ -1228,6 +1419,39 @@ pub async fn run(
                     MessageToBackend::SetInstanceJvmFlags { instance, flags } => {
                         state.set_instance_jvm_flags(instance, flags, &frontend).await;
                     }
+                    MessageToBackend::CreateLocalInstance {
+                        display_name,
+                        minecraft_version,
+                        loader,
+                        loader_version,
+                    } => {
+                        state.start_create_local(
+                            display_name,
+                            minecraft_version,
+                            loader,
+                            loader_version,
+                            frontend.clone(),
+                            internal_sender.clone(),
+                        );
+                        state.emit_snapshot(&frontend);
+                    }
+                    MessageToBackend::FetchLocalCreateVersions => {
+                        versions::start_fetch_local_create_versions(
+                            state.client.clone(),
+                            frontend.clone(),
+                        );
+                    }
+                    MessageToBackend::FetchLoaderVersions {
+                        minecraft_version,
+                        loader,
+                    } => {
+                        versions::start_fetch_loader_versions(
+                            state.client.clone(),
+                            frontend.clone(),
+                            minecraft_version,
+                            loader,
+                        );
+                    }
                     MessageToBackend::Quit => break,
                     other => {
                         log::info!("Unhandled backend message: {other:?}");
@@ -1236,8 +1460,8 @@ pub async fn run(
             }
             event = internal_receiver.recv() => {
                 match event {
-                    Some(BackendEvent::FetchFinished { url, state: catalog_state }) => {
-                        state.handle_fetch_finished(url, catalog_state, &frontend);
+                    Some(BackendEvent::FetchFinished { url, result }) => {
+                        state.handle_fetch_finished(url, result, &frontend);
                     }
                     Some(BackendEvent::InstallProgress { id, stage, current, total, message, show_bar }) => {
                         if state.install_tasks.contains_key(&id) {

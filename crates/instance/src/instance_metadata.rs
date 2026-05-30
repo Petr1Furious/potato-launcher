@@ -87,8 +87,9 @@ pub struct InstanceMetadata {
     #[serde(default)]
     pub resources_url_base: ResourcesUrlBase,
 
-    /// extra (neo)forge libraries to include with the instance
-    /// should be empty when not using (neo)forge
+    /// Forge/NeoForge installer libraries not listed in version metadata.
+    /// Populated for server-built instances so clients can download them;
+    /// empty for local instances (jars are copied during generation instead).
     #[serde(default)]
     pub extra_forge_libs: Vec<Library>,
 
@@ -276,11 +277,7 @@ impl InstanceMetadata {
         data_dir: &DataDir,
     ) -> Result<Vec<PathBuf>, InstanceMetadataError> {
         let mut paths = Vec::new();
-        for library in self
-            .get_libraries_with_overrides()
-            .into_iter()
-            .chain(self.get_extra_forge_libs())
-        {
+        for library in self.get_libraries_with_overrides() {
             if let Some(path) = library.get_artifact_path(data_dir)? {
                 paths.push(path);
             }

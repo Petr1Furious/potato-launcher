@@ -35,3 +35,34 @@ fn primary_subtag(locale: &str) -> Option<&str> {
         .next()
         .filter(|part| !part.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_russian_is_selected() {
+        assert_eq!(resolve_language_code(Some("ru"), None), "ru");
+        assert_eq!(resolve_language_code(Some("ru-RU"), None), "ru");
+    }
+
+    #[test]
+    fn system_russian_maps_to_ru() {
+        assert_eq!(resolve_language_code(None, Some("ru-RU")), "ru");
+    }
+
+    #[test]
+    fn unsupported_system_defaults_to_english() {
+        assert_eq!(resolve_language_code(None, Some("de-DE")), "en");
+    }
+
+    #[test]
+    fn unknown_explicit_defaults_to_english() {
+        assert_eq!(resolve_language_code(Some("de"), None), "en");
+    }
+
+    #[test]
+    fn preferred_overrides_system() {
+        assert_eq!(resolve_language_code(Some("en"), Some("ru-RU")), "en");
+    }
+}

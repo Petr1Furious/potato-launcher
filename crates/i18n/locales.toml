@@ -87,8 +87,12 @@ en = "No instances yet"
 ru = "Пока нет инстансов"
 
 [instances.no_instances_hint]
-en = "Open Backends to add a manifest URL, or create a local instance later."
-ru = "Откройте «Бэкенды», чтобы добавить URL манифеста, или создайте локальный инстанс позже."
+en = "Open Backends to add a manifest URL, or create a local instance below."
+ru = "Откройте «Бэкенды», чтобы добавить URL манифеста, или создайте локальный инстанс ниже."
+
+[instances.local_empty_hint]
+en = "No local instances yet. Use Add local to create one."
+ru = "Локальных инстансов пока нет. Нажмите «Добавить локальный», чтобы создать."
 
 [instances.status]
 en = "Status"
@@ -153,6 +157,10 @@ ru = "Жёсткая синхронизация"
 [instances.delete]
 en = "Delete"
 ru = "Удалить"
+
+[instances.remove]
+en = "Remove"
+ru = "Убрать"
 
 [instances.confirm_delete]
 en = "Confirm Delete"
@@ -462,6 +470,22 @@ ru = "Память (МиБ)"
 en = "Extra JVM flags"
 ru = "Дополнительные флаги JVM"
 
+[placeholders.instance_name]
+en = "My Instance"
+ru = "Мой инстанс"
+
+[placeholders.minecraft_version]
+en = "1.21.1"
+ru = "1.21.1"
+
+[placeholders.loader_version]
+en = "Latest loader version"
+ru = "Версия загрузчика"
+
+[progress.generating_local_instance]
+en = "Generating instance metadata"
+ru = "Генерация метаданных инстанса"
+
 [progress.checking_files]
 en = "Checking files"
 ru = "Проверка файлов"
@@ -517,6 +541,22 @@ ru = "Получение метаданных"
 [notifications.install_already_running]
 en = "Install is already running"
 ru = "Установка уже выполняется"
+
+[notifications.preparing_local_instance]
+en = "Preparing local instance"
+ru = "Подготовка локального инстанса"
+
+[notifications.local_instance_name_empty]
+en = "Instance name cannot be empty"
+ru = "Имя инстанса не может быть пустым"
+
+[notifications.local_instance_name_exists]
+en = "An instance named \"${name: String}\" already exists"
+ru = "Инстанс с именем «${name: String}» уже существует"
+
+[notifications.local_instance_loader_version_required]
+en = "Loader version is required for Forge and NeoForge"
+ru = "Для Forge и NeoForge нужна версия загрузчика"
 
 [notifications.preparing_install]
 en = "Preparing install"
@@ -669,6 +709,74 @@ ru = "Не удалось открыть папку лаунчера: ${error: S
 [instances.launch_blocked]
 en = "Select a compatible account or choose an instance account override before launching."
 ru = "Выберите подходящий аккаунт или переопределение аккаунта перед запуском."
+
+[local.add]
+en = "Add local"
+ru = "Добавить локальный"
+
+[local.create_title]
+en = "Create local instance"
+ru = "Создать локальный инстанс"
+
+[local.instance_name]
+en = "Instance name"
+ru = "Имя инстанса"
+
+[local.minecraft_version]
+en = "Minecraft version"
+ru = "Версия Minecraft"
+
+[local.loader]
+en = "Loader"
+ru = "Загрузчик"
+
+[local.loader_version]
+en = "Loader version"
+ru = "Версия загрузчика"
+
+[local.loader_vanilla]
+en = "Vanilla"
+ru = "Vanilla"
+
+[local.loader_fabric]
+en = "Fabric"
+ru = "Fabric"
+
+[local.loader_forge]
+en = "Forge"
+ru = "Forge"
+
+[local.loader_neoforge]
+en = "NeoForge"
+ru = "NeoForge"
+
+[local.create]
+en = "Create"
+ru = "Создать"
+
+[local.show_snapshots]
+en = "Show snapshots"
+ru = "Показывать снимки"
+
+[local.versions_loading_game_versions]
+en = "Loading game versions..."
+ru = "Загрузка версий игры..."
+
+[local.versions_error]
+en = "Failed to load game versions"
+ru = "Не удалось загрузить версии игры"
+
+[local.versions_reload]
+en = "Reload"
+ru = "Повторить"
+
+[local.loader_versions_loading]
+en = "Loading loader versions..."
+ru = "Загрузка версий загрузчика..."
+
+[local.loader_versions_error]
+en = "Failed to load loader versions"
+ru = "Не удалось загрузить версии загрузчика"
 
 [auth.default_launcher_name]
 en = "Potato Launcher"

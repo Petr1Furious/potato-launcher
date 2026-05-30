@@ -100,87 +100,113 @@ pub enum GetExtraForgeLibsError {
     HashFiles(#[from] files::HashFilesError),
 }
 
+struct ParsedExtraLib {
+    source_path: PathBuf,
+    rel_path: String,
+    gav: String,
+}
+
+fn parse_extra_forge_lib(
+    path: &Path,
+    libraries_dir: &Path,
+) -> Result<Option<ParsedExtraLib>, ExtraForgeLibsError> {
+    if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("jar") {
+        return Ok(None);
+    }
+
+    let rel_path = path
+        .strip_prefix(libraries_dir)
+        .map_err(|_| ExtraForgeLibsError::OutsideLibrariesDir(path.to_path_buf()))?;
+    let rel_path_str = rel_path.to_string_lossy().replace('\\', "/");
+
+    let parts = RelativePath::new(&rel_path_str)
+        .components()
+        .map(|x| x.as_str())
+        .collect::<Vec<_>>();
+    if parts.len() < 3 {
+        return Err(ExtraForgeLibsError::InvalidLayout(path.to_path_buf()));
+    }
+    let version = parts[parts.len() - 2].to_string();
+    let artifact = parts[parts.len() - 3].to_string();
+    let group = parts[..parts.len() - 3].join(".");
+    if group.is_empty() {
+        return Err(ExtraForgeLibsError::InvalidLayout(path.to_path_buf()));
+    }
+
+    let file_stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| ExtraForgeLibsError::MissingFileName(path.to_path_buf()))?
+        .to_string();
+    let stem_prefix = format!("{artifact}-{version}");
+    let suffix = file_stem
+        .strip_prefix(&stem_prefix)
+        .ok_or_else(|| ExtraForgeLibsError::BadLibraryName(file_stem.clone()))?
+        .replace("-", ":");
+
+    Ok(Some(ParsedExtraLib {
+        source_path: path.to_path_buf(),
+        rel_path: rel_path_str,
+        gav: format!("{group}:{artifact}:{version}{suffix}"),
+    }))
+}
+
+fn should_include_extra_forge_lib(gav: &str, version_library_names: &HashSet<String>) -> bool {
+    if version_library_names.contains(gav) {
+        return false;
+    }
+    if gav.starts_with("net.neoforged.installertools:installertools:")
+        || gav.starts_with("net.minecraftforge:installertools:")
+    {
+        return false;
+    }
+    true
+}
+
 async fn get_extra_forge_libs(
     extra_forge_libs_paths: &[PathBuf],
     data_dir: &DataDir,
-    download_server_base: Option<&BaseUrl>,
+    download_server_base: &BaseUrl,
+    version_library_names: &HashSet<String>,
 ) -> Result<Vec<Library>, GetExtraForgeLibsError> {
-    struct ParsedExtraLib {
-        source_path: PathBuf,
-        rel_path: String,
-        gav: String,
-    }
-
     let libraries_dir = LibrariesDir::root().to_fs(data_dir);
     let mut parsed_libs = Vec::with_capacity(extra_forge_libs_paths.len());
 
     for path in extra_forge_libs_paths {
-        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("jar") {
+        let Some(parsed) = parse_extra_forge_lib(path, &libraries_dir)? else {
             debug!("Skipping non-jar file: {}", path.display());
             continue;
+        };
+        if !should_include_extra_forge_lib(&parsed.gav, version_library_names) {
+            debug!(
+                "Skipping extra forge lib already covered elsewhere: {}",
+                parsed.gav
+            );
+            continue;
         }
-
-        let rel_path = path
-            .strip_prefix(&libraries_dir)
-            .map_err(|_| ExtraForgeLibsError::OutsideLibrariesDir(path.clone()))?;
-        let rel_path_str = rel_path.to_string_lossy().replace('\\', "/");
-        let rel_path = RelativePath::new(&rel_path_str);
-
-        let parts = rel_path
-            .components()
-            .map(|x| x.as_str())
-            .collect::<Vec<_>>();
-        if parts.len() < 3 {
-            return Err(ExtraForgeLibsError::InvalidLayout(path.clone()).into());
-        }
-        let version = parts[parts.len() - 2].to_string();
-        let artifact = parts[parts.len() - 3].to_string();
-        let group = parts[..parts.len() - 3].join(".");
-        if group.is_empty() {
-            return Err(ExtraForgeLibsError::InvalidLayout(path.clone()).into());
-        }
-
-        let file_stem = path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| ExtraForgeLibsError::MissingFileName(path.clone()))?
-            .to_string();
-        let stem_prefix = format!("{artifact}-{version}");
-        let suffix = file_stem
-            .strip_prefix(&stem_prefix)
-            .ok_or_else(|| ExtraForgeLibsError::BadLibraryName(file_stem.clone()))?
-            .replace("-", ":");
-
-        parsed_libs.push(ParsedExtraLib {
-            source_path: path.clone(),
-            rel_path: rel_path_str,
-            gav: format!("{group}:{artifact}:{version}{suffix}"),
-        });
+        parsed_libs.push(parsed);
     }
 
-    if let Some(download_server_base) = download_server_base {
-        let paths_to_hash = parsed_libs
-            .iter()
-            .map(|lib| lib.source_path.clone())
-            .collect::<Vec<_>>();
-        let hashes = files::hash_files(&paths_to_hash, progress::no_progress_bar()).await?;
-
-        Ok(parsed_libs
-            .into_iter()
-            .zip(hashes)
-            .map(|(lib, sha1)| {
-                let url = LibrariesDir::root()
-                    .library_path(RelativePath::new(&lib.rel_path))
-                    .to_url(download_server_base);
-                Library::from_download(lib.gav, url, sha1)
-            })
-            .collect())
-    } else {
-        Ok(parsed_libs
-            .into_iter()
-            .map(|lib| Library::empty(lib.gav))
-            .collect())
+    if parsed_libs.is_empty() {
+        return Ok(vec![]);
     }
+
+    let paths_to_hash = parsed_libs
+        .iter()
+        .map(|lib| lib.source_path.clone())
+        .collect::<Vec<_>>();
+    let hashes = files::hash_files(&paths_to_hash, progress::no_progress_bar()).await?;
+
+    Ok(parsed_libs
+        .into_iter()
+        .zip(hashes)
+        .map(|(lib, sha1)| {
+            let url = LibrariesDir::root()
+                .library_path(RelativePath::new(&lib.rel_path))
+                .to_url(download_server_base);
+            Library::from_download(lib.gav, url, sha1)
+        })
+        .collect())
 }
 
 pub struct IncludeRule {
@@ -209,6 +235,7 @@ pub struct InstanceGenerator {
     // latest/recommended will be used if not set
     pub loader_version: Option<String>,
 
+    // always present in instance-builder, never present on local instance generation
     pub include_config: Option<IncludeConfig>,
     pub auth_backend: Option<AuthProviderConfig>,
     pub default_xmx: Option<String>,
@@ -276,6 +303,7 @@ impl InstanceGenerator {
         let mut other_generated_files = vec![];
 
         let mut extra_forge_libs = vec![];
+
         match &self.loader {
             Loader::Vanilla => {
                 if self.loader_version.is_some() {
@@ -296,20 +324,27 @@ impl InstanceGenerator {
                 .await?;
                 metadata.push(result.metadata);
 
-                let extra_forge_libs_paths = result
+                let extra_forge_lib_paths = result
                     .extra_libs_copy_tasks
                     .iter()
                     .map(|task| task.source.clone())
                     .collect::<Vec<_>>();
-                extra_forge_libs = get_extra_forge_libs(
-                    &extra_forge_libs_paths,
-                    &DataDir::new(result.installer_work_dir),
-                    self.include_config
-                        .as_ref()
-                        .map(|config| &config.download_server_base),
-                )
-                .await?;
                 copy_tasks.extend(result.extra_libs_copy_tasks);
+
+                if let Some(include_config) = self.include_config.as_ref() {
+                    let version_library_names = metadata
+                        .iter()
+                        .flat_map(|version| version.libraries.iter())
+                        .map(|library| library.get_full_name())
+                        .collect();
+                    extra_forge_libs = get_extra_forge_libs(
+                        &extra_forge_lib_paths,
+                        &DataDir::new(result.installer_work_dir),
+                        &include_config.download_server_base,
+                        &version_library_names,
+                    )
+                    .await?;
+                }
             }
             Loader::Fabric => {
                 let result =

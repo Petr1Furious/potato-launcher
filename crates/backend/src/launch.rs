@@ -194,7 +194,6 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
 
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
         use winapi::um::winbase::CREATE_NO_WINDOW;
 
         command.creation_flags(CREATE_NO_WINDOW);

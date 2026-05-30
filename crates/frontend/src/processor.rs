@@ -102,6 +102,25 @@ impl Processor {
                     .notifications
                     .update(cx, |entries, cx| entries.push(level, message, cx));
             }
+            MessageToFrontend::LocalCreateVersionsUpdated {
+                versions,
+                latest_release,
+                error,
+            } => {
+                self.data.local_create.update(cx, |entries, cx| {
+                    entries.apply_minecraft_versions(versions, latest_release, error, cx);
+                });
+            }
+            MessageToFrontend::LoaderVersionsUpdated {
+                minecraft_version,
+                loader,
+                versions,
+                error,
+            } => {
+                self.data.local_create.update(cx, |entries, cx| {
+                    entries.apply_loader_versions(minecraft_version, loader, versions, error, cx);
+                });
+            }
             MessageToFrontend::Quit => {
                 cx.quit();
             }
