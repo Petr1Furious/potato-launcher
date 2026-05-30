@@ -3,12 +3,12 @@
 pub static LANG: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 pub fn set_lang(name: &str) {
-	let id = match name {
-		"en" => 0,
-		"ru" => 1,
-		_ => 0,
-	};
-	LANG.store(id, std::sync::atomic::Ordering::Relaxed);
+    let id = match name {
+        "en" => 0,
+        "ru" => 1,
+        _ => 0,
+    };
+    LANG.store(id, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub mod accounts {
@@ -539,7 +539,9 @@ pub mod instances {
     pub fn launch_blocked() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Выберите подходящий аккаунт или переопределение аккаунта перед запуском.",
-            _ => "Select a compatible account or choose an instance account override before launching.",
+            _ => {
+                "Select a compatible account or choose an instance account override before launching."
+            }
         }
     }
     pub fn launching() -> &'static str {
@@ -562,7 +564,9 @@ pub mod instances {
     }
     pub fn no_instances_hint() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Откройте «Бэкенды», чтобы добавить URL манифеста, или создайте локальный инстанс позже.",
+            1 => {
+                "Откройте «Бэкенды», чтобы добавить URL манифеста, или создайте локальный инстанс позже."
+            }
             _ => "Open Backends to add a manifest URL, or create a local instance later.",
         }
     }

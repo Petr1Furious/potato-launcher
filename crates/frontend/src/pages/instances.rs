@@ -16,20 +16,17 @@ use gpui_component::{
 use launcher_auth::providers::{
     AuthProviderConfig, ElyByAuthProvider, MicrosoftAuthProvider, TGAuthProvider,
 };
-use launcher_i18n as t;
 use launcher_bridge::{
-    AccountView, BackendFetchState, BackendStatus, BackendSender, InstanceLiveStatus,
+    AccountView, BackendFetchState, BackendSender, BackendStatus, InstanceLiveStatus,
     InstanceOrigin, InstanceView, LauncherSettingsView, MessageToBackend, NotificationLevel,
 };
+use launcher_i18n as t;
 use url::Url;
 use uuid::Uuid;
 
 use crate::entity::{
-    DataEntities,
-    account::AccountsUpdatedEvent,
-    backend::BackendsUpdatedEvent,
-    instance::InstancesUpdatedEvent,
-    notification::NotificationEntries,
+    DataEntities, account::AccountsUpdatedEvent, backend::BackendsUpdatedEvent,
+    instance::InstancesUpdatedEvent, notification::NotificationEntries,
     settings::LauncherSettingsUpdatedEvent,
 };
 
@@ -62,27 +59,33 @@ impl InstancesPage {
             .subscribe(&data.instances, |_, _, _: &InstancesUpdatedEvent, cx| {
                 cx.notify()
             });
-        let _backends_subscription =
-            cx.subscribe(&data.backends, |_, _, _: &BackendsUpdatedEvent, cx| cx.notify());
-        let _accounts_subscription =
-            cx.subscribe(&data.accounts, |_, _, _: &AccountsUpdatedEvent, cx| cx.notify());
-        let _settings_subscription = cx
-            .subscribe(&data.settings, |_, _, _: &LauncherSettingsUpdatedEvent, cx| {
+        let _backends_subscription = cx
+            .subscribe(&data.backends, |_, _, _: &BackendsUpdatedEvent, cx| {
                 cx.notify()
             });
-        let backend_url_input = cx
-            .new(|cx| InputState::new(window, cx).placeholder(t::placeholders::manifest_url()));
-        let offline_nickname_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::offline_nickname()));
-        let telegram_base_url_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::telegram_auth_base_url()));
+        let _accounts_subscription = cx
+            .subscribe(&data.accounts, |_, _, _: &AccountsUpdatedEvent, cx| {
+                cx.notify()
+            });
+        let _settings_subscription = cx.subscribe(
+            &data.settings,
+            |_, _, _: &LauncherSettingsUpdatedEvent, cx| cx.notify(),
+        );
+        let backend_url_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::manifest_url()));
+        let offline_nickname_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder(t::placeholders::offline_nickname()));
+        let telegram_base_url_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t::placeholders::telegram_auth_base_url())
+        });
         let elyby_client_id_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::client_id()));
         let elyby_client_secret_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::client_secret()));
         let elyby_launcher_name_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::launcher_name()));
-        let memory_input = cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::memory_mib()));
+        let memory_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::memory_mib()));
         let jvm_flags_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::jvm_flags()));
 
@@ -175,16 +178,17 @@ impl Render for InstancesPage {
 
         let mut sections = Vec::new();
         if let Some(local) = groups.local
-            && !local.is_empty() {
-                sections.push(section(
-                    t::common::local().to_string(),
-                    None,
-                    local,
-                    launcher_settings.hide_usernames_in_cards,
-                    &self.data.backend_sender,
-                    cx,
-                ));
-            }
+            && !local.is_empty()
+        {
+            sections.push(section(
+                t::common::local().to_string(),
+                None,
+                local,
+                launcher_settings.hide_usernames_in_cards,
+                &self.data.backend_sender,
+                cx,
+            ));
+        }
 
         for backend in &backends {
             let instances = groups
@@ -232,9 +236,7 @@ impl Render for InstancesPage {
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(
-                            t::instances::no_instances_hint(),
-                        ),
+                        .child(t::instances::no_instances_hint()),
                 )
                 .into_any_element()
         } else {
@@ -397,7 +399,9 @@ impl InstancesPage {
                                         notifications.update(cx, |entries, cx| {
                                             entries.push(
                                                 NotificationLevel::Error,
-                                                t::notifications::failed_open_instance_folder(err.to_string()),
+                                                t::notifications::failed_open_instance_folder(
+                                                    err.to_string(),
+                                                ),
                                                 cx,
                                             );
                                         });
@@ -510,7 +514,9 @@ impl InstancesPage {
                             div()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(t::accounts::suggested_account_needs(provider_label(provider))),
+                                .child(t::accounts::suggested_account_needs(provider_label(
+                                    provider,
+                                ))),
                         )
                         .child(add_provider_button(
                             provider.clone(),
@@ -1097,7 +1103,9 @@ fn account_detail_sections(
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(t::accounts::required_provider(provider_label(required_provider))),
+                    .child(t::accounts::required_provider(provider_label(
+                        required_provider,
+                    ))),
             )
             .when(matching_accounts.is_empty(), |this| {
                 this.child(
@@ -1182,7 +1190,11 @@ fn account_select_row(
                 account.key.0,
                 account.key.1
             ))
-            .label(if selected { t::common::selected() } else { t::common::select() })
+            .label(if selected {
+                t::common::selected()
+            } else {
+                t::common::select()
+            })
             .disabled(selected)
             .on_click(move |_, _, _| {
                 if override_account {
@@ -1332,7 +1344,11 @@ fn launcher_settings_section(
                 .child(
                     v_flex()
                         .min_w_0()
-                        .child(div().font_semibold().child(t::settings::hide_after_launch_title()))
+                        .child(
+                            div()
+                                .font_semibold()
+                                .child(t::settings::hide_after_launch_title()),
+                        )
                         .child(
                             div()
                                 .text_xs()
@@ -1371,7 +1387,11 @@ fn launcher_settings_section(
                 .child(
                     v_flex()
                         .min_w_0()
-                        .child(div().font_semibold().child(t::settings::hide_usernames_title()))
+                        .child(
+                            div()
+                                .font_semibold()
+                                .child(t::settings::hide_usernames_title()),
+                        )
                         .child(
                             div()
                                 .text_xs()

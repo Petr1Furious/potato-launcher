@@ -30,5 +30,8 @@ fn normalize_code(code: &str) -> &'static str {
 }
 
 fn primary_subtag(locale: &str) -> Option<&str> {
-    locale.split(['-', '_']).next().filter(|part| !part.is_empty())
+    locale
+        .split(['-', '_'])
+        .next()
+        .filter(|part| !part.is_empty())
 }

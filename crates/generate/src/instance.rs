@@ -395,11 +395,12 @@ impl InstanceGenerator {
 
         let mut resources_url_base = ResourcesUrlBase::default();
         if let Some(include_config) = &self.include_config
-            && include_config.replace_download_urls {
-                resources_url_base = AssetsDir::root()
-                    .assets_object_dir()
-                    .to_resources_url_base(&include_config.download_server_base);
-            }
+            && include_config.replace_download_urls
+        {
+            resources_url_base = AssetsDir::root()
+                .assets_object_dir()
+                .to_resources_url_base(&include_config.download_server_base);
+        }
 
         let authlib_injector = default_authlib_injector_library();
         check_tasks.extend(authlib_injector.get_check_tasks(output_dir, os_arch)?);
