@@ -9,6 +9,6 @@ sys-locale = "0.3.2"
 
 [build-dependencies]
 indexmap = "2.14.0"
-toml = "1.1.2"
+toml.workspace = true
 
 [dev-dependencies]

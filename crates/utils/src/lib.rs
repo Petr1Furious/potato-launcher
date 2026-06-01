@@ -2,6 +2,7 @@ pub mod adaptive_download;
 pub mod files;
 pub mod java;
 pub mod logging;
+pub mod mod_id;
 pub mod paths;
 pub mod progress;
 
