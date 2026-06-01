@@ -27,6 +27,9 @@ zip.workspace = true
 futures.workspace = true
 flate2.workspace = true
 tar.workspace = true
+either.workspace = true
+serde-saphyr = "0.0.27"
+toml_edit = "0.25.12"
 
 [dev-dependencies]
 tempfile = "3"

@@ -16,7 +16,7 @@ use utils::{
 use crate::{
     assets::{AssetIndex, AssetsMetadata, AssetsMetadataError},
     authlib::default_authlib_injector_library,
-    instance_metadata::InstanceMetadata,
+    instance_metadata::{InstanceMetadata, ModsUpdateBehavior},
 };
 
 use super::manifest::VersionMetadataInfo;
@@ -255,6 +255,7 @@ impl Download {
         CheckTask {
             url: self.url.clone(),
             remote_sha1: (!self.sha1.is_empty()).then(|| self.sha1.clone()),
+            remote_size: None,
             path: path.to_path_buf(),
         }
     }
@@ -503,6 +504,7 @@ impl Library {
                     .join(self.get_rel_path()?.as_str())
                     .map_err(|source| self.map_url_error(source))?,
                 remote_sha1: self.sha1.clone(),
+                remote_size: None,
                 path: self.get_path(data_dir)?,
             }))
         }
@@ -729,6 +731,8 @@ impl VersionMetadata {
             name: self.id.clone(),
             auth_backend: None,
             include: vec![],
+            mod_entries: vec![],
+            mods_update_behavior: ModsUpdateBehavior::default(),
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: vec![],
             authlib_injector: default_authlib_injector_library(),

@@ -6,15 +6,20 @@ use std::{
     sync::Arc,
 };
 
+use either::Either;
 use instance::{
-    instance_metadata::InstanceMetadata, manifest::InstanceManifestEntry, storage::LocalInstance,
-    storage::RemoteSource,
+    instance_metadata::{
+        ConfigType, IncludeAction, IncludeActionConfigOptions, IncludeActionDirectory,
+        IncludeEntry, InstanceMetadata, Object,
+    },
+    manifest::InstanceManifestEntry,
+    storage::{LocalInstance, RemoteSource},
 };
 use launcher_bridge::{FrontendSender, MessageToFrontend};
 use tokio::sync::mpsc;
 use url::Url;
 use utils::{
-    adaptive_download, files, java,
+    adaptive_download, files::{self, CheckTask}, java,
     paths::{DataDir, InstanceDirFS, InstancesDir, NativesDir},
     progress::{
         ProgressEvent, ProgressHandle, ProgressReporter, ProgressStage, ProgressTracker, Unit,
@@ -262,6 +267,191 @@ async fn install_metadata(
     Ok(metadata)
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum ApplyIncludesError {
+    #[error("failed to delete file: {0}")]
+    DeleteFileError(std::io::Error),
+    #[error("failed to read config file: {0}")]
+    ReadConfigError(std::io::Error),
+    #[error("failed to write config file: {0}")]
+    WriteConfigError(std::io::Error),
+    #[error("failed to parse/serialize config file: {0}")]
+    ParseJsonConfigError(#[from] serde_json::Error),
+    #[error("failed to parse/serialize config file: {0}")]
+    ParseYamlConfigError(#[from] serde_saphyr::Error),
+    #[error("failed to parse config file: {0}")]
+    SerializeYamlConfigError(#[from] serde_saphyr::ser::Error),
+    #[error("failed to serialize config file: {0}")]
+    ParseTomlConfigError(#[from] toml_edit::TomlError),
+    #[error("invalid config file structure: {0}")]
+    ConfigStructureError(String),
+}
+
+async fn apply_config_options(
+    path: &Path,
+    action: &IncludeActionConfigOptions,
+) -> Result<(), ApplyIncludesError> {
+    let contents = if path.exists() {
+        tokio::fs::read_to_string(path)
+            .await
+            .map_err(ApplyIncludesError::ReadConfigError)?
+    } else {
+        match action.config_type {
+            ConfigType::Json => "{}".to_string(),
+            ConfigType::Yaml => "---\n".to_string(),
+            ConfigType::Toml => "".to_string(),
+            ConfigType::Properties => "".to_string(),
+        }
+    };
+    // TODO: better errors
+    let new_contents = match action.config_type {
+        ConfigType::Json | ConfigType::Yaml => {
+            let mut value: serde_json::Value = match action.config_type {
+                ConfigType::Json => serde_json::from_str(&contents)?,
+                ConfigType::Yaml => serde_saphyr::from_str(&contents)?,
+                _ => unreachable!(),
+            };
+            for option in &action.options {
+                let mut current = &mut value;
+                for key in option.key.clone() {
+                    match key {
+                        Either::Left(key) => {
+                            current = current
+                                .as_object_mut()
+                                .ok_or_else(|| {
+                                    ApplyIncludesError::ConfigStructureError(
+                                        "expected object".into(),
+                                    )
+                                })?
+                                .entry(key)
+                                .or_insert(serde_json::Value::Null);
+                        }
+                        Either::Right(index) => {
+                            let array = current.as_array_mut().ok_or_else(|| {
+                                ApplyIncludesError::ConfigStructureError("expected array".into())
+                            })?;
+                            let len = array.len();
+                            if index == len {
+                                array.push(serde_json::Value::Null);
+                            } else if index > len {
+                                return Err(ApplyIncludesError::ConfigStructureError(
+                                    "cannot access index".into(),
+                                ));
+                            }
+                            current = array.get_mut(index).expect("array element should exist");
+                        }
+                    }
+                }
+                *current = option.value.clone();
+            }
+            match action.config_type {
+                ConfigType::Json => serde_json::to_string_pretty(&value)?,
+                ConfigType::Yaml => serde_saphyr::to_string(&value)?,
+                _ => unreachable!(),
+            }
+        }
+        ConfigType::Toml => {
+            todo!()
+            // let mut document = contents.parse::<toml_edit::DocumentMut>()?;
+            // for option in &action.options {
+            //     let mut curr = document.as_item_mut();
+            //     for &key in &option.key {
+            //         match key {
+            //             Either::Left(key) => {
+            //                 curr = curr
+            //                     .as_table_like_mut()
+            //                     .ok_or_else(|| ApplyIncludesError::ConfigStructureError("expected table".into()))?
+            //                     .entry(key)
+            //                     .or_insert(toml_edit::Item::None);
+            //             }
+            //             Either::Right(index) => {
+            //                 // If the length is n - 1, insert a new value
+            //                 let array = curr
+            //                     .as_array_mut()
+            //                     .ok_or_else(|| ApplyIncludesError::ConfigStructureError("expected array".into()))?;
+            //                 let len = array.len();
+            //                 curr = array
+            //                     .get_mut(*index)
+            //                     .or_else(|| {
+            //                         if *index == len {
+            //                             array.push(toml_edit::Item::None);
+            //                             array.last_mut()
+            //                         } else {
+            //                             None
+            //                         }
+            //                     })
+            //                     .ok_or_else(|| ApplyIncludesError::ConfigStructureError("cannot access index".into()))?;
+            //             }
+            //         }
+            //     }
+            // }
+        }
+        ConfigType::Properties => todo!(),
+    };
+    tokio::fs::write(path, new_contents)
+        .await
+        .map_err(ApplyIncludesError::WriteConfigError)
+}
+
+fn include_object_task(object: &Object, minecraft_dir: &Path) -> CheckTask {
+    CheckTask {
+        url: object.url.clone(),
+        remote_sha1: Some(object.sha1.clone()),
+        remote_size: None,
+        path: object.path.to_path(minecraft_dir),
+    }
+}
+
+/// Processes the include entries, applying file deletions and patches immediately
+/// and returning Vec<CheckTask> of files that need to be updated from the server.
+async fn apply_includes(
+    metadata: &InstanceMetadata,
+    force_overwrite: bool,
+    minecraft_dir: &Path,
+) -> Result<Vec<CheckTask>, ApplyIncludesError> {
+    let mut check_tasks = Vec::new();
+    let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+
+    let mut include_file = |object: &Object, path: &Path, overwrite: bool| {
+        if overwrite || !path.exists() {
+            check_tasks.push(include_object_task(object, minecraft_dir));
+        }
+    };
+
+    // includes are sorted from the most specific to the less specific by the generator.
+    // seen_paths is only used to avoid deleting files included by more specific rules,
+    // preventing object intersections is done by the generator
+    for entry in &metadata.include {
+        match &entry.action {
+            IncludeAction::File(action) => {
+                let path = action.object.path.to_path(minecraft_dir);
+                include_file(&action.object, &path, action.overwrite);
+                seen_paths.insert(path);
+            }
+            IncludeAction::ConfigOptions(action) => {
+                apply_config_options(minecraft_dir, &action).await?
+            }
+            IncludeAction::Directory(action) => {
+                for object in action.objects.iter() {
+                    let path = object.path.to_path(minecraft_dir);
+                    include_file(object, &path, action.overwrite);
+                    seen_paths.insert(path);
+                }
+                if action.delete_extra || force_overwrite {
+                    let dir_path = entry.path.to_path(minecraft_dir);
+                    for file in files::get_files_ignore_paths(&dir_path, &seen_paths) {
+                        tokio::fs::remove_file(file)
+                            .await
+                            .map_err(|e| ApplyIncludesError::DeleteFileError(e))?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(check_tasks)
+}
+
 pub(crate) async fn install_game_files(
     client: &reqwest::Client,
     metadata: &InstanceMetadata,
@@ -270,14 +460,13 @@ pub(crate) async fn install_game_files(
     force_overwrite: bool,
     progress: &BackendProgressReporter,
 ) -> anyhow::Result<()> {
-    let check_tasks = metadata
-        .get_install_check_tasks(
-            client,
-            data_dir,
-            &instance_dir.minecraft_dir(),
-            force_overwrite,
-        )
-        .await?;
+    let mut check_tasks = Vec::new();
+    check_tasks.push(metadata.get_client_check_task(data_dir)?);
+    check_tasks.extend(metadata.get_library_check_tasks(data_dir)?);
+    check_tasks.extend(metadata.get_asset_check_tasks(client, data_dir).await?);
+    check_tasks
+        .extend(apply_includes(metadata, force_overwrite, &instance_dir.minecraft_dir()).await?);
+    let check_tasks = files::dedup_check_tasks(check_tasks);
 
     let check_progress = progress.handle(
         ProgressStage::Checking,
@@ -553,4 +742,105 @@ mod tests {
         assert_eq!(plan.dir_name, "Vanilla");
         assert!(plan.existing.is_some());
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_metadata(include: Vec<IncludeEntry>, mod_entries: Vec<ModEntry>) -> InstanceMetadata {
+        InstanceMetadata {
+            name: "Test".to_string(),
+            auth_backend: None,
+            include,
+            mods_update_behavior: ModsUpdateBehavior::Lenient,
+            mod_entries,
+            resources_url_base: ResourcesUrlBase::default(),
+            extra_forge_libs: Vec::new(),
+            authlib_injector: crate::authlib::default_authlib_injector_library(),
+            default_xmx: None,
+            versions: Vec::new(),
+            overrides_applied: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn include_tasks_respect_completion_marker_for_incremental_rules() {
+        let dir =
+            std::env::temp_dir().join(format!("potato-install-test-{}", uuid::Uuid::new_v4()));
+        let include_dir = dir.join("config");
+        tokio::fs::create_dir_all(&include_dir).await.unwrap();
+        tokio::fs::write(include_dir.join(COMPLETION_MARKER_FILE), b"")
+            .await
+            .unwrap();
+        tokio::fs::write(include_dir.join("options.txt"), b"present")
+            .await
+            .unwrap();
+
+        let metadata = empty_metadata(
+            vec![IncludeEntry {
+                path: RelativePathBuf::from("config"),
+                apply_on: ApplyOn::Update,
+                action: IncludeAction::Directory(IncludeActionDirectory {
+                    overwrite: false,
+                    delete_extra: true,
+                    skip_if_dir_exists: true,
+                    objects: vec![Object {
+                        path: RelativePathBuf::from("config/options.txt"),
+                        sha1: "abc".to_string(),
+                        size: None,
+                        url: Url::parse("https://example.com/options.txt").unwrap(),
+                    }],
+                }),
+            }],
+            vec![],
+        );
+
+        let tasks = apply_includes(&metadata, false, &dir).await.unwrap();
+
+        assert!(tasks.is_empty());
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    #[tokio::test]
+    async fn include_tasks_force_overwrite_even_when_file_exists() {
+        let dir =
+            std::env::temp_dir().join(format!("potato-install-test-{}", uuid::Uuid::new_v4()));
+        let include_dir = dir.join("config");
+        tokio::fs::create_dir_all(&include_dir).await.unwrap();
+        tokio::fs::write(include_dir.join("options.txt"), b"present")
+            .await
+            .unwrap();
+
+        let metadata = empty_metadata(
+            vec![IncludeEntry {
+                path: RelativePathBuf::from("config"),
+                apply_on: ApplyOn::Update,
+                action: IncludeAction::Directory(IncludeActionDirectory {
+                    overwrite: false,
+                    delete_extra: true,
+                    skip_if_dir_exists: true,
+                    objects: vec![Object {
+                        path: RelativePathBuf::from("config/options.txt"),
+                        sha1: "abc".to_string(),
+                        size: None,
+                        url: Url::parse("https://example.com/options.txt").unwrap(),
+                    }],
+                }),
+            }],
+            vec![],
+        );
+
+        let tasks = apply_includes(&metadata, true, &dir).await.unwrap();
+
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].path, include_dir.join("options.txt"));
+        let _ = tokio::fs::remove_dir_all(dir).await;
+    }
+
+    // TODO: test for mods
+    // TODO: test for other include options:
+    // TODO:   - more-specific rules override less-specific ones
+    // TODO:   - delete_extra
+    // TODO:   - partial configs
 }

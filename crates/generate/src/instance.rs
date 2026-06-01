@@ -1,6 +1,6 @@
 use instance::{
     authlib::default_authlib_injector_library,
-    instance_metadata::{Include, InstanceMetadata, Object},
+    instance_metadata::{IncludeAction, IncludeEntry, InstanceMetadata, ModsUpdateBehavior, Object},
     manifest::VanillaVersionManifest,
     overrides::with_overrides,
     version_metadata::{Library, OsArch, VersionMetadata},
@@ -9,9 +9,9 @@ use launcher_auth::providers::AuthProviderConfig;
 use log::{debug, info, warn};
 use relative_path::{RelativePath, RelativePathBuf};
 use reqwest::Client;
+use serde::Deserialize;
 use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
+    collections::HashSet, os::unix::fs::MetadataExt, path::{Path, PathBuf}
 };
 use url::Url;
 use utils::{
@@ -31,7 +31,8 @@ lazy_static::lazy_static! {
     pub static ref VANILLA_MANIFEST_URL: Url = Url::parse("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json").unwrap();
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Loader {
     Vanilla,
     Fabric,
@@ -39,26 +40,33 @@ pub enum Loader {
     Neoforge,
 }
 
+enum CheckType {
+    Hash,
+    Size,
+}
+
 async fn get_objects(
-    from_base_path: &Path,
-    path: &Path,
+    base_path: &Path,
+    path: &RelativePathBuf,
     base_url: &BaseUrl,
     instance_dir: &InstanceDir,
-    existing_paths: &HashSet<PathBuf>,
+    ignore_paths: &HashSet<PathBuf>,
 ) -> Result<Vec<Object>, GetObjectsError> {
-    let files = files::get_files_ignore_paths(path, existing_paths)?;
+    let full_path = path.to_path(base_path);
+    let files = files::get_files_ignore_paths(&full_path, ignore_paths);
     let hashes = files::hash_files(&files, progress::no_progress_bar()).await?;
 
     let mut objects = Vec::with_capacity(files.len());
     for (path, hash) in files.iter().zip(hashes.iter()) {
-        let object_path = RelativePathBuf::from_path(path.strip_prefix(from_base_path)?)?;
+        let object_path = RelativePathBuf::from_path(path.strip_prefix(base_path)?)?;
         let object_url = instance_dir
             .minecraft_dir()
             .instance_object_path(&object_path)
             .to_url(base_url);
         objects.push(Object {
-            path: object_path,
+            path: object_path.clone(),
             sha1: hash.clone(),
+            size: Some(tokio::fs::metadata(path).await?.size()),
             url: object_url,
         });
     }
@@ -209,36 +217,42 @@ async fn get_extra_forge_libs(
         .collect())
 }
 
-pub struct IncludeRule {
-    pub path: RelativePathBuf,
-
-    pub overwrite: bool,
-    pub delete_extra: bool,
-    pub recursive: bool,
+fn vanilla() -> Loader {
+    Loader::Vanilla
 }
 
-pub struct IncludeConfig {
-    pub include_rules: Vec<IncludeRule>,
-    pub include_from: Option<PathBuf>,
+#[derive(Deserialize, Clone)]
+pub struct InstanceSpec {
+    pub name: String,
+    pub minecraft_version: String,
+    #[serde(default = "vanilla")]
+    pub loader: Loader,
+    /// latest/recommended will be used if not set
+    pub loader_version: Option<String>,
+
+    pub source_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub include_rules: Vec<IncludeEntry>,
+    #[serde(default)]
+    pub mods_update_behavior: ModsUpdateBehavior,
+
+    pub auth_backend: Option<AuthProviderConfig>,
+    pub default_xmx: Option<String>,
+}
+
+pub struct RemoteConfig {
     pub download_server_base: BaseUrl,
-    // Whether to download all files and replace
-    // artifact URLs with the download server base
+    /// Whether to download all files and replace
+    /// artifact URLs with the download server base
     pub replace_download_urls: bool,
 }
 
 pub struct InstanceGenerator {
     pub client: Client,
-    pub instance_name: String,
-    pub minecraft_version: String,
-    pub loader: Loader,
-
-    // latest/recommended will be used if not set
-    pub loader_version: Option<String>,
-
-    // always present in instance-builder, never present on local instance generation
-    pub include_config: Option<IncludeConfig>,
-    pub auth_backend: Option<AuthProviderConfig>,
-    pub default_xmx: Option<String>,
+    pub spec: InstanceSpec,
+    /// If absent, includes won't be processed
+    /// Always present in instance-builder, never present on local instance generation
+    pub remote_config: Option<RemoteConfig>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -259,6 +273,8 @@ pub enum GenerateError {
     GetObjects(#[from] GetObjectsError),
     #[error("failed while building authlib-injector check tasks: {0}")]
     AuthlibLibrary(#[from] instance::version_metadata::LibraryError),
+    #[error("include file not found: {0}")]
+    IncludeFileNotFound(String),
 }
 
 pub struct GeneratorResult {
@@ -289,7 +305,7 @@ impl InstanceGenerator {
         let vanilla_manifest =
             VanillaVersionManifest::fetch(&self.client, &VANILLA_MANIFEST_URL).await?;
         let metadata_info = vanilla_manifest
-            .get_entry(&self.minecraft_version)
+            .get_entry(&self.spec.minecraft_version)
             .ok_or(GenerateError::VanillaVersionNotFound)?
             .to_metadata_info();
 
@@ -304,21 +320,21 @@ impl InstanceGenerator {
 
         let mut extra_forge_libs = vec![];
 
-        match &self.loader {
+        match &self.spec.loader {
             Loader::Vanilla => {
-                if self.loader_version.is_some() {
+                if self.spec.loader_version.is_some() {
                     warn!("Ignoring loader version for vanilla version");
                 }
             }
             Loader::Forge | Loader::Neoforge => {
                 let result = ForgeGenerator::new(
                     vanilla_metadata,
-                    if self.loader == Loader::Forge {
+                    if self.spec.loader == Loader::Forge {
                         forge::Loader::Forge
                     } else {
                         forge::Loader::Neoforge
                     },
-                    self.loader_version.clone(),
+                    self.spec.loader_version.clone(),
                 )
                 .generate(&self.client, output_dir, work_dir)
                 .await?;
@@ -331,7 +347,8 @@ impl InstanceGenerator {
                     .collect::<Vec<_>>();
                 copy_tasks.extend(result.extra_libs_copy_tasks);
 
-                if let Some(include_config) = self.include_config.as_ref() {
+                // TODO: is it okay to silently skip this?
+                if let Some(include_config) = self.remote_config.as_ref() {
                     let version_library_names = metadata
                         .iter()
                         .flat_map(|version| version.libraries.iter())
@@ -347,10 +364,12 @@ impl InstanceGenerator {
                 }
             }
             Loader::Fabric => {
-                let result =
-                    FabricGenerator::new(&self.minecraft_version, self.loader_version.clone())
-                        .generate(&self.client)
-                        .await?;
+                let result = FabricGenerator::new(
+                    &self.spec.minecraft_version,
+                    self.spec.loader_version.clone(),
+                )
+                .generate(&self.client)
+                .await?;
                 metadata.push(result);
             }
         };
@@ -360,8 +379,8 @@ impl InstanceGenerator {
         }
 
         let mut include = vec![];
-        if let Some(include_config) = &self.include_config {
-            if include_config.replace_download_urls {
+        if let Some(remote_config) = &self.remote_config {
+            if remote_config.replace_download_urls {
                 for metadata in metadata.iter() {
                     check_tasks.extend(
                         metadata
@@ -385,51 +404,69 @@ impl InstanceGenerator {
                 }
             }
 
-            if let Some(from) = &include_config.include_from {
+            if let Some(source_dir) = &self.spec.source_dir {
                 let mut existing_paths = HashSet::new();
-                for rule in include_config.include_rules.iter() {
-                    let objects = get_objects(
-                        from,
-                        &rule.path.to_path(from),
-                        &include_config.download_server_base,
-                        instance_dir.rel(),
-                        &existing_paths,
-                    )
-                    .await?;
-                    if objects.is_empty() {
-                        warn!("No objects found for rule: {}", rule.path);
+                for rule in self.spec.include_rules.iter() {
+                    // TODO: handle different ApplyOn independently?
+                    match rule.action {
+                        IncludeAction::File(..) | IncludeAction::Directory(..) => {
+                            let objects = get_objects(
+                                source_dir,
+                                &rule.path,
+                                &remote_config.download_server_base,
+                                instance_dir.rel(),
+                                &existing_paths,
+                            )
+                            .await?;
+                            if objects.is_empty() {
+                                warn!("No objects found for rule: {}", rule.path);
+                            }
+                            copy_tasks.extend(objects.iter().map(|object| CopyTask {
+                                source: object.path.to_path(source_dir),
+                                target: object.path.to_path(instance_dir.minecraft_dir()),
+                            }));
+                            let mut entry = rule.clone();
+                            // TODO: error if object/objects already set
+                            match &mut entry.action {
+                                IncludeAction::File(action) => {
+                                    action.object = objects.into_iter().next().ok_or_else(|| {
+                                        GenerateError::IncludeFileNotFound(rule.path.to_string())
+                                    })?;
+                                }
+                                IncludeAction::Directory(action) => {
+                                    action.objects = objects;
+                                }
+                                _ => unreachable!(),
+                            }
+                            include.push(entry);
+                        }
+                        IncludeAction::ConfigOptions(..) => {
+                            include.push(rule.clone());
+                        }
                     }
-                    copy_tasks.extend(objects.iter().map(|object| CopyTask {
-                        source: object.path.to_path(from),
-                        target: object.path.to_path(instance_dir.minecraft_dir()),
-                    }));
-                    include.push(Include {
-                        path: rule.path.clone(),
-                        overwrite: rule.overwrite,
-                        delete_extra: rule.delete_extra,
-                        recursive: rule.recursive,
-                        objects,
-                    });
-                    existing_paths.insert(rule.path.to_path(from));
+                    // TODO: do we do this for ConfigOptions?
+                    // TODO: do we include all the files for Directory?
+                    // TODO:   this is useful when there is a directory and a subdirectory include
+                    existing_paths.insert(rule.path.to_path(source_dir));
                 }
             } else {
-                warn!("Ignoring include rules, include_from is not set");
+                warn!("Ignoring include rules, source_dir is not set");
             }
 
-            if include_config.replace_download_urls {
+            if remote_config.replace_download_urls {
                 let vanilla_metadata = metadata.first_mut().expect("Vanilla metadata present");
                 info!(
                     "Replacing download URLs in metadata for {}",
                     &vanilla_metadata.id
                 );
                 *vanilla_metadata = vanilla_metadata
-                    .with_replaced_download_urls(&include_config.download_server_base, output_dir)
+                    .with_replaced_download_urls(&remote_config.download_server_base, output_dir)
                     .await?;
             }
         }
 
         let mut resources_url_base = ResourcesUrlBase::default();
-        if let Some(include_config) = &self.include_config
+        if let Some(include_config) = &self.remote_config
             && include_config.replace_download_urls
         {
             resources_url_base = AssetsDir::root()
@@ -442,13 +479,15 @@ impl InstanceGenerator {
 
         Ok(GeneratorResult {
             metadata: InstanceMetadata {
-                name: self.instance_name,
-                auth_backend: self.auth_backend,
+                name: self.spec.name,
+                auth_backend: self.spec.auth_backend,
                 include,
+                mod_entries: todo!(),
+                mods_update_behavior: self.spec.mods_update_behavior,
                 resources_url_base,
                 extra_forge_libs,
                 authlib_injector,
-                default_xmx: self.default_xmx,
+                default_xmx: self.spec.default_xmx,
                 versions: metadata,
                 overrides_applied: true,
             },

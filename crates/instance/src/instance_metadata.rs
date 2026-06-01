@@ -1,8 +1,9 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
 };
 
+use either::Either;
 use relative_path::RelativePathBuf;
 use serde::{Deserialize, Serialize};
 
@@ -30,36 +31,96 @@ use super::{
 
 const COMPLETION_MARKER_FILE: &str = ".download_complete";
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Object {
     pub path: RelativePathBuf,
     pub sha1: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
     pub url: Url,
 }
 
-fn yes() -> bool {
-    true
+#[derive(Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigType {
+    Json,
+    Yaml,
+    Toml,
+    Properties,
 }
 
-/// A single include rule for a file or a directory
-/// Has rules for what to do when file/directory contents differ from the remote
-#[derive(Deserialize, Serialize)]
-pub struct Include {
-    pub path: RelativePathBuf,
+#[derive(Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplyOn {
+    Update,
+    Always,
+}
 
-    // TODO rewrite
-    #[serde(default = "yes")]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IncludeActionFile {
+    pub object: Object,
     pub overwrite: bool,
+}
 
-    #[serde(default = "yes")]
-    pub delete_extra: bool,
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ConfigOption {
+    // TODO: untagged Either serialization
+    pub key: Vec<Either<String, usize>>,
+    pub value: serde_json::Value,
+}
 
-    #[serde(default)]
-    pub recursive: bool,
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IncludeActionConfigOptions {
+    pub config_type: ConfigType,
+    pub options: Vec<ConfigOption>,
+    pub overwrite: bool,
+}
 
-    /// contails either the file or all files in the directory
-    #[serde(default)]
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IncludeActionDirectory {
     pub objects: Vec<Object>,
+    /// Passed through to all files in the directory
+    pub overwrite: bool,
+    /// If true, files in this directory that are not present in the manifest will be deleted
+    pub delete_extra: bool,
+    /// If true, this action will be skipped if the directory already exists and has the completion marker file
+    pub skip_if_dir_exists: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum IncludeAction {
+    File(IncludeActionFile),
+    ConfigOptions(IncludeActionConfigOptions),
+    Directory(IncludeActionDirectory),
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct IncludeEntry {
+    pub path: RelativePathBuf,
+    pub apply_on: ApplyOn,
+    #[serde(flatten)]
+    pub action: IncludeAction,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ModsUpdateBehavior {
+    /// Mods will be validated at every launch,
+    /// any changes by the user will be reverted
+    Strict,
+    /// Same as Strict, but only mod file sizes will be validated
+    StrictFast,
+    /// Mods will only be validated on instance updates, mod additions
+    /// and deletionsby the user will be preserved
+    #[default]
+    Lenient,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ModEntry {
+    pub mod_id: String,
+    pub object: Object,
 }
 
 /// Complete metadata for a single instance.
@@ -77,10 +138,16 @@ pub struct InstanceMetadata {
     pub auth_backend: Option<AuthProviderConfig>,
 
     /// additional files to include with the instance
-    /// (e.g. mods, configs, server.dat, etc.)
+    /// (e.g. configs, server.dat, etc.)
     /// and rules for what to do when file/directory contents differ from the remote
+    // TODO: docs about specificity rules
     #[serde(default)]
-    pub include: Vec<Include>,
+    pub include: Vec<IncludeEntry>,
+
+    #[serde(default)]
+    pub mod_entries: Vec<ModEntry>,
+    #[serde(default)]
+    pub mods_update_behavior: ModsUpdateBehavior,
 
     /// base URL for assets
     /// if not set, the launcher will download assets from Mojang servers
@@ -228,24 +295,6 @@ impl InstanceMetadata {
         self.auth_backend.as_ref()
     }
 
-    pub async fn get_install_check_tasks(
-        &self,
-        client: &reqwest::Client,
-        data_dir: &DataDir,
-        minecraft_dir: &Path,
-        force_overwrite: bool,
-    ) -> Result<Vec<CheckTask>, InstanceMetadataError> {
-        let mut check_tasks = Vec::new();
-        check_tasks.push(self.get_client_check_task(data_dir)?);
-        check_tasks.extend(self.get_library_check_tasks(data_dir)?);
-        check_tasks.extend(self.get_asset_check_tasks(client, data_dir).await?);
-        check_tasks.extend(
-            self.get_include_check_tasks(force_overwrite, minecraft_dir)
-                .await?,
-        );
-        Ok(files::dedup_check_tasks(check_tasks))
-    }
-
     pub async fn mark_include_downloads_complete(
         &self,
         minecraft_dir: &Path,
@@ -290,7 +339,7 @@ impl InstanceMetadata {
         Ok(paths)
     }
 
-    fn get_library_check_tasks(
+    pub fn get_library_check_tasks(
         &self,
         data_dir: &DataDir,
     ) -> Result<Vec<CheckTask>, InstanceMetadataError> {
@@ -310,7 +359,7 @@ impl InstanceMetadata {
         Ok(tasks)
     }
 
-    async fn get_asset_check_tasks(
+    pub async fn get_asset_check_tasks(
         &self,
         client: &reqwest::Client,
         data_dir: &DataDir,
@@ -338,57 +387,6 @@ impl InstanceMetadata {
         }
 
         Ok(tasks)
-    }
-
-    // TODO rewrite the include system
-    async fn get_include_check_tasks(
-        &self,
-        force_overwrite: bool,
-        minecraft_dir: &Path,
-    ) -> Result<Vec<CheckTask>, InstanceMetadataError> {
-        let mut check_tasks = Vec::new();
-        let mut used_paths = HashSet::new();
-
-        for rule in &self.include {
-            let objects_paths = rule
-                .objects
-                .iter()
-                .map(|object| object.path.to_path(minecraft_dir))
-                .collect::<HashSet<_>>();
-
-            if (rule.overwrite && rule.delete_extra) || force_overwrite {
-                let rule_path = rule.path.to_path(minecraft_dir);
-                for file in files::get_files_ignore_paths(&rule_path, &used_paths)? {
-                    if !objects_paths.contains(&file) {
-                        tokio::fs::remove_file(file).await?;
-                    }
-                }
-            }
-
-            if rule.overwrite || force_overwrite {
-                check_tasks.extend(
-                    rule.objects
-                        .iter()
-                        .map(|object| include_object_task(object, minecraft_dir)),
-                );
-            } else if rule.recursive
-                || !rule.path.to_path(minecraft_dir).exists()
-                || !rule
-                    .path
-                    .to_path(minecraft_dir)
-                    .join(COMPLETION_MARKER_FILE)
-                    .exists()
-            {
-                check_tasks.extend(rule.objects.iter().filter_map(|object| {
-                    let path = object.path.to_path(minecraft_dir);
-                    (!path.exists()).then(|| include_object_task(object, minecraft_dir))
-                }));
-            }
-
-            used_paths.extend(objects_paths);
-        }
-
-        Ok(check_tasks)
     }
 
     pub fn get_libraries_with_overrides(&self) -> Vec<Library> {
@@ -487,14 +485,6 @@ impl InstanceMetadata {
     }
 }
 
-fn include_object_task(object: &Object, minecraft_dir: &Path) -> CheckTask {
-    CheckTask {
-        url: object.url.clone(),
-        remote_sha1: Some(object.sha1.clone()),
-        path: object.path.to_path(minecraft_dir),
-    }
-}
-
 fn current_os_arch() -> OsArch {
     OsArch::Specific {
         os: get_os_name(),
@@ -506,11 +496,13 @@ fn current_os_arch() -> OsArch {
 mod tests {
     use super::*;
 
-    fn empty_metadata(include: Vec<Include>) -> InstanceMetadata {
+    fn empty_metadata(include: Vec<IncludeEntry>, mod_entries: Vec<ModEntry>) -> InstanceMetadata {
         InstanceMetadata {
             name: "Test".to_string(),
             auth_backend: None,
             include,
+            mods_update_behavior: ModsUpdateBehavior::Lenient,
+            mod_entries,
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: Vec::new(),
             authlib_injector: crate::authlib::default_authlib_injector_library(),
@@ -520,70 +512,10 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn include_tasks_respect_completion_marker_for_incremental_rules() {
-        let dir =
-            std::env::temp_dir().join(format!("potato-install-test-{}", uuid::Uuid::new_v4()));
-        let include_dir = dir.join("config");
-        tokio::fs::create_dir_all(&include_dir).await.unwrap();
-        tokio::fs::write(include_dir.join(COMPLETION_MARKER_FILE), b"")
-            .await
-            .unwrap();
-        tokio::fs::write(include_dir.join("options.txt"), b"present")
-            .await
-            .unwrap();
-
-        let metadata = empty_metadata(vec![Include {
-            path: RelativePathBuf::from("config"),
-            overwrite: false,
-            delete_extra: true,
-            recursive: false,
-            objects: vec![Object {
-                path: RelativePathBuf::from("config/options.txt"),
-                sha1: "abc".to_string(),
-                url: Url::parse("https://example.com/options.txt").unwrap(),
-            }],
-        }]);
-
-        let tasks = metadata.get_include_check_tasks(false, &dir).await.unwrap();
-
-        assert!(tasks.is_empty());
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[tokio::test]
-    async fn include_tasks_force_overwrite_even_when_file_exists() {
-        let dir =
-            std::env::temp_dir().join(format!("potato-install-test-{}", uuid::Uuid::new_v4()));
-        let include_dir = dir.join("config");
-        tokio::fs::create_dir_all(&include_dir).await.unwrap();
-        tokio::fs::write(include_dir.join("options.txt"), b"present")
-            .await
-            .unwrap();
-
-        let metadata = empty_metadata(vec![Include {
-            path: RelativePathBuf::from("config"),
-            overwrite: false,
-            delete_extra: true,
-            recursive: false,
-            objects: vec![Object {
-                path: RelativePathBuf::from("config/options.txt"),
-                sha1: "abc".to_string(),
-                url: Url::parse("https://example.com/options.txt").unwrap(),
-            }],
-        }]);
-
-        let tasks = metadata.get_include_check_tasks(true, &dir).await.unwrap();
-
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].path, include_dir.join("options.txt"));
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
     #[test]
     fn client_download_uses_effective_child_version_id() {
         let data_dir = DataDir::new(std::env::temp_dir());
-        let mut metadata = empty_metadata(Vec::new());
+        let mut metadata = empty_metadata(vec![], vec![]);
         metadata.versions = vec![
             VersionMetadata {
                 arguments: None,

@@ -1,10 +1,8 @@
-use generate::instance::{IncludeConfig, IncludeRule, InstanceGenerator, Loader};
+use generate::instance::{InstanceGenerator, InstanceSpec, RemoteConfig};
 use instance::{
     authlib::mirror_authlib_injector_library, manifest::InstanceManifest, version_metadata::OsArch,
 };
-use launcher_auth::providers::AuthProviderConfig;
 use log::{info, warn};
-use relative_path::RelativePathBuf;
 use serde::Deserialize;
 use std::{
     collections::HashSet,
@@ -22,46 +20,7 @@ use utils::{
 
 use crate::progress::TerminalProgress;
 
-fn vanilla() -> String {
-    "vanilla".to_string()
-}
-
-#[derive(Deserialize)]
-pub struct IncludeRuleSpec {
-    pub path: String,
-    #[serde(default = "yes")]
-    pub overwrite: bool,
-    #[serde(default = "yes")]
-    pub delete_extra: bool,
-    #[serde(default)]
-    pub recursive: bool,
-}
-
-fn yes() -> bool {
-    true
-}
-
 const INSTANCE_MANIFEST_FILENAME: &str = "instance_manifest.json";
-
-#[derive(Deserialize)]
-pub struct InstanceSpec {
-    pub name: String,
-    pub minecraft_version: String,
-
-    #[serde(default = "vanilla")]
-    pub loader_name: String,
-
-    pub loader_version: Option<String>,
-
-    #[serde(default)]
-    pub include: Vec<IncludeRuleSpec>,
-
-    pub include_from: Option<String>,
-
-    pub auth_backend: Option<AuthProviderConfig>,
-
-    pub recommended_xmx: Option<String>,
-}
 
 #[derive(Deserialize)]
 pub struct Spec {
@@ -101,39 +60,16 @@ impl Spec {
             }
             existing_instance_names.insert(unique_name.clone());
 
-            let loader = match instance.loader_name.as_str() {
-                "vanilla" => Loader::Vanilla,
-                "fabric" => Loader::Fabric,
-                "forge" => Loader::Forge,
-                "neoforge" => Loader::Neoforge,
-                other => {
-                    return Err(anyhow::anyhow!("Unsupported loader name: {other}"));
-                }
-            };
-
-            let include_rules = instance
-                .include
-                .iter()
-                .map(|rule| IncludeRule {
-                    path: RelativePathBuf::from(rule.path.as_str()),
-                    overwrite: rule.overwrite,
-                    delete_extra: rule.delete_extra,
-                    recursive: rule.recursive,
-                })
-                .collect::<Vec<_>>();
-
-            let include_config = IncludeConfig {
-                include_rules,
-                include_from: instance.include_from.as_ref().map(PathBuf::from),
+            let remote_config = RemoteConfig {
                 download_server_base: download_server_base.clone(),
                 replace_download_urls: self.replace_download_urls,
             };
 
             if !self.replace_download_urls
-                && instance.include_from.is_some()
-                && include_config.include_rules.is_empty()
+                && instance.source_dir.is_some()
+                && instance.include_rules.is_empty()
             {
-                warn!("include_from set but include rules are empty");
+                warn!("source_dir set but include rules are empty");
             }
 
             let instance_rel = InstancesDir::root().instance_dir(&unique_name);
@@ -142,13 +78,8 @@ impl Spec {
 
             let result = InstanceGenerator {
                 client: client.clone(),
-                instance_name: unique_name.clone(),
-                minecraft_version: instance.minecraft_version.clone(),
-                loader,
-                loader_version: instance.loader_version.clone(),
-                include_config: Some(include_config),
-                auth_backend: instance.auth_backend.clone(),
-                default_xmx: instance.recommended_xmx.clone(),
+                spec: instance.clone(),
+                remote_config: Some(remote_config),
             }
             .generate(&instance_dir, work_dir, &OsArch::All)
             .await?;

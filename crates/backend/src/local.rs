@@ -4,8 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use generate::instance::{InstanceGenerator, Loader};
+use generate::instance::{InstanceGenerator, InstanceSpec, Loader};
 use instance::{
+    instance_metadata::ModsUpdateBehavior,
     storage::{InstanceStorage, LocalInstance, sanitize_dir_name},
     version_metadata::OsArch,
 };
@@ -136,17 +137,22 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
 
     let result = InstanceGenerator {
         client: request.client.clone(),
-        instance_name: request.dir_name.clone(),
-        minecraft_version: request.minecraft_version.trim().to_string(),
-        loader: map_loader(request.loader),
-        loader_version: request
-            .loader_version
-            .as_ref()
-            .map(|version| version.trim().to_string())
-            .filter(|version| !version.is_empty()),
-        include_config: None,
-        auth_backend: None,
-        default_xmx: None,
+        spec: InstanceSpec {
+            name: request.dir_name.clone(),
+            minecraft_version: request.minecraft_version.trim().to_string(),
+            loader: map_loader(request.loader),
+            loader_version: request
+                .loader_version
+                .as_ref()
+                .map(|version| version.trim().to_string())
+                .filter(|version| !version.is_empty()),
+            source_dir: None,
+            include_rules: vec![],
+            mods_update_behavior: ModsUpdateBehavior::default(),
+            auth_backend: None,
+            default_xmx: None,
+        },
+        remote_config: None,
     }
     .generate(&instance_dir, &work_dir, &OsArch::All)
     .await?;

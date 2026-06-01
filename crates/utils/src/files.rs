@@ -38,22 +38,23 @@ pub fn get_files_in_dir(path: &Path) -> Result<Vec<PathBuf>, GetFilesInDirError>
 pub fn get_files_ignore_paths(
     path: &Path,
     ignore_paths: &HashSet<PathBuf>,
-) -> io::Result<Vec<PathBuf>> {
+) -> Vec<PathBuf> {
+    // TODO: use ignore_paths here
     if path.is_file() {
-        return Ok(vec![path.to_path_buf()]);
+        return vec![path.to_path_buf()];
     }
 
     if !path.is_dir() {
-        return Ok(Vec::new());
+        return vec![];
     }
 
-    Ok(WalkDir::new(path)
+    WalkDir::new(path)
         .into_iter()
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_file())
         .map(|entry| entry.path().to_path_buf())
         .filter(|entry_path| !ignore_paths.contains(entry_path))
-        .collect())
+        .collect()
 }
 
 pub async fn hash_file(path: &Path) -> io::Result<String> {
@@ -136,8 +137,10 @@ pub async fn remove_file_or_dir(path: &Path) -> io::Result<()> {
 #[derive(Debug)]
 pub struct CheckTask {
     pub url: Url,
-    /// If not set, the file will never be redownloaded if it already exists
+    /// If set, the file hash will be checked and the file will be redownloaded on mismatches.
     pub remote_sha1: Option<String>,
+    /// If set, the file size will be checked and the file will be redownloaded on mismatches.
+    pub remote_size: Option<u64>,
     pub path: PathBuf,
 }
 

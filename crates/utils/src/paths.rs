@@ -174,7 +174,7 @@ impl DataDir {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 pub struct BaseUrl(Url);
 
 impl BaseUrl {

@@ -41,6 +41,7 @@ impl VanillaManifestEntry {
         CheckTask {
             url: self.url.clone(),
             remote_sha1: Some(self.sha1.clone()),
+            remote_size: None,
             path,
         }
     }
@@ -111,6 +112,7 @@ impl VersionMetadataInfo {
         CheckTask {
             url: self.url.clone(),
             remote_sha1: Some(self.sha1.clone()),
+            remote_size: None,
             path: VersionsDir::root().metadata_path(&self.id).to_fs(data_dir),
         }
     }
@@ -136,6 +138,7 @@ impl InstanceManifestEntry {
         CheckTask {
             url: self.url.clone(),
             remote_sha1: Some(self.sha1.clone()),
+            remote_size: None,
             path: instance_dir.meta_path(),
         }
     }

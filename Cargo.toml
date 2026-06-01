@@ -16,7 +16,7 @@ resolver = "3"
 [workspace.dependencies]
 reqwest = { version = "0.13.4", features = ["json", "stream", "form"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+serde_json = { version = "1.0.150", features = ["preserve_order"] }
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = [
     "rt-multi-thread",
@@ -36,14 +36,12 @@ anyhow = "1.0.102"
 open = "5.3.5"
 dirs = "6.0.0"
 flate2 = { version = "1.1.9", default-features = false, features = ["miniz_oxide"] }
-maplit = "1.0.2"
 futures = "0.3.32"
 lazy_static = "1.5.0"
 num_cpus = "1.17.0"
 rand = "0.10.1"
 sha1 = "0.11.0"
 tar = "0.4.46"
-tokio-util = "0.7.18"
 clap = "4.6.1"
 winapi = { version = "0.3.9", features = ["fileapi", "winbase"] }
 winreg = "0.56.0"
@@ -56,6 +54,7 @@ toml = "1.1.2"
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+either = { version = "1.16.0", features = ["serde"] }
 
 [profile.release-lto]
 inherits = "release"

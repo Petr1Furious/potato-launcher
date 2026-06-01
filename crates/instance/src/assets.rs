@@ -25,6 +25,7 @@ impl AssetIndex {
         CheckTask {
             url: self.url.clone(),
             remote_sha1: Some(self.sha1.clone()),
+            remote_size: None,
             path: get_asset_index_path(data_dir, &self.id),
         }
     }
@@ -104,6 +105,7 @@ impl AssetsMetadata {
                             } else {
                                 None
                             },
+                            remote_size: None,
                         })
                 })
                 .collect::<Result<Vec<_>, url::ParseError>>()?,
