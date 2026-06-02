@@ -20,8 +20,8 @@ sys.path.append(str(Path(__file__).absolute().parent))
 
 from utils import REPO_ROOT, get_env
 
-ICON_PATH = REPO_ROOT / 'launcher' / 'assets' / 'icon.png'
-WINDOWS_ICON_PATH = REPO_ROOT / 'launcher' / 'assets' / 'icon.ico'
+ICON_PATH = REPO_ROOT / 'crates' / 'launcher' / 'assets' / 'icon.png'
+WINDOWS_ICON_PATH = REPO_ROOT / 'crates' / 'launcher' / 'assets' / 'icon.ico'
 
 
 def process_icons() -> bool:
@@ -53,7 +53,7 @@ def process_icons() -> bool:
 
 def main():
     has_icon = process_icons()
-    launcher_cargo_toml = REPO_ROOT / 'launcher' / 'Cargo.toml'
+    launcher_cargo_toml = REPO_ROOT / 'crates' / 'launcher' / 'Cargo.toml'
     parsed = tomlkit.parse(launcher_cargo_toml.read_text())
     bundle_metadata = parsed['package']['metadata']['bundle']['bin']['launcher']
     bundle_metadata['name'] = get_env('LAUNCHER_NAME')

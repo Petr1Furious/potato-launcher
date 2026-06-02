@@ -19,8 +19,8 @@ docs/.vitepress/cache/
 docs/dist/
 
 # icons are generated during build
-launcher/assets/*
-!launcher/assets/.gitkeep
+crates/launcher/assets/*
+!crates/launcher/assets/.gitkeep
 
 # nix
 .direnv/
@@ -38,3 +38,4 @@ out/
 generated/
 workdir/
 state/
+*.local.md

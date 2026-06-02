@@ -121,6 +121,11 @@ impl Processor {
                     entries.apply_loader_versions(minecraft_version, loader, versions, error, cx);
                 });
             }
+            MessageToFrontend::UpdateStatus(status) => {
+                self.data
+                    .update
+                    .update(cx, |entries, cx| entries.apply(status, cx));
+            }
             MessageToFrontend::Quit => {
                 cx.quit();
             }

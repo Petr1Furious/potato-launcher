@@ -2,6 +2,7 @@
 name = "launcher"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -13,3 +14,12 @@ launcher-frontend = { path = "../frontend" }
 log.workspace = true
 tokio.workspace = true
 utils = { path = "../utils" }
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1.12"
+
+# cargo-bundle settings for the `launcher` binary. `name`, `identifier` and
+# `icon` are filled in at build time by packaging/configure.py from the
+# LAUNCHER_NAME / LAUNCHER_APP_ID / LAUNCHER_ICON environment variables.
+[package.metadata.bundle.bin.launcher]
+osx_minimum_system_version = "10.12"

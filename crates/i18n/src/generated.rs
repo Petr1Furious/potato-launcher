@@ -1449,3 +1449,65 @@ pub mod settings {
         }
     }
 }
+pub mod update {
+    pub fn get(key: &str) -> Option<&'static str> {
+        match key {
+            "checking" => Some(checking()),
+            "downloading" => Some(downloading()),
+            "error_offline" => Some(error_offline()),
+            "error_read_only" => Some(error_read_only()),
+            "proceed_to_launcher" => Some(proceed_to_launcher()),
+            "replacing" => Some(replacing()),
+            "up_to_date" => Some(up_to_date()),
+            _ => None,
+        }
+    }
+    pub fn checking() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Проверка обновлений...",
+            _ => "Checking for updates...",
+        }
+    }
+    pub fn downloading() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Загрузка обновления...",
+            _ => "Downloading update...",
+        }
+    }
+    pub fn error_generic(message: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Ошибка обновления: {message}"),
+            _ => format!("Update failed: {message}"),
+        }
+    }
+    pub fn error_offline() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Не удаётся подключиться к серверу обновлений. Проверьте сетевое соединение.",
+            _ => "Cannot reach the update server. Check your network connection.",
+        }
+    }
+    pub fn error_read_only() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Невозможно обновить: файловая система только для чтения.",
+            _ => "Cannot update: the launcher is on a read-only filesystem.",
+        }
+    }
+    pub fn proceed_to_launcher() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Перейти к лаунчеру",
+            _ => "Proceed to launcher",
+        }
+    }
+    pub fn replacing() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Применение обновления...",
+            _ => "Applying update...",
+        }
+    }
+    pub fn up_to_date() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Актуальная версия",
+            _ => "Up to date",
+        }
+    }
+}

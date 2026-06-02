@@ -12,56 +12,43 @@ defaults:
     shell: bash
 
 jobs:
-  launcher-lint:
-    name: Lint
+  launcher:
+    name: Launcher
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Set environment variables
-        run: |
-          echo "LAUNCHER_NAME=Potato Launcher" >> $GITHUB_ENV
-          echo "VERSION_MANIFEST_URL=https://piston-meta.mojang.com/mc/game/version_manifest_v2.json" >> $GITHUB_ENV
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: ./scripts/ci/install-linux-deps.sh
+
+      # fmt is platform-independent, tests are too (for now)
       - name: Check formatting
-        run: cargo fmt -- --check
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
 
-      - name: Run clippy
+      - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-  launcher-test:
-    name: Test Suite
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set environment variables
-        run: |
-          echo "LAUNCHER_NAME=Potato Launcher" >> $GITHUB_ENV
-          echo "VERSION_MANIFEST_URL=https://piston-meta.mojang.com/mc/game/version_manifest_v2.json" >> $GITHUB_ENV
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run tests
+      - name: Test
+        if: runner.os == 'Linux'
         run: cargo test --workspace
 
   backend:
     name: Backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -70,25 +57,25 @@ jobs:
           cache-dependency-path: backend/go.sum
 
       - name: Go fmt (check)
-        run: |
-          cd backend
-          test -z "$(gofmt -l .)"
+        working-directory: backend
+        run: test -z "$(gofmt -l .)"
 
       - name: Go vet
-        run: |
-          cd backend
-          go vet ./...
+        working-directory: backend
+        run: go vet ./...
 
       - name: Go test
-        run: |
-          cd backend
-          go test ./...
+        working-directory: backend
+        run: go test ./...
 
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Node
         uses: actions/setup-node@v6
@@ -101,16 +88,10 @@ jobs:
           corepack prepare yarn@4.12.0 --activate
 
       - name: Install
-        run: |
-          cd frontend
-          yarn install --immutable
+        run: yarn install --immutable
 
       - name: Typecheck
-        run: |
-          cd frontend
-          yarn type-check
+        run: yarn type-check
 
       - name: Build
-        run: |
-          cd frontend
-          yarn build-only
+        run: yarn build-only

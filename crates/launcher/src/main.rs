@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use launcher_build_config::lower_launcher_name;
+use launcher_build_config::data_dir_name;
 use log::LevelFilter;
 use utils::logging::setup_logger;
 
@@ -35,5 +35,5 @@ fn main() -> anyhow::Result<()> {
 fn launcher_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-        .join(lower_launcher_name())
+        .join(data_dir_name())
 }

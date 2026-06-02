@@ -6,6 +6,17 @@ use launcher_auth::{
 use url::Url;
 use uuid::Uuid;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdateStatusView {
+    Checking,
+    Downloading { current: u64, total: u64 },
+    NotApplicable,
+    UpToDate,
+    Replacing,
+    Error { message: Arc<str>, offline: bool },
+    ReadOnly,
+}
+
 #[derive(Clone, Debug)]
 pub enum MessageToBackend {
     Refresh,
@@ -55,6 +66,7 @@ pub enum MessageToBackend {
         minecraft_version: String,
         loader: LocalLoader,
     },
+    ProceedAfterUpdateFailure,
     Quit,
 }
 
@@ -101,6 +113,7 @@ pub enum MessageToFrontend {
         versions: Arc<[String]>,
         error: Option<Arc<str>>,
     },
+    UpdateStatus(UpdateStatusView),
     Quit,
 }
 

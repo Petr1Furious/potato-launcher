@@ -29,164 +29,43 @@ jobs:
       fail-fast: false
       matrix:
         os: ['windows-latest', 'ubuntu-latest', 'macos-latest']
+    env:
+      LAUNCHER_NAME: ${{ vars.LAUNCHER_NAME }}
+      LAUNCHER_APP_ID: ${{ vars.LAUNCHER_APP_ID }}
+      LAUNCHER_ICON: ${{ vars.LAUNCHER_ICON }}
+      LAUNCHER_DESCRIPTION: ${{ vars.LAUNCHER_DESCRIPTION }}
+      LAUNCHER_KEYWORDS: ${{ vars.LAUNCHER_KEYWORDS }}
+      INSTANCE_MANIFEST_URLS: ${{ vars.INSTANCE_MANIFEST_URLS }}
+      BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install configure.py dependencies
-        run: |
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            # imagemagick is preinstalled
-            pip install tomlkit httpx
-            choco install jq -y
-          elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            sudo apt update
-            sudo apt install -y python3 python3-tomlkit python3-httpx imagemagick jq
-          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
-            brew install imagemagick
-            pip install tomlkit httpx
-            brew install jq
-          fi
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Set environment variables
-        run: |
-          # LAUNCHER_NAME, LOWER_LAUNCHER_NAME and VERSION are used by CI script
-          if [ -n "${{ vars.LAUNCHER_NAME }}" ]; then
-            export LAUNCHER_NAME="${{ vars.LAUNCHER_NAME }}"
-          else
-            export "$(cat build.env | grep 'LAUNCHER_NAME=')"
-            if [ -z "$LAUNCHER_NAME" ]; then
-              echo "LAUNCHER_NAME not set"
-              exit 1
-            fi
-          fi
-          echo "LAUNCHER_NAME=$LAUNCHER_NAME" >> $GITHUB_ENV
-          LOWER_LAUNCHER_NAME=$(echo "$LAUNCHER_NAME" | tr '[:upper:]' '[:lower:]' | tr -d "'" | tr ' ' '_')
-          echo "LOWER_LAUNCHER_NAME=$LOWER_LAUNCHER_NAME" >> $GITHUB_ENV
-          echo "VERSION=$GITHUB_SHA" >> $GITHUB_ENV
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: ./scripts/ci/install-linux-deps.sh
+
+      - name: Install packaging dependencies
+        run: ./scripts/ci/install-packaging-deps.sh
+
+      - name: Resolve build environment
+        run: ./scripts/ci/set-build-env.sh
+
+      - name: Configure packaging
+        run: python packaging/configure.py
 
       - name: Build the launcher
-        env:
-          VERSION_MANIFEST_URL: ${{ vars.VERSION_MANIFEST_URL }}
-          BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
-          LAUNCHER_APP_ID: ${{ vars.LAUNCHER_APP_ID }}
-          LAUNCHER_ICON: ${{ vars.LAUNCHER_ICON }}
-          LAUNCHER_DESCRIPTION: ${{ vars.LAUNCHER_DESCRIPTION }}
-          LAUNCHER_KEYWORDS: ${{ vars.LAUNCHER_KEYWORDS }}
-          GPG_PUBLIC_KEY: ${{ vars.GPG_PUBLIC_KEY }}
-        run: |
-          python packaging/configure.py
-          mkdir -p build
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            cargo build --bin launcher --profile release-lto
-            mv "target/release-lto/launcher.exe" "build/${LAUNCHER_NAME}.exe"
-            echo "$VERSION" > build/version_windows.txt
-          elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            cargo build --bin launcher --profile release-lto
-            mv "target/release-lto/launcher" "build/${LOWER_LAUNCHER_NAME}"
-            echo "$VERSION" > build/version_linux.txt
-          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
-            which cargo-bundle || cargo install cargo-bundle
-            rustup target add x86_64-apple-darwin aarch64-apple-darwin
-
-            # Build Intel binary directly (with older deployment target)
-            export MACOSX_DEPLOYMENT_TARGET=10.12
-            cargo build --bin launcher --profile release-lto --target x86_64-apple-darwin
-
-            # Build ARM binary as part of bundle (with newer deployment target)
-            export MACOSX_DEPLOYMENT_TARGET=11.0
-            cargo bundle --package launcher --bin launcher --profile release-lto --target aarch64-apple-darwin
-
-            mkdir -p app
-            mv "target/aarch64-apple-darwin/release-lto/bundle/osx/$LAUNCHER_NAME.app" "app/$LAUNCHER_NAME.app"
-
-            # Update permission descriptions (required for simple voice chat and some other mods)
-            plutil -replace NSCameraUsageDescription \
-              -string "A Minecraft mod wants to access your camera." \
-              "app/$LAUNCHER_NAME.app/Contents/Info.plist"
-            plutil -replace NSMicrophoneUsageDescription \
-              -string "A Minecraft mod wants to access your microphone." \
-              "app/$LAUNCHER_NAME.app/Contents/Info.plist"
-            plutil -insert NSEnableAutomaticCustomizeTouchBarMenuItem \
-              -bool false \
-              "app/$LAUNCHER_NAME.app/Contents/Info.plist"
-            plutil -insert NSFunctionBarAPIEnabled \
-              -bool false \
-              "app/$LAUNCHER_NAME.app/Contents/Info.plist"
-
-            # Create universal binary
-            lipo -create -output "app/$LAUNCHER_NAME.app/Contents/MacOS/launcher" \
-              "target/x86_64-apple-darwin/release-lto/launcher" \
-              "app/$LAUNCHER_NAME.app/Contents/MacOS/launcher"
-
-            codesign --force --deep --sign - "app/$LAUNCHER_NAME.app"
-
-            ln -s /Applications app/Applications
-
-            DMG_FILENAME="${LAUNCHER_NAME}.dmg"
-
-            # CI runner sometimes fails with "hdiutil: create failed - Resource busy", so retry a few times
-            retry=0
-            max_retries=5
-            until [ $retry -ge $max_retries ]
-            do
-              hdiutil create "$DMG_FILENAME" -ov -volname "$LAUNCHER_NAME" -fs HFS+ -srcfolder "app/" && break
-              retry=$((retry+1))
-              echo "Retrying hdiutil create... ($retry/$max_retries)"
-              sleep 5
-            done
-
-            mv "$DMG_FILENAME" build/
-
-            mv "app/$LAUNCHER_NAME.app" "app/update.app"
-            tar -czvf "build/${LOWER_LAUNCHER_NAME}_macos.tar.gz" -C app "update.app"
-
-            echo "$VERSION" > build/version_macos.txt
-          fi
+        run: ./scripts/ci/build-launcher.sh
 
       - name: Upload launcher artifacts via backend API
-        if: ${{ env.UPLOAD_LAUNCHERS }}
+        if: ${{ env.UPLOAD_LAUNCHERS == 'true' }}
         env:
-          BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
           ADMIN_SECRET_TOKEN: ${{ secrets.ADMIN_SECRET_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          echo "Logging in to get admin JWT..."
-          AUTH_JSON="$(curl -sS --fail-with-body -X POST "$BACKEND_API_BASE/auth/login" \
-            -H 'Content-Type: application/json' \
-            --data "{\"token\":\"$ADMIN_SECRET_TOKEN\"}")"
-          TOKEN="$(echo "$AUTH_JSON" | jq -r '.access_token // empty')"
-          if [ -z "$TOKEN" ]; then
-            echo "Failed to get access token from login response"
-            echo "$AUTH_JSON"
-            exit 1
-          fi
-
-          echo "Uploading artifacts for ${{ matrix.os }} version=$VERSION"
-          if [ "${{ matrix.os }}" == "windows-latest" ]; then
-            curl -sS --fail-with-body -X POST "$BACKEND_API_BASE/launchers/windows/exe?version=$VERSION" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"build/${LAUNCHER_NAME}.exe"
-          elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            curl -sS --fail-with-body -X POST "$BACKEND_API_BASE/launchers/linux/bin?version=$VERSION" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"build/${LOWER_LAUNCHER_NAME}"
-          elif [ "${{ matrix.os }}" == "macos-latest" ]; then
-            curl -sS --fail-with-body -X POST "$BACKEND_API_BASE/launchers/macos/dmg?version=$VERSION" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"build/${LAUNCHER_NAME}.dmg"
-            curl -sS --fail-with-body -X POST "$BACKEND_API_BASE/launchers/macos/archive?version=$VERSION" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"build/${LOWER_LAUNCHER_NAME}_macos.tar.gz"
-          fi
+        run: ./scripts/ci/upload-launcher.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -196,54 +75,49 @@ jobs:
 
   flatpak:
     name: Build Flatpak package
-    runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
     container:
       image: ghcr.io/andyholmes/flatter/freedesktop:24.08
       options: --privileged
+    env:
+      VERSION: ${{ github.sha }}
+      LAUNCHER_NAME: ${{ vars.LAUNCHER_NAME }}
+      LAUNCHER_APP_ID: ${{ vars.LAUNCHER_APP_ID }}
+      LAUNCHER_ICON: ${{ vars.LAUNCHER_ICON }}
+      LAUNCHER_DESCRIPTION: ${{ vars.LAUNCHER_DESCRIPTION }}
+      LAUNCHER_KEYWORDS: ${{ vars.LAUNCHER_KEYWORDS }}
+      INSTANCE_MANIFEST_URLS: ${{ vars.INSTANCE_MANIFEST_URLS }}
+      BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
+      GPG_PUBLIC_KEY: ${{ vars.GPG_PUBLIC_KEY }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Install configure.py dependencies
-        run: dnf install -y python3 python3-tomlkit python3-httpx ImageMagick jq
+      - name: Install packaging dependencies
+        run: ./scripts/ci/install-packaging-deps.sh
 
       - name: Install flatpak-cargo-generator dependencies
         run: dnf install -y python3-aiohttp python3-toml wget
-      - name: Run flatpak-cargo-generator
-        run: |
-          wget -O packaging/flatpak/flatpak-cargo-generator.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/a1eb29c5f3038413ffafd4fea34e62c361c109ad/cargo/flatpak-cargo-generator.py
-          python packaging/flatpak/flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+
+      - name: Generate cargo sources
+        run: ./scripts/ci/flatpak-sources.sh
 
       - name: Generate manifest
-        env:
-          VERSION: ${{ github.sha }}
-          LAUNCHER_NAME: ${{ vars.LAUNCHER_NAME }}
-          VERSION_MANIFEST_URL: ${{ vars.VERSION_MANIFEST_URL }}
-          BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
-          LAUNCHER_APP_ID: ${{ vars.LAUNCHER_APP_ID }}
-          LAUNCHER_ICON: ${{ vars.LAUNCHER_ICON }}
-          LAUNCHER_DESCRIPTION: ${{ vars.LAUNCHER_DESCRIPTION }}
-          LAUNCHER_KEYWORDS: ${{ vars.LAUNCHER_KEYWORDS }}
-          GPG_PUBLIC_KEY: ${{ vars.GPG_PUBLIC_KEY }}
-        run: |
-          python packaging/configure.py
-          cd packaging/flatpak
-          python generate.py
+        run: ./scripts/ci/flatpak-manifest.sh
 
       - name: Setup GPG
-        env:
-          # kostyl, because `if` doesn't work with secrets for some reason
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        if: ${{ github.ref == 'refs/heads/master' && env.GPG_PRIVATE_KEY }}
         id: gpg
+        # `if` doesn't see secrets directly, so the key is mirrored into env first.
+        if: ${{ github.ref == 'refs/heads/master' && env.GPG_PRIVATE_KEY != '' }}
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Install Rust SDK
-        # idk how to do it better
         run: flatpak install runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/24.08 --noninteractive
 
       - name: Build Flatpak package
@@ -257,40 +131,7 @@ jobs:
           upload-bundles: true
 
       - name: Upload Flatpak artifacts via backend API
-        if: ${{ env.UPLOAD_LAUNCHERS }}
+        if: ${{ env.UPLOAD_LAUNCHERS == 'true' }}
         env:
-          BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
           ADMIN_SECRET_TOKEN: ${{ secrets.ADMIN_SECRET_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          echo "Logging in to get admin JWT..."
-          AUTH_JSON="$(curl -sS --fail-with-body -X POST "$BACKEND_API_BASE/auth/login" \
-            -H 'Content-Type: application/json' \
-            --data "{\"token\":\"$ADMIN_SECRET_TOKEN\"}")"
-          TOKEN="$(echo "$AUTH_JSON" | jq -r '.access_token // empty')"
-          if [ -z "$TOKEN" ]; then
-            echo "Failed to get access token from login response"
-            echo "$AUTH_JSON"
-            exit 1
-          fi
-
-          VERSION="${GITHUB_SHA}"
-
-          FLATPAK_FILE="$(ls -1 *.flatpak | head -n 1 || true)"
-          if [ -z "$FLATPAK_FILE" ]; then
-            echo "No .flatpak found to upload"
-            exit 1
-          fi
-          curl -sS --fail-with-body -X POST "$BACKEND_API_BASE/launchers/linux/flatpak?version=$VERSION" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @"$FLATPAK_FILE"
-
-          FLATPAKREF_FILE="$(ls -1 packaging/flatpak/*.flatpakref 2>/dev/null | head -n 1 || true)"
-          if [ -n "$FLATPAKREF_FILE" ]; then
-            curl -sS --fail-with-body -X POST "$BACKEND_API_BASE/launchers/linux/flatpakref?version=$VERSION" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$FLATPAKREF_FILE"
-          fi
+        run: ./scripts/ci/upload-flatpak.sh

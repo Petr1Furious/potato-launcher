@@ -789,3 +789,35 @@ ru = "Продолжите авторизацию в браузере: ${url: St
 [auth.continue_in_browser_with_code]
 en = "Continue authentication in your browser: ${url: String}\nCode: ${code: String}"
 ru = "Продолжите авторизацию в браузере: ${url: String}\nКод: ${code: String}"
+
+[update.checking]
+en = "Checking for updates..."
+ru = "Проверка обновлений..."
+
+[update.downloading]
+en = "Downloading update..."
+ru = "Загрузка обновления..."
+
+[update.replacing]
+en = "Applying update..."
+ru = "Применение обновления..."
+
+[update.up_to_date]
+en = "Up to date"
+ru = "Актуальная версия"
+
+[update.error_offline]
+en = "Cannot reach the update server. Check your network connection."
+ru = "Не удаётся подключиться к серверу обновлений. Проверьте сетевое соединение."
+
+[update.error_read_only]
+en = "Cannot update: the launcher is on a read-only filesystem."
+ru = "Невозможно обновить: файловая система только для чтения."
+
+[update.error_generic]
+en = "Update failed: ${message: String}"
+ru = "Ошибка обновления: ${message: String}"
+
+[update.proceed_to_launcher]
+en = "Proceed to launcher"
+ru = "Перейти к лаунчеру"

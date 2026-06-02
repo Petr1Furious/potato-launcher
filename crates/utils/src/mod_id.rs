@@ -41,29 +41,29 @@ fn extract_mod_id_from_archive<R: Read + std::io::Seek>(
         .map(str::to_owned)
         .collect::<HashSet<_>>();
 
-    if entry_names.contains(FABRIC_MOD_JSON) {
-        if let Some(id) = read_fabric_mod_id(archive)? {
-            return Ok(Some(id));
-        }
+    if entry_names.contains(FABRIC_MOD_JSON)
+        && let Some(id) = read_fabric_mod_id(archive)?
+    {
+        return Ok(Some(id));
     }
 
-    if entry_names.contains(NEOFORGE_MODS_TOML) {
-        if let Some(id) = read_mods_toml_mod_id(archive, NEOFORGE_MODS_TOML)? {
-            return Ok(Some(id));
-        }
+    if entry_names.contains(NEOFORGE_MODS_TOML)
+        && let Some(id) = read_mods_toml_mod_id(archive, NEOFORGE_MODS_TOML)?
+    {
+        return Ok(Some(id));
     }
 
-    if entry_names.contains(FORGE_MODS_TOML) {
-        if let Some(id) = read_mods_toml_mod_id(archive, FORGE_MODS_TOML)? {
-            return Ok(Some(id));
-        }
+    if entry_names.contains(FORGE_MODS_TOML)
+        && let Some(id) = read_mods_toml_mod_id(archive, FORGE_MODS_TOML)?
+    {
+        return Ok(Some(id));
     }
 
     for info_file in LEGACY_INFO_FILES {
-        if entry_names.contains(*info_file) {
-            if let Some(id) = read_mcmod_info_mod_id(archive, info_file)? {
-                return Ok(Some(id));
-            }
+        if entry_names.contains(*info_file)
+            && let Some(id) = read_mcmod_info_mod_id(archive, info_file)?
+        {
+            return Ok(Some(id));
         }
     }
 

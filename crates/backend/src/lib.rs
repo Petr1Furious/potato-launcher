@@ -3,6 +3,7 @@ mod install;
 pub mod instances;
 mod launch;
 mod local;
+mod update;
 mod versions;
 
 use std::{
@@ -1336,6 +1337,22 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     let mut state = BackendState::load(launcher_dir).await?;
     let (internal_sender, mut internal_receiver) = mpsc::unbounded_channel();
+
+    if update::should_check_updates() {
+        frontend.send(MessageToFrontend::UpdateStatus(
+            launcher_bridge::UpdateStatusView::Checking,
+        ));
+        let update_client = state.client.clone();
+        let update_frontend = frontend.clone();
+        tokio::spawn(async move {
+            update::run(update_client, update_frontend).await;
+        });
+    } else {
+        frontend.send(MessageToFrontend::UpdateStatus(
+            launcher_bridge::UpdateStatusView::NotApplicable,
+        ));
+    }
+
     state.emit_snapshot(&frontend);
     state.refresh_all(&internal_sender, &frontend);
 
@@ -1451,6 +1468,11 @@ pub async fn run(
                             minecraft_version,
                             loader,
                         );
+                    }
+                    MessageToBackend::ProceedAfterUpdateFailure => {
+                        frontend.send(MessageToFrontend::UpdateStatus(
+                            launcher_bridge::UpdateStatusView::NotApplicable,
+                        ));
                     }
                     MessageToBackend::Quit => break,
                     other => {
