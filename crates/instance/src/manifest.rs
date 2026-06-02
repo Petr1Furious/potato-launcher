@@ -126,6 +126,9 @@ pub struct InstanceManifestEntry {
     /// Must always match `InstanceMetadata.auth_backend` for the entry's metadata.
     #[serde(default)]
     pub auth_backend: Option<AuthProviderConfig>,
+    /// Required Java major version (e.g. "21"). Must always match
+    /// `InstanceMetadata.get_java_version()` for the entry's metadata.
+    pub required_java_version: String,
 }
 
 impl InstanceManifestEntry {

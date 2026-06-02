@@ -34,6 +34,10 @@ const JAVA_BINARY_NAME: &str = "java.exe";
 #[cfg(not(target_os = "windows"))]
 const JAVA_BINARY_NAME: &str = "java";
 
+pub async fn get_installation_pub(path: &Path) -> Option<JavaInstallation> {
+    get_installation(path).await
+}
+
 async fn get_installation(path: &Path) -> Option<JavaInstallation> {
     let path = if path.is_file() {
         path.to_path_buf()

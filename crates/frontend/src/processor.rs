@@ -126,6 +126,11 @@ impl Processor {
                     .update
                     .update(cx, |entries, cx| entries.apply(status, cx));
             }
+            MessageToFrontend::JavaPathResolved { instance, path } => {
+                self.data
+                    .java_resolve
+                    .update(cx, |cache, cx| cache.set(instance, path, cx));
+            }
             MessageToFrontend::Quit => {
                 cx.quit();
             }

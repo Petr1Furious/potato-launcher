@@ -177,6 +177,7 @@ impl InstanceMetadata {
                 .to_url(base_url),
             sha1: hash_struct(&self)?,
             auth_backend: self.auth_backend.clone(),
+            required_java_version: self.get_java_version(),
         })
     }
 

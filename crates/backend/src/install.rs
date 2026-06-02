@@ -440,6 +440,7 @@ mod tests {
             url: Url::parse("https://example.com/vanilla/meta.json").unwrap(),
             sha1: "abc".to_string(),
             auth_backend: None,
+            required_java_version: "8".to_string(),
         };
         let id = remote_entry_id(&url, &entry.name);
         let catalogs = HashMap::from([(
@@ -487,6 +488,7 @@ mod tests {
             url: Url::parse("https://example.com/vanilla/meta.json").unwrap(),
             sha1: "new".to_string(),
             auth_backend: None,
+            required_java_version: "8".to_string(),
         };
         let catalogs = HashMap::from([(
             url.clone(),

@@ -236,7 +236,7 @@ mod tests {
                     let (status, body) = if request.starts_with("GET /ok ") {
                         (
                             "HTTP/1.1 200 OK",
-                            r#"{"instances":[{"name":"Vanilla","url":"http://127.0.0.1/meta.json","sha1":"abc","versions":[]}]}"#,
+                            r#"{"instances":[{"name":"Vanilla","url":"http://127.0.0.1/meta.json","sha1":"abc","required_java_version":"21"}]}"#,
                         )
                     } else {
                         ("HTTP/1.1 500 Internal Server Error", r#"{"error":"boom"}"#)

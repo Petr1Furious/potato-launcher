@@ -427,6 +427,13 @@ pub mod instances {
             "delete" => Some(delete()),
             "hard_resync" => Some(hard_resync()),
             "install" => Some(install()),
+            "java_auto" => Some(java_auto()),
+            "java_browse" => Some(java_browse()),
+            "java_install_required" => Some(java_install_required()),
+            "java_not_found" => Some(java_not_found()),
+            "java_path_auto" => Some(java_path_auto()),
+            "java_resolving" => Some(java_resolving()),
+            "java_section" => Some(java_section()),
             "jvm_flags_default" => Some(jvm_flags_default()),
             "kill" => Some(kill()),
             "launch_blocked" => Some(launch_blocked()),
@@ -446,6 +453,7 @@ pub mod instances {
             "resync" => Some(resync()),
             "runtime" => Some(runtime()),
             "set_flags" => Some(set_flags()),
+            "set_java_path" => Some(set_java_path()),
             "set_memory" => Some(set_memory()),
             "status" => Some(status()),
             "status_available" => Some(status_available()),
@@ -518,6 +526,48 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Установить",
             _ => "Install",
+        }
+    }
+    pub fn java_auto() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Авто",
+            _ => "Auto",
+        }
+    }
+    pub fn java_browse() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Выбрать",
+            _ => "Browse",
+        }
+    }
+    pub fn java_install_required() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Дождитесь завершения локальной установки, чтобы настроить Java.",
+            _ => "Wait for the local install to finish before configuring Java.",
+        }
+    }
+    pub fn java_not_found() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Java не найдена",
+            _ => "Java not found",
+        }
+    }
+    pub fn java_path_auto() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "<авто>",
+            _ => "<auto>",
+        }
+    }
+    pub fn java_resolving() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Определение...",
+            _ => "Resolving...",
+        }
+    }
+    pub fn java_section() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Java",
+            _ => "Java",
         }
     }
     pub fn jvm_flags(flags: String) -> String {
@@ -632,6 +682,12 @@ pub mod instances {
             _ => "Remove",
         }
     }
+    pub fn required_java_version(version: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Требуется Java {version}"),
+            _ => format!("Requires Java {version}"),
+        }
+    }
     pub fn resync() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Синхронизировать",
@@ -648,6 +704,12 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Задать флаги",
             _ => "Set Flags",
+        }
+    }
+    pub fn set_java_path() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Задать путь",
+            _ => "Set Path",
         }
     }
     pub fn set_memory() -> &'static str {
@@ -881,6 +943,10 @@ pub mod notifications {
             "install_completed" => Some(install_completed()),
             "instance_deleted" => Some(instance_deleted()),
             "instance_not_installed_locally" => Some(instance_not_installed_locally()),
+            "invalid_java_path" => Some(invalid_java_path()),
+            "java_path_cleared" => Some(java_path_cleared()),
+            "java_path_install_in_progress" => Some(java_path_install_in_progress()),
+            "java_path_set" => Some(java_path_set()),
             "local_instance_loader_version_required" => {
                 Some(local_instance_loader_version_required())
             }
@@ -999,6 +1065,12 @@ pub mod notifications {
             _ => format!("Failed to save installed instance: {error}"),
         }
     }
+    pub fn failed_save_java_path(error: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Не удалось сохранить путь к Java: {error}"),
+            _ => format!("Failed to save Java path: {error}"),
+        }
+    }
     pub fn failed_save_jvm_flags(error: String) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Не удалось сохранить флаги JVM: {error}"),
@@ -1063,6 +1135,32 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Инстанс не установлен локально",
             _ => "Instance is not installed locally",
+        }
+    }
+    pub fn invalid_java_path() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => {
+                "Неверная установка Java: выбранный файл не является совместимым исполняемым файлом Java"
+            }
+            _ => "Invalid Java installation: the selected file is not a compatible Java executable",
+        }
+    }
+    pub fn java_path_cleared() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Путь к Java сброшен на автоматический",
+            _ => "Java path reset to automatic",
+        }
+    }
+    pub fn java_path_install_in_progress() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Путь к Java нельзя изменить, пока идёт локальная установка",
+            _ => "Java path cannot be changed while a local install is in progress",
+        }
+    }
+    pub fn java_path_set() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Путь к Java задан",
+            _ => "Java path set",
         }
     }
     pub fn launch_failed(error: String) -> String {

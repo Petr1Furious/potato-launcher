@@ -70,6 +70,8 @@ pub struct InstanceUserSettingsEntry {
     pub xmx_mb: Option<u64>,
     #[serde(default)]
     pub jvm_flags: Option<String>,
+    #[serde(default)]
+    pub java_path: Option<String>,
 }
 
 impl InstanceUserSettings {
@@ -196,6 +198,10 @@ enum BackendEvent {
     },
     AddAccountFinished {
         result: Result<(AuthProviderConfig, AccountData), Arc<str>>,
+    },
+    JavaResolved {
+        instance: Uuid,
+        path: Option<Arc<str>>,
     },
 }
 
@@ -430,6 +436,10 @@ impl BackendState {
                             .jvm_flags
                             .as_ref()
                             .map(|flags| Arc::<str>::from(flags.clone())),
+                        java_path: settings
+                            .java_path
+                            .as_ref()
+                            .map(|p| Arc::<str>::from(p.clone())),
                     },
                 )
             })
@@ -460,6 +470,7 @@ impl BackendState {
                     instances::LocalMetadataView {
                         auth_provider: metadata.auth_backend.clone(),
                         default_xmx_mb: parse_xmx_mb(metadata.default_xmx.as_deref()),
+                        required_java_version: Some(Arc::from(metadata.get_java_version())),
                     },
                 ))
             })
@@ -1133,6 +1144,88 @@ impl BackendState {
         self.emit_snapshot(tx);
     }
 
+    fn is_local_install_in_progress(&self, instance: Uuid) -> bool {
+        self.creating_local.contains_key(&instance)
+    }
+
+    async fn set_instance_java_path(
+        &mut self,
+        instance: Uuid,
+        path: Option<String>,
+        tx: &FrontendSender,
+    ) {
+        if self.is_local_install_in_progress(instance) {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Warning,
+                message: Arc::from(launcher_i18n::notifications::java_path_install_in_progress()),
+            });
+            return;
+        }
+        let Some(required_version) = self.required_java_version_for(instance) else {
+            log::error!("Missing required Java version for instance {instance}");
+            return;
+        };
+        if let Some(ref path_str) = path {
+            let java_path = std::path::Path::new(path_str);
+            if !utils::java::check_java(&required_version, java_path).await {
+                tx.send(MessageToFrontend::Notification {
+                    level: NotificationLevel::Error,
+                    message: Arc::from(launcher_i18n::notifications::invalid_java_path()),
+                });
+                return;
+            }
+        }
+        let is_set = path.is_some();
+        self.instance_settings.entry_mut(instance).java_path = path;
+        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+            log::error!("Failed to save Java path for instance {instance}: {err:#}");
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::failed_save_java_path(
+                    err.to_string(),
+                )),
+            });
+            return;
+        }
+        let message = if is_set {
+            launcher_i18n::notifications::java_path_set().to_owned()
+        } else {
+            launcher_i18n::notifications::java_path_cleared().to_owned()
+        };
+        tx.send(MessageToFrontend::Notification {
+            level: NotificationLevel::Success,
+            message: Arc::from(message),
+        });
+        self.emit_snapshot(tx);
+    }
+
+    fn required_java_version_for(&self, instance: Uuid) -> Option<String> {
+        if self.is_local_install_in_progress(instance) {
+            return None;
+        }
+        self.build_instance_views()
+            .iter()
+            .find(|v| v.id == instance)
+            .and_then(|v| v.required_java_version.as_deref().map(str::to_owned))
+    }
+
+    fn resolve_java_path(&self, instance: Uuid, internal: mpsc::UnboundedSender<BackendEvent>) {
+        if self.is_local_install_in_progress(instance) {
+            return;
+        }
+        let Some(required_version) = self.required_java_version_for(instance) else {
+            log::error!("Missing required Java version for instance {instance}");
+            return;
+        };
+        let data_dir = utils::paths::DataDir::new(self.launcher_dir.clone());
+        tokio::spawn(async move {
+            let path = utils::java::get_java(&required_version, &data_dir)
+                .await
+                .map(|installation| Arc::<str>::from(installation.path.to_string_lossy().as_ref()));
+            let _ = internal.send(BackendEvent::JavaResolved { instance, path });
+        });
+    }
+
     fn start_launch(
         &mut self,
         id: Uuid,
@@ -1176,6 +1269,7 @@ impl BackendState {
             bypass_required_provider,
             xmx_mb: settings.and_then(|settings| settings.xmx_mb),
             jvm_flags: settings.and_then(|settings| settings.jvm_flags.clone()),
+            java_path: settings.and_then(|settings| settings.java_path.clone()),
             launcher_dir: self.launcher_dir.clone(),
             local_instances: self.instance_storage.all().to_vec(),
             account_entries: self.launch_accounts(),
@@ -1436,6 +1530,12 @@ pub async fn run(
                     MessageToBackend::SetInstanceJvmFlags { instance, flags } => {
                         state.set_instance_jvm_flags(instance, flags, &frontend).await;
                     }
+                    MessageToBackend::SetInstanceJavaPath { instance, path } => {
+                        state.set_instance_java_path(instance, path, &frontend).await;
+                    }
+                    MessageToBackend::ResolveJavaPath(instance) => {
+                        state.resolve_java_path(instance, internal_sender.clone());
+                    }
                     MessageToBackend::CreateLocalInstance {
                         display_name,
                         minecraft_version,
@@ -1511,6 +1611,27 @@ pub async fn run(
                     }
                     Some(BackendEvent::AddAccountFinished { result }) => {
                         state.handle_add_account_finished(result, &frontend);
+                    }
+                    Some(BackendEvent::JavaResolved { instance, path }) => {
+                        if let Some(ref p) = path {
+                            state.instance_settings.entry_mut(instance).java_path =
+                                Some(p.to_string());
+                            if let Err(err) =
+                                state.instance_settings.save(&state.launcher_dir).await
+                            {
+                                log::error!(
+                                    "Failed to save resolved Java path for {instance}: {err:#}"
+                                );
+                            }
+                            frontend.send(MessageToFrontend::Notification {
+                                level: NotificationLevel::Success,
+                                message: Arc::from(
+                                    launcher_i18n::notifications::java_path_set(),
+                                ),
+                            });
+                            state.emit_snapshot(&frontend);
+                        }
+                        frontend.send(MessageToFrontend::JavaPathResolved { instance, path });
                     }
                     None => break,
                 }

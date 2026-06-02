@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use entity::{
     DataEntities, account::AccountEntries, backend::BackendList, instance::InstanceEntries,
-    local_create::LocalCreateEntries, notification::NotificationEntries,
-    settings::LauncherSettingsEntries, update::UpdateEntries,
+    java_resolve::JavaResolveCache, local_create::LocalCreateEntries,
+    notification::NotificationEntries, settings::LauncherSettingsEntries, update::UpdateEntries,
 };
 use gpui::{
     App, AppContext, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, actions, px,
@@ -49,6 +49,7 @@ pub fn start(
         let settings = cx.new(|_| LauncherSettingsEntries::default());
         let local_create = cx.new(|_| LocalCreateEntries::default());
         let update = cx.new(|_| UpdateEntries::default());
+        let java_resolve = cx.new(|_| JavaResolveCache::default());
         let data = DataEntities {
             instances,
             backends,
@@ -57,6 +58,7 @@ pub fn start(
             settings,
             local_create,
             update,
+            java_resolve,
             backend_sender,
             launcher_dir,
         };

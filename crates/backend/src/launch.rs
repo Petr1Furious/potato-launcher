@@ -54,6 +54,7 @@ pub(crate) struct LaunchRequest {
     pub(crate) bypass_required_provider: bool,
     pub(crate) xmx_mb: Option<u64>,
     pub(crate) jvm_flags: Option<String>,
+    pub(crate) java_path: Option<String>,
     pub(crate) launcher_dir: PathBuf,
     pub(crate) local_instances: Vec<LocalInstance>,
     pub(crate) account_entries: Vec<(AccountKey, AuthProviderConfig, AccountData)>,
@@ -82,6 +83,10 @@ pub(crate) enum LaunchError {
     NoAccount,
     #[error("Java {0} was not found; install or repair the instance first")]
     JavaNotFound(String),
+    #[error(
+        "invalid custom Java path: the configured executable is missing or incompatible with Java {0}"
+    )]
+    InvalidCustomJavaPath(String),
     #[error("classpath entry does not exist: {0}")]
     MissingClasspathEntry(String),
     #[error("authlib-injector is missing at {0}")]
@@ -153,9 +158,19 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
     let refreshed_account =
         (account_data != original_account_data).then(|| (provider.clone(), account_data.clone()));
     let java_version = metadata.get_java_version();
-    let java = java::get_java(&java_version, &data_dir)
-        .await
-        .ok_or_else(|| LaunchError::JavaNotFound(java_version.clone()))?;
+    let java = if let Some(path) = request.java_path.as_deref() {
+        let java_path = std::path::Path::new(path);
+        if !java::check_java(&java_version, java_path).await {
+            return Err(LaunchError::InvalidCustomJavaPath(java_version));
+        }
+        java::get_installation_pub(java_path)
+            .await
+            .ok_or_else(|| LaunchError::InvalidCustomJavaPath(java_version))?
+    } else {
+        java::get_java(&java_version, &data_dir)
+            .await
+            .ok_or_else(|| LaunchError::JavaNotFound(java_version.clone()))?
+    };
     let args = build_launch_arguments(&LaunchBuildContext {
         metadata: &metadata,
         provider: &provider,

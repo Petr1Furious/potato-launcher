@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, HashSet},
     path::PathBuf,
     process::Command,
+    sync::Arc,
 };
 
 use gpui::{
@@ -36,6 +37,7 @@ use crate::entity::{
     account::AccountsUpdatedEvent,
     backend::BackendsUpdatedEvent,
     instance::InstancesUpdatedEvent,
+    java_resolve::{JavaResolveCache, JavaResolvedEvent},
     local_create::{LoaderVersionsUpdatedEvent, LocalCreateVersionsUpdatedEvent},
     notification::NotificationEntries,
     settings::LauncherSettingsUpdatedEvent,
@@ -66,6 +68,9 @@ pub struct InstancesPage {
     create_local_show_snapshots: bool,
     create_local_sync_mc_dropdown: bool,
     create_local_sync_loader_dropdown: bool,
+    java_path_input: gpui::Entity<InputState>,
+    java_path_last_instance: Option<Uuid>,
+    java_path_last_stored: Option<Arc<str>>,
     _instances_subscription: gpui::Subscription,
     _backends_subscription: gpui::Subscription,
     _accounts_subscription: gpui::Subscription,
@@ -73,14 +78,11 @@ pub struct InstancesPage {
     _local_create_subscription: gpui::Subscription,
     _local_loader_subscription: gpui::Subscription,
     _mc_version_selected_subscription: gpui::Subscription,
+    _java_resolve_subscription: gpui::Subscription,
 }
 
 impl InstancesPage {
     pub fn new(data: &DataEntities, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let _instances_subscription = cx
-            .subscribe(&data.instances, |_, _, _: &InstancesUpdatedEvent, cx| {
-                cx.notify()
-            });
         let _backends_subscription = cx
             .subscribe(&data.backends, |_, _, _: &BackendsUpdatedEvent, cx| {
                 cx.notify()
@@ -110,6 +112,33 @@ impl InstancesPage {
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::memory_mib()));
         let jvm_flags_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::jvm_flags()));
+        let java_path_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::instances::java_path_auto()));
+        let java_path_input_for_instances = java_path_input.clone();
+        let _instances_subscription = cx.subscribe_in(
+            &data.instances,
+            window,
+            move |page, _, _: &InstancesUpdatedEvent, window, cx| {
+                let current = page.selected_instance;
+                let stored = current.and_then(|id| {
+                    page.data
+                        .instances
+                        .read(cx)
+                        .entries
+                        .iter()
+                        .find(|v| v.id == id)
+                        .and_then(|v| v.java_path.clone())
+                });
+                if current != page.java_path_last_instance || stored != page.java_path_last_stored {
+                    page.java_path_last_instance = current;
+                    page.java_path_last_stored = stored.clone();
+                    let value = stored.as_deref().unwrap_or_default().to_owned();
+                    java_path_input_for_instances
+                        .update(cx, |state, cx| state.set_value(value, window, cx));
+                }
+                cx.notify();
+            },
+        );
         let create_local_name_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::instance_name()));
         let create_local_mc_version_select = cx
@@ -132,6 +161,22 @@ impl InstancesPage {
             |page, _, _: &LoaderVersionsUpdatedEvent, cx| {
                 page.create_local_sync_loader_dropdown = true;
                 cx.notify();
+            },
+        );
+        let java_path_input_for_sub = java_path_input.clone();
+        let _java_resolve_subscription = cx.subscribe_in(
+            &data.java_resolve,
+            window,
+            move |page, _, event: &JavaResolvedEvent, window, cx| {
+                if page.selected_instance != Some(event.0) {
+                    return;
+                }
+                use crate::entity::java_resolve::JavaResolveState;
+                let value = match page.data.java_resolve.read(cx).state(event.0) {
+                    Some(JavaResolveState::Found(p)) => p.to_string(),
+                    _ => String::new(),
+                };
+                java_path_input_for_sub.update(cx, |state, cx| state.set_value(value, window, cx));
             },
         );
 
@@ -157,6 +202,9 @@ impl InstancesPage {
             elyby_launcher_name_input,
             memory_input,
             jvm_flags_input,
+            java_path_input,
+            java_path_last_instance: None,
+            java_path_last_stored: None,
             create_local_name_input,
             create_local_mc_version_select,
             create_local_loader_version_select,
@@ -167,6 +215,7 @@ impl InstancesPage {
             _local_create_subscription,
             _local_loader_subscription,
             _mc_version_selected_subscription,
+            _java_resolve_subscription,
         }
     }
 
@@ -796,6 +845,8 @@ impl InstancesPage {
                     &instance,
                     self.memory_input.clone(),
                     self.jvm_flags_input.clone(),
+                    self.java_path_input.clone(),
+                    self.data.java_resolve.clone(),
                     sender.clone(),
                     cx,
                 ),
@@ -1293,12 +1344,26 @@ fn instance_card(
     let show_dir_name = instance.dir_name.as_ref() != instance.display_name.as_ref();
     let settings = Button::new(format!("settings-{details_id}"))
         .label(t::common::settings())
-        .on_click(cx.listener(move |page, _, _, cx| {
+        .on_click(cx.listener(move |page, _, window, cx| {
             page.show_global_settings = false;
             page.show_backend_settings = false;
             page.show_accounts_panel = false;
             page.selected_instance =
                 (page.selected_instance != Some(details_id)).then_some(details_id);
+            let stored = page.selected_instance.and_then(|id| {
+                page.data
+                    .instances
+                    .read(cx)
+                    .entries
+                    .iter()
+                    .find(|v| v.id == id)
+                    .and_then(|v| v.java_path.clone())
+            });
+            let value = stored.as_deref().unwrap_or_default().to_owned();
+            page.java_path_last_instance = page.selected_instance;
+            page.java_path_last_stored = stored;
+            page.java_path_input
+                .update(cx, |state, cx| state.set_value(value, window, cx));
             cx.notify();
         }));
 
@@ -1734,6 +1799,8 @@ fn runtime_section(
     instance: &InstanceView,
     memory_input: gpui::Entity<InputState>,
     jvm_flags_input: gpui::Entity<InputState>,
+    java_path_input: gpui::Entity<InputState>,
+    java_resolve: gpui::Entity<JavaResolveCache>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
@@ -1830,6 +1897,155 @@ fn runtime_section(
                         ),
                 ),
         )
+        .child(java_section(
+            instance,
+            java_path_input,
+            java_resolve,
+            sender,
+            cx,
+        ))
+}
+
+fn java_section(
+    instance: &InstanceView,
+    java_path_input: gpui::Entity<InputState>,
+    java_resolve: gpui::Entity<JavaResolveCache>,
+    sender: BackendSender,
+    cx: &mut Context<InstancesPage>,
+) -> gpui::Div {
+    let id = instance.id;
+    let local_install_in_progress =
+        matches!(instance.origin, InstanceOrigin::Local) && !instance.locally_installed;
+
+    v_flex()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .font_semibold()
+                .child(t::instances::java_section()),
+        )
+        .when(local_install_in_progress, |this| {
+            this.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(t::instances::java_install_required()),
+            )
+        })
+        .when(!local_install_in_progress, |this| {
+            let resolve_state = java_resolve.read(cx).state(id);
+            this.when_some(instance.required_java_version.clone(), |this, version| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(t::instances::required_java_version(version.to_string())),
+                )
+            })
+            .child(
+                h_flex().gap_2().child(Input::new(&java_path_input)).child(
+                    Button::new(format!("java-set-{id}"))
+                        .label(t::instances::set_java_path())
+                        .on_click({
+                            let input = java_path_input.clone();
+                            let sender = sender.clone();
+                            move |_, _, cx| {
+                                let value = input.read(cx).value().trim().to_string();
+                                if !value.is_empty() {
+                                    sender.send(MessageToBackend::SetInstanceJavaPath {
+                                        instance: id,
+                                        path: Some(value),
+                                    });
+                                }
+                            }
+                        }),
+                ),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(format!("java-auto-{id}"))
+                            .label(t::instances::java_auto())
+                            .on_click({
+                                let sender = sender.clone();
+                                cx.listener(move |page, _, _, cx| {
+                                    page.data.java_resolve.update(cx, |cache, cx| {
+                                        cache.set_resolving(id, cx);
+                                    });
+                                    sender.send(MessageToBackend::ResolveJavaPath(id));
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new(format!("java-clear-{id}"))
+                            .label(t::common::default())
+                            .disabled(instance.java_path.is_none())
+                            .on_click({
+                                let sender = sender.clone();
+                                let input = java_path_input.clone();
+                                cx.listener(move |_, _, window, cx| {
+                                    input.update(cx, |state, cx| {
+                                        state.set_value(String::new(), window, cx)
+                                    });
+                                    sender.send(MessageToBackend::SetInstanceJavaPath {
+                                        instance: id,
+                                        path: None,
+                                    });
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new(format!("java-browse-{id}"))
+                            .label(t::instances::java_browse())
+                            .on_click({
+                                let sender = sender.clone();
+                                cx.listener(move |_, _, _window, cx| {
+                                    let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+                                        files: true,
+                                        directories: false,
+                                        multiple: false,
+                                        prompt: None,
+                                    });
+                                    let sender = sender.clone();
+                                    cx.spawn(async move |_, _cx| {
+                                        if let Ok(Ok(Some(paths))) = receiver.await
+                                            && let Some(path) = paths.into_iter().next()
+                                        {
+                                            let path_str = path.to_string_lossy().to_string();
+                                            sender.send(MessageToBackend::SetInstanceJavaPath {
+                                                instance: id,
+                                                path: Some(path_str),
+                                            });
+                                        }
+                                    })
+                                    .detach();
+                                })
+                            }),
+                    ),
+            )
+            .when_some(resolve_state, |this, state| {
+                use crate::entity::java_resolve::JavaResolveState;
+                if matches!(
+                    state,
+                    JavaResolveState::Resolving | JavaResolveState::NotFound
+                ) {
+                    let text = match state {
+                        JavaResolveState::Resolving => t::instances::java_resolving(),
+                        _ => t::instances::java_not_found(),
+                    };
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(text),
+                    )
+                } else {
+                    this
+                }
+            })
+        })
 }
 
 fn launcher_settings_section(

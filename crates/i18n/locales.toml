@@ -246,6 +246,46 @@ ru = "Задать память"
 en = "Set Flags"
 ru = "Задать флаги"
 
+[instances.java_section]
+en = "Java"
+ru = "Java"
+
+[instances.required_java_version]
+en = "Requires Java ${version: String}"
+ru = "Требуется Java ${version: String}"
+
+[instances.java_path_auto]
+en = "<auto>"
+ru = "<авто>"
+
+[instances.java_browse]
+en = "Browse"
+ru = "Выбрать"
+
+[instances.java_auto]
+en = "Auto"
+ru = "Авто"
+
+[instances.java_resolving]
+en = "Resolving..."
+ru = "Определение..."
+
+[instances.java_not_found]
+en = "Java not found"
+ru = "Java не найдена"
+
+[instances.set_java_path]
+en = "Set Path"
+ru = "Задать путь"
+
+[instances.java_install_required]
+en = "Wait for the local install to finish before configuring Java."
+ru = "Дождитесь завершения локальной установки, чтобы настроить Java."
+
+[notifications.java_path_install_in_progress]
+en = "Java path cannot be changed while a local install is in progress"
+ru = "Путь к Java нельзя изменить, пока идёт локальная установка"
+
 [instances.used_by_installed]
 en = "Used by installed instances"
 ru = "Используется установленными инстансами"
@@ -657,6 +697,22 @@ ru = "Не удалось сохранить переопределение па
 [notifications.failed_save_jvm_flags]
 en = "Failed to save JVM flags: ${error: String}"
 ru = "Не удалось сохранить флаги JVM: ${error: String}"
+
+[notifications.invalid_java_path]
+en = "Invalid Java installation: the selected file is not a compatible Java executable"
+ru = "Неверная установка Java: выбранный файл не является совместимым исполняемым файлом Java"
+
+[notifications.failed_save_java_path]
+en = "Failed to save Java path: ${error: String}"
+ru = "Не удалось сохранить путь к Java: ${error: String}"
+
+[notifications.java_path_set]
+en = "Java path set"
+ru = "Путь к Java задан"
+
+[notifications.java_path_cleared]
+en = "Java path reset to automatic"
+ru = "Путь к Java сброшен на автоматический"
 
 [notifications.already_launching_or_running]
 en = "Instance is already launching or running"

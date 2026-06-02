@@ -55,6 +55,11 @@ pub enum MessageToBackend {
         instance: Uuid,
         flags: Option<String>,
     },
+    SetInstanceJavaPath {
+        instance: Uuid,
+        path: Option<String>,
+    },
+    ResolveJavaPath(Uuid),
     CreateLocalInstance {
         display_name: String,
         minecraft_version: String,
@@ -114,6 +119,10 @@ pub enum MessageToFrontend {
         error: Option<Arc<str>>,
     },
     UpdateStatus(UpdateStatusView),
+    JavaPathResolved {
+        instance: Uuid,
+        path: Option<Arc<str>>,
+    },
     Quit,
 }
 
@@ -136,6 +145,8 @@ pub struct InstanceView {
     pub effective_auth_provider: Option<AuthProviderConfig>,
     pub effective_xmx_mb: Option<u64>,
     pub jvm_flags: Option<Arc<str>>,
+    pub java_path: Option<Arc<str>>,
+    pub required_java_version: Option<Arc<str>>,
 }
 
 impl InstanceView {

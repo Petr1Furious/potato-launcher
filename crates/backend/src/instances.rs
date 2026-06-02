@@ -29,6 +29,7 @@ pub type ProgressMap = HashMap<Uuid, InstallProgressView>;
 pub struct LocalMetadataView {
     pub auth_provider: Option<AuthProviderConfig>,
     pub default_xmx_mb: Option<u64>,
+    pub required_java_version: Option<Arc<str>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -37,6 +38,7 @@ pub struct InstanceUserSettingsView {
     pub account_override: Option<AccountKey>,
     pub xmx_mb: Option<u64>,
     pub jvm_flags: Option<Arc<str>>,
+    pub java_path: Option<Arc<str>>,
 }
 
 pub struct InstanceLiveState<'a> {
@@ -181,6 +183,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             effective_auth_provider: effective_account.map(|account| account.provider.clone()),
             effective_xmx_mb: settings.xmx_mb.or(metadata.default_xmx_mb),
             jvm_flags: settings.jvm_flags,
+            java_path: settings.java_path,
+            required_java_version: metadata.required_java_version,
         });
     }
 
@@ -225,6 +229,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             effective_auth_provider: None,
             effective_xmx_mb: None,
             jvm_flags: None,
+            java_path: None,
+            required_java_version: None,
         });
     }
 
@@ -287,6 +293,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                     .or(entry.auth_backend.clone()),
                 effective_xmx_mb: settings.xmx_mb,
                 jvm_flags: settings.jvm_flags,
+                java_path: settings.java_path,
+                required_java_version: Some(Arc::from(entry.required_java_version.as_str())),
             });
         }
     }
@@ -663,6 +671,7 @@ mod tests {
             LocalMetadataView {
                 auth_provider: Some(provider.clone()),
                 default_xmx_mb: Some(3072),
+                ..Default::default()
             },
         )]);
 
@@ -689,6 +698,7 @@ mod tests {
             LocalMetadataView {
                 auth_provider: Some(required),
                 default_xmx_mb: Some(4096),
+                ..Default::default()
             },
         )]);
         let accounts = vec![test_account(AuthProviderConfig::Offline(
@@ -719,6 +729,7 @@ mod tests {
             LocalMetadataView {
                 auth_provider: Some(required.clone()),
                 default_xmx_mb: Some(4096),
+                ..Default::default()
             },
         )]);
         let settings = HashMap::from([(
@@ -728,6 +739,7 @@ mod tests {
                 account_override: None,
                 xmx_mb: None,
                 jvm_flags: None,
+                ..Default::default()
             },
         )]);
 
@@ -761,6 +773,7 @@ mod tests {
             url: Url::parse("https://example.invalid/Remote.json").unwrap(),
             sha1: "remote-sha1".to_string(),
             auth_backend: Some(provider.clone()),
+            required_java_version: "8".to_string(),
         };
         let catalogs = HashMap::from([(
             url,
@@ -794,6 +807,7 @@ mod tests {
             url: Url::parse("https://example.invalid/Remote.json").unwrap(),
             sha1: "remote-sha1".to_string(),
             auth_backend: Some(required),
+            required_java_version: "8".to_string(),
         };
         let id = remote_entry_id(&url, &entry.name);
         let catalogs = HashMap::from([(
@@ -809,6 +823,7 @@ mod tests {
                 account_override: Some(override_key.clone()),
                 xmx_mb: None,
                 jvm_flags: None,
+                ..Default::default()
             },
         )]);
 
@@ -839,6 +854,7 @@ mod tests {
             LocalMetadataView {
                 auth_provider: Some(AuthProviderConfig::Microsoft(MicrosoftAuthProvider {})),
                 default_xmx_mb: Some(4096),
+                ..Default::default()
             },
         )]);
         let settings = HashMap::from([(
@@ -848,6 +864,7 @@ mod tests {
                 account_override: Some(override_account.clone()),
                 xmx_mb: Some(6144),
                 jvm_flags: Some(Arc::<str>::from("-Dexample=true")),
+                ..Default::default()
             },
         )]);
         let accounts = vec![test_account(AuthProviderConfig::Offline(
@@ -911,6 +928,7 @@ mod tests {
                     url: Url::parse(&format!("https://example.invalid/{name}.json")).unwrap(),
                     sha1: sha1.to_string(),
                     auth_backend: None,
+                    required_java_version: "8".to_string(),
                 })
                 .collect(),
         }
