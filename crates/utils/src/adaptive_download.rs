@@ -273,6 +273,10 @@ pub async fn download_files(
     download_tasks: Vec<DownloadTask>,
     progress_bar: impl ProgressTracker,
 ) -> Result<(), AdaptiveDownloadError> {
+    if download_tasks.is_empty() {
+        return Ok(());
+    }
+
     progress_bar.set_length(download_tasks.len() as u64);
 
     let client = Client::builder()

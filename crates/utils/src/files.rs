@@ -1,4 +1,6 @@
+use either::Either;
 use futures::stream::{self, StreamExt};
+use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
@@ -35,10 +37,7 @@ pub fn get_files_in_dir(path: &Path) -> Result<Vec<PathBuf>, GetFilesInDirError>
         .collect())
 }
 
-pub fn get_files_ignore_paths(
-    path: &Path,
-    ignore_paths: &HashSet<PathBuf>,
-) -> Vec<PathBuf> {
+pub fn get_files_ignore_paths(path: &Path, ignore_paths: &HashSet<PathBuf>) -> Vec<PathBuf> {
     // TODO: use ignore_paths here
     if path.is_file() {
         return vec![path.to_path_buf()];
@@ -137,10 +136,39 @@ pub async fn remove_file_or_dir(path: &Path) -> io::Result<()> {
 #[derive(Debug)]
 pub struct CheckTask {
     pub url: Url,
-    /// If set, the file hash will be checked and the file will be redownloaded on mismatches.
+    /// If set, the file hash will be checked and the file will be redownloaded on mismatches
     pub remote_sha1: Option<String>,
-    /// If set, the file size will be checked and the file will be redownloaded on mismatches.
+    /// If set, the file size will be checked and the file will be redownloaded on mismatches
     pub remote_size: Option<u64>,
+    /// Full path to the file to check/download
+    pub path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigType {
+    Json,
+    Yaml,
+    Toml,
+    Properties,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConfigOption {
+    // TODO: untagged Either serialization
+    pub key: Vec<Either<String, usize>>,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug)]
+pub struct ConfigOptionTask {
+    pub path: PathBuf,
+    pub config_type: ConfigType,
+    pub options: Vec<ConfigOption>,
+}
+
+#[derive(Debug)]
+pub struct DeleteTask {
     pub path: PathBuf,
 }
 
@@ -199,60 +227,59 @@ async fn atomic_replace_file(tmp_path: &Path, target_path: &Path) -> io::Result<
     fs::rename(tmp_path, target_path).await
 }
 
-pub async fn get_download_task(check_task: &CheckTask) -> io::Result<Option<DownloadTask>> {
-    match fs::metadata(&check_task.path).await {
-        Ok(metadata) if !metadata.is_file() => {
-            return Ok(Some(DownloadTask {
-                url: check_task.url.clone(),
-                path: check_task.path.clone(),
-            }));
-        }
-        Ok(_) => {}
-        Err(err) if err.kind() == ErrorKind::NotFound => {
-            return Ok(Some(DownloadTask {
-                url: check_task.url.clone(),
-                path: check_task.path.clone(),
-            }));
-        }
-        Err(err) => return Err(err),
-    }
-
-    if let Some(remote_sha1) = &check_task.remote_sha1 {
-        let local_sha1 = hash_file(&check_task.path).await?;
-        if &local_sha1 != remote_sha1 {
-            return Ok(Some(DownloadTask {
-                url: check_task.url.clone(),
-                path: check_task.path.clone(),
-            }));
-        }
-    }
-
-    Ok(None)
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum CheckTasksError {
-    #[error("Hash of file {0} is missing")]
-    HashMissing(PathBuf),
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum GetDownloadTasksError {
     #[error("failed while reading local files for download checks: {0}")]
     Io(#[from] io::Error),
     #[error("failed while hashing local files for download checks: {0}")]
     HashFiles(#[from] HashFilesError),
-    #[error("download check state is invalid: {0}")]
-    CheckTasks(#[from] CheckTasksError),
+}
+
+pub async fn get_download_task(
+    check_task: &CheckTask,
+) -> Result<Option<DownloadTask>, GetDownloadTasksError> {
+    match fs::metadata(&check_task.path).await {
+        Ok(metadata) => {
+            if !metadata.is_file() {
+                return Ok(Some(DownloadTask {
+                    url: check_task.url.clone(),
+                    path: check_task.path.clone(),
+                }));
+            }
+        }
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Ok(Some(DownloadTask {
+                url: check_task.url.clone(),
+                path: check_task.path.clone(),
+            }));
+        }
+        Err(err) => return Err(err.into()),
+    }
+
+    if let Some(remote_sha1) = &check_task.remote_sha1
+        && &hash_file(&check_task.path).await? != remote_sha1
+    {
+        return Ok(Some(DownloadTask {
+            url: check_task.url.clone(),
+            path: check_task.path.clone(),
+        }));
+    }
+
+    Ok(None)
 }
 
 pub async fn get_download_tasks(
     check_tasks: Vec<CheckTask>,
     progress_bar: impl ProgressTracker,
 ) -> Result<Vec<DownloadTask>, GetDownloadTasksError> {
+    if check_tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut to_hash = Vec::new();
     for task in &check_tasks {
         if task.remote_sha1.is_some() {
+            // TODO: don't do 2 metadata calls per file
             match fs::metadata(&task.path).await {
                 Ok(metadata) => {
                     if metadata.is_file() {
@@ -278,9 +305,9 @@ pub async fn get_download_tasks(
                     need_download = true;
                 } else if let Some(remote_sha1) = &task.remote_sha1
                     && remote_sha1
-                        != hashes
-                            .get(&path)
-                            .ok_or(CheckTasksError::HashMissing(path.clone()))?
+                        != hashes.get(&path).expect(
+                            "hash should exist for files with remote_sha1 that exist locally",
+                        )
                 {
                     need_download = true;
                 }

@@ -9,8 +9,9 @@ use std::{
 use either::Either;
 use instance::{
     instance_metadata::{
-        ConfigType, IncludeAction, IncludeActionConfigOptions, IncludeActionDirectory,
-        IncludeEntry, InstanceMetadata, Object,
+        ApplyOn, ConfigType, IncludeAction, IncludeActionConfigOptions, IncludeActionDirectory,
+        IncludeEntry, InstallCause, InstallParams, InstanceMetadata, Object,
+        ResourceUpdateBehavior,
     },
     manifest::InstanceManifestEntry,
     storage::{LocalInstance, RemoteSource},
@@ -19,7 +20,9 @@ use launcher_bridge::{FrontendSender, MessageToFrontend};
 use tokio::sync::mpsc;
 use url::Url;
 use utils::{
-    adaptive_download, files::{self, CheckTask}, java,
+    adaptive_download,
+    files::{self, CheckTask},
+    java,
     paths::{DataDir, InstanceDirFS, InstancesDir, NativesDir},
     progress::{
         ProgressEvent, ProgressHandle, ProgressReporter, ProgressStage, ProgressTracker, Unit,
@@ -32,8 +35,13 @@ use crate::{BackendEvent, catalog::BackendCatalogEntry, instances::remote_entry_
 #[derive(Clone)]
 pub(crate) struct InstallRequest {
     pub(crate) id: Uuid,
+
+    // TODO: pass the whole InstallParams here?
+    pub(crate) cause: InstallCause,
     pub(crate) force_overwrite: bool,
-    pub(crate) launcher_dir: PathBuf,
+    pub(crate) reset_mods: bool,
+
+    pub(crate) launcher_dir: DataDir,
     pub(crate) client: reqwest::Client,
     pub(crate) local_instances: Vec<LocalInstance>,
     pub(crate) catalogs: HashMap<Url, BackendCatalogEntry>,
@@ -142,10 +150,9 @@ fn stage_message(stage: &ProgressStage) -> String {
 
 pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<InstallOutput> {
     let plan = resolve_install_plan(request.id, &request.local_instances, &request.catalogs)?;
-    let data_dir = DataDir::new(request.launcher_dir.clone());
     let instance_dir = InstancesDir::root()
         .instance_dir(&plan.dir_name)
-        .with_data_dir(data_dir.clone());
+        .with_data_dir(request.launcher_dir.clone());
     instance_dir.ensure_dir();
 
     let progress =
@@ -162,17 +169,18 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     )
     .await?;
 
-    install_game_files(
-        &request.client,
-        &metadata,
-        &data_dir,
-        &instance_dir,
-        request.force_overwrite,
-        &progress,
-    )
-    .await?;
+    let install_params = InstallParams {
+        data_dir: request.launcher_dir.clone(),
+        minecraft_dir: instance_dir.minecraft_dir(),
+        cause: request.cause,
+        force_overwrite: request.force_overwrite,
+        reset_mods: request.reset_mods,
+    };
+    install_game_files(&request.client, &metadata, install_params, &progress).await?;
 
-    ensure_java(&metadata, &data_dir, &progress).await?;
+    if cause == InstallCause::Update {
+        ensure_java(&metadata, &data_dir, &progress).await?;
+    }
 
     let instance = if let Some(mut existing) = plan.existing {
         existing.source = Some(plan.source);
@@ -393,86 +401,19 @@ async fn apply_config_options(
         .map_err(ApplyIncludesError::WriteConfigError)
 }
 
-fn include_object_task(object: &Object, minecraft_dir: &Path) -> CheckTask {
-    CheckTask {
-        url: object.url.clone(),
-        remote_sha1: Some(object.sha1.clone()),
-        remote_size: None,
-        path: object.path.to_path(minecraft_dir),
-    }
-}
-
-/// Processes the include entries, applying file deletions and patches immediately
-/// and returning Vec<CheckTask> of files that need to be updated from the server.
-async fn apply_includes(
-    metadata: &InstanceMetadata,
-    force_overwrite: bool,
-    minecraft_dir: &Path,
-) -> Result<Vec<CheckTask>, ApplyIncludesError> {
-    let mut check_tasks = Vec::new();
-    let mut seen_paths: HashSet<PathBuf> = HashSet::new();
-
-    let mut include_file = |object: &Object, path: &Path, overwrite: bool| {
-        if overwrite || !path.exists() {
-            check_tasks.push(include_object_task(object, minecraft_dir));
-        }
-    };
-
-    // includes are sorted from the most specific to the less specific by the generator.
-    // seen_paths is only used to avoid deleting files included by more specific rules,
-    // preventing object intersections is done by the generator
-    for entry in &metadata.include {
-        match &entry.action {
-            IncludeAction::File(action) => {
-                let path = action.object.path.to_path(minecraft_dir);
-                include_file(&action.object, &path, action.overwrite);
-                seen_paths.insert(path);
-            }
-            IncludeAction::ConfigOptions(action) => {
-                apply_config_options(minecraft_dir, &action).await?
-            }
-            IncludeAction::Directory(action) => {
-                for object in action.objects.iter() {
-                    let path = object.path.to_path(minecraft_dir);
-                    include_file(object, &path, action.overwrite);
-                    seen_paths.insert(path);
-                }
-                if action.delete_extra || force_overwrite {
-                    let dir_path = entry.path.to_path(minecraft_dir);
-                    for file in files::get_files_ignore_paths(&dir_path, &seen_paths) {
-                        tokio::fs::remove_file(file)
-                            .await
-                            .map_err(|e| ApplyIncludesError::DeleteFileError(e))?;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(check_tasks)
-}
-
 pub(crate) async fn install_game_files(
     client: &reqwest::Client,
     metadata: &InstanceMetadata,
-    data_dir: &DataDir,
-    instance_dir: &InstanceDirFS,
-    force_overwrite: bool,
+    params: InstallParams<'_>,
     progress: &BackendProgressReporter,
 ) -> anyhow::Result<()> {
-    let mut check_tasks = Vec::new();
-    check_tasks.push(metadata.get_client_check_task(data_dir)?);
-    check_tasks.extend(metadata.get_library_check_tasks(data_dir)?);
-    check_tasks.extend(metadata.get_asset_check_tasks(client, data_dir).await?);
-    check_tasks
-        .extend(apply_includes(metadata, force_overwrite, &instance_dir.minecraft_dir()).await?);
-    let check_tasks = files::dedup_check_tasks(check_tasks);
+    let tasks = metadata.get_all_install_tasks(client, &params).await?;
 
     let check_progress = progress.handle(
         ProgressStage::Checking,
         launcher_i18n::progress::checking_install_files(),
     );
-    let download_tasks = files::get_download_tasks(check_tasks, check_progress).await?;
+    let download_tasks = files::get_download_tasks(tasks.check_tasks, check_progress).await?;
 
     let download_progress = progress.handle(
         ProgressStage::Downloading,
@@ -481,14 +422,17 @@ pub(crate) async fn install_game_files(
     adaptive_download::download_files(download_tasks, download_progress).await?;
 
     metadata
-        .mark_include_downloads_complete(&instance_dir.minecraft_dir())
+        .mark_include_downloads_complete(&params.minecraft_dir)
         .await?;
 
-    let extract_progress = progress.handle(
-        ProgressStage::Extracting,
-        launcher_i18n::progress::extracting_native_libraries(),
-    );
-    extract_natives(metadata, data_dir, extract_progress).await?;
+    if params.cause == InstallCause::Update {
+        // TODO: do we want to run this in StrictAll mode?
+        let extract_progress = progress.handle(
+            ProgressStage::Extracting,
+            launcher_i18n::progress::extracting_native_libraries(),
+        );
+        extract_natives(metadata, data_dir, extract_progress).await?;
+    }
 
     Ok(())
 }
@@ -747,13 +691,14 @@ mod tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use instance::instance_metadata::ResourceUpdateBehavior;
 
     fn empty_metadata(include: Vec<IncludeEntry>, mod_entries: Vec<ModEntry>) -> InstanceMetadata {
         InstanceMetadata {
             name: "Test".to_string(),
             auth_backend: None,
             include,
-            mods_update_behavior: ModsUpdateBehavior::Lenient,
+            resource_update_behavior: ResourceUpdateBehavior::Lenient,
             mod_entries,
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: Vec::new(),
@@ -781,8 +726,8 @@ mod tests {
             vec![IncludeEntry {
                 path: RelativePathBuf::from("config"),
                 apply_on: ApplyOn::Update,
+                overwrite: false,
                 action: IncludeAction::Directory(IncludeActionDirectory {
-                    overwrite: false,
                     delete_extra: true,
                     skip_if_dir_exists: true,
                     objects: vec![Object {
@@ -816,8 +761,8 @@ mod tests {
             vec![IncludeEntry {
                 path: RelativePathBuf::from("config"),
                 apply_on: ApplyOn::Update,
+                overwrite: false,
                 action: IncludeAction::Directory(IncludeActionDirectory {
-                    overwrite: false,
                     delete_extra: true,
                     skip_if_dir_exists: true,
                     objects: vec![Object {

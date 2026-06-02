@@ -16,7 +16,7 @@ use utils::{
 use crate::{
     assets::{AssetIndex, AssetsMetadata, AssetsMetadataError},
     authlib::default_authlib_injector_library,
-    instance_metadata::{InstanceMetadata, ModsUpdateBehavior},
+    instance_metadata::{InstanceMetadata, ResourceUpdateBehavior},
 };
 
 use super::manifest::VersionMetadataInfo;
@@ -732,7 +732,7 @@ impl VersionMetadata {
             auth_backend: None,
             include: vec![],
             mod_entries: vec![],
-            mods_update_behavior: ModsUpdateBehavior::default(),
+            resource_update_behavior: ResourceUpdateBehavior::default(),
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: vec![],
             authlib_injector: default_authlib_injector_library(),

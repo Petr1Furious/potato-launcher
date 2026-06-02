@@ -3333,7 +3333,6 @@ dependencies = [
 name = "instance"
 version = "0.1.0"
 dependencies = [
- "either",
  "launcher-auth",
  "lazy_static",
  "log",
@@ -7389,6 +7388,7 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "either",
  "fern",
  "flate2",
  "futures",

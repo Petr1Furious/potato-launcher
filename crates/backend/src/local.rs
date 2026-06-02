@@ -6,7 +6,7 @@ use std::{
 
 use generate::instance::{InstanceGenerator, InstanceSpec, Loader};
 use instance::{
-    instance_metadata::ModsUpdateBehavior,
+    instance_metadata::{InstallCause, InstallParams, ResourceUpdateBehavior},
     storage::{InstanceStorage, LocalInstance, sanitize_dir_name},
     version_metadata::OsArch,
 };
@@ -148,7 +148,7 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
                 .filter(|version| !version.is_empty()),
             source_dir: None,
             include_rules: vec![],
-            mods_update_behavior: ModsUpdateBehavior::default(),
+            resource_update_behavior: ResourceUpdateBehavior::default(),
             auth_backend: None,
             default_xmx: None,
         },
@@ -187,9 +187,13 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     install_game_files(
         &request.client,
         &metadata,
-        &data_dir,
-        &instance_dir,
-        false,
+        InstallParams {
+            data_dir: data_dir.clone(),
+            minecraft_dir: instance_dir.minecraft_dir(),
+            cause: InstallCause::Update,
+            force_overwrite: false,
+            reset_mods: false,
+        },
         &progress,
     )
     .await?;

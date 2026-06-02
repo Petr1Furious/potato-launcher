@@ -652,7 +652,10 @@ impl BackendState {
     fn start_install(
         &mut self,
         id: Uuid,
+        
+        cause: InstallCause,
         force_overwrite: bool,
+        reset_mods: bool,
         tx: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) {
@@ -678,8 +681,10 @@ impl BackendState {
 
         let request = install::InstallRequest {
             id,
+            cause,
             force_overwrite,
-            launcher_dir: self.launcher_dir.clone(),
+            reset_mods,
+            launcher_dir: DataDir::new(self.launcher_dir.clone()),
             client: self.client.clone(),
             local_instances: self.instance_storage.all().to_vec(),
             catalogs: self.catalogs.clone(),

@@ -1,17 +1,22 @@
 use instance::{
     authlib::default_authlib_injector_library,
-    instance_metadata::{IncludeAction, IncludeEntry, InstanceMetadata, ModsUpdateBehavior, Object},
+    instance_metadata::{
+        ApplyOn, IncludeAction, IncludeEntry, InstanceMetadata, ResourceUpdateBehavior, Object
+    },
     manifest::VanillaVersionManifest,
     overrides::with_overrides,
     version_metadata::{Library, OsArch, VersionMetadata},
 };
 use launcher_auth::providers::AuthProviderConfig;
 use log::{debug, info, warn};
+use rand::seq::IndexedRandom;
 use relative_path::{RelativePath, RelativePathBuf};
 use reqwest::Client;
 use serde::Deserialize;
 use std::{
-    collections::HashSet, os::unix::fs::MetadataExt, path::{Path, PathBuf}
+    collections::{HashMap, HashSet},
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
 };
 use url::Url;
 use utils::{
@@ -40,12 +45,40 @@ pub enum Loader {
     Neoforge,
 }
 
-enum CheckType {
-    Hash,
-    Size,
+async fn get_file_object(
+    base_path: &Path,
+    path: &RelativePathBuf,
+    base_url: &BaseUrl,
+    instance_dir: &InstanceDir,
+) -> Result<Object, GetObjectsError> {
+    let full_path = path.to_path(base_path);
+    if !full_path.exists() {
+        return Err(GetObjectsError::IncludeFileNotFound(path.to_string()));
+    }
+    if full_path.is_dir() {
+        return Err(GetObjectsError::IncludeFileIsDirectory(path.to_string()));
+    }
+    // TODO: other non-file cases?
+
+    let hash = files::hash_files(&vec![full_path.clone()], progress::no_progress_bar())
+        .await?
+        .into_iter()
+        .next()
+        .expect("hash_files should return one hash");
+    let object_url = instance_dir
+        .minecraft_dir()
+        .instance_object_path(&path)
+        .to_url(base_url);
+    Ok(Object {
+        path: path.clone(),
+        sha1: hash.clone(),
+        // size is not used for includes
+        size: None,
+        url: object_url,
+    })
 }
 
-async fn get_objects(
+async fn get_directory_objects(
     base_path: &Path,
     path: &RelativePathBuf,
     base_url: &BaseUrl,
@@ -66,7 +99,8 @@ async fn get_objects(
         objects.push(Object {
             path: object_path.clone(),
             sha1: hash.clone(),
-            size: Some(tokio::fs::metadata(path).await?.size()),
+            // size is not used for includes
+            size: None,
             url: object_url,
         });
     }
@@ -98,6 +132,12 @@ pub enum GetObjectsError {
     RelativePath(#[from] relative_path::FromPathError),
     #[error("failed to build include object URL: {0}")]
     Url(#[from] url::ParseError),
+    #[error("include file not found: {0}")]
+    IncludeFileNotFound(String),
+    #[error("file include points to a directory: {0}")]
+    IncludeFileIsDirectory(String),
+    #[error("directory include points to a file: {0}")]
+    IncludeDirectoryIsFile(String),
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -234,7 +274,7 @@ pub struct InstanceSpec {
     #[serde(default)]
     pub include_rules: Vec<IncludeEntry>,
     #[serde(default)]
-    pub mods_update_behavior: ModsUpdateBehavior,
+    pub resource_update_behavior: ResourceUpdateBehavior,
 
     pub auth_backend: Option<AuthProviderConfig>,
     pub default_xmx: Option<String>,
@@ -249,6 +289,7 @@ pub struct RemoteConfig {
 
 pub struct InstanceGenerator {
     pub client: Client,
+    /// `object`/`objects` fields must be unset for include_rules
     pub spec: InstanceSpec,
     /// If absent, includes won't be processed
     /// Always present in instance-builder, never present on local instance generation
@@ -273,8 +314,8 @@ pub enum GenerateError {
     GetObjects(#[from] GetObjectsError),
     #[error("failed while building authlib-injector check tasks: {0}")]
     AuthlibLibrary(#[from] instance::version_metadata::LibraryError),
-    #[error("include file not found: {0}")]
-    IncludeFileNotFound(String),
+    #[error("objects must be unset in include rules")]
+    IncludeObjectsSet,
 }
 
 pub struct GeneratorResult {
@@ -405,17 +446,45 @@ impl InstanceGenerator {
             }
 
             if let Some(source_dir) = &self.spec.source_dir {
-                let mut existing_paths = HashSet::new();
-                for rule in self.spec.include_rules.iter() {
-                    // TODO: handle different ApplyOn independently?
+                // Handled separately, because we may want to put default contents for a config file,
+                // but overwrite some config keys. This is not done in builder, where seen_paths is only
+                // used to determine which files have to be deleted
+                let mut existing_paths = HashMap::from([
+                    (false, HashSet::new()),
+                    (true, HashSet::new()),
+                ]);
+                let mut sorted_rules = self.spec.include_rules.to_vec();
+                sorted_rules.sort_by(|a, b| a.path.cmp(&b.path).reverse());
+                for rule in sorted_rules {
                     match rule.action {
-                        IncludeAction::File(..) | IncludeAction::Directory(..) => {
-                            let objects = get_objects(
+                        IncludeAction::File(ref action) => {
+                            if action.object.is_some() {
+                                return Err(GenerateError::IncludeObjectsSet);
+                            }
+                            let object = get_file_object(
                                 source_dir,
                                 &rule.path,
                                 &remote_config.download_server_base,
                                 instance_dir.rel(),
-                                &existing_paths,
+                            ).await?;
+                            copy_tasks.push(CopyTask {
+                                source: object.path.to_path(source_dir),
+                                target: object.path.to_path(instance_dir.minecraft_dir()),
+                            });
+                            let mut entry = rule.clone();
+                            entry.action.object = Some(object);
+                            include.push(entry);
+                        }
+                        IncludeAction::Directory(ref action) => {
+                            if !action.objects.is_empty() {
+                                return Err(GenerateError::IncludeObjectsSet);
+                            }
+                            let objects = get_directory_objects(
+                                source_dir,
+                                &rule.path,
+                                &remote_config.download_server_base,
+                                instance_dir.rel(),
+                                &existing_paths[&rule.overwrite],
                             )
                             .await?;
                             if objects.is_empty() {
@@ -426,28 +495,15 @@ impl InstanceGenerator {
                                 target: object.path.to_path(instance_dir.minecraft_dir()),
                             }));
                             let mut entry = rule.clone();
-                            // TODO: error if object/objects already set
-                            match &mut entry.action {
-                                IncludeAction::File(action) => {
-                                    action.object = objects.into_iter().next().ok_or_else(|| {
-                                        GenerateError::IncludeFileNotFound(rule.path.to_string())
-                                    })?;
-                                }
-                                IncludeAction::Directory(action) => {
-                                    action.objects = objects;
-                                }
-                                _ => unreachable!(),
-                            }
+                            entry.action.objects = objects;
                             include.push(entry);
                         }
                         IncludeAction::ConfigOptions(..) => {
                             include.push(rule.clone());
                         }
                     }
-                    // TODO: do we do this for ConfigOptions?
-                    // TODO: do we include all the files for Directory?
-                    // TODO:   this is useful when there is a directory and a subdirectory include
-                    existing_paths.insert(rule.path.to_path(source_dir));
+                    // TODO: include all the files for Directory
+                    existing_paths[&rule.overwrite].insert(rule.path.to_path(source_dir));
                 }
             } else {
                 warn!("Ignoring include rules, source_dir is not set");
@@ -483,7 +539,7 @@ impl InstanceGenerator {
                 auth_backend: self.spec.auth_backend,
                 include,
                 mod_entries: todo!(),
-                mods_update_behavior: self.spec.mods_update_behavior,
+                resource_update_behavior: self.spec.resource_update_behavior,
                 resources_url_base,
                 extra_forge_libs,
                 authlib_injector,

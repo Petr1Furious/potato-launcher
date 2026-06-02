@@ -1,16 +1,16 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    ops,
     path::{Path, PathBuf},
 };
 
-use either::Either;
 use relative_path::RelativePathBuf;
 use serde::{Deserialize, Serialize};
 
 use launcher_auth::providers::AuthProviderConfig;
 use url::Url;
 use utils::{
-    files::{self, CheckTask},
+    files::{self, CheckTask, ConfigOption, ConfigOptionTask, ConfigType, DeleteTask},
     hash_struct,
     paths::{
         AssetsDir, BaseUrl, DataDir, InstanceDirFS, InstancesDir, ResourcesUrlBase, VersionsDir,
@@ -40,16 +40,7 @@ pub struct Object {
     pub url: Url,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfigType {
-    Json,
-    Yaml,
-    Toml,
-    Properties,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyOn {
     Update,
@@ -58,29 +49,18 @@ pub enum ApplyOn {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct IncludeActionFile {
-    pub object: Object,
-    pub overwrite: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ConfigOption {
-    // TODO: untagged Either serialization
-    pub key: Vec<Either<String, usize>>,
-    pub value: serde_json::Value,
+    pub object: Option<Object>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct IncludeActionConfigOptions {
     pub config_type: ConfigType,
     pub options: Vec<ConfigOption>,
-    pub overwrite: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct IncludeActionDirectory {
     pub objects: Vec<Object>,
-    /// Passed through to all files in the directory
-    pub overwrite: bool,
     /// If true, files in this directory that are not present in the manifest will be deleted
     pub delete_extra: bool,
     /// If true, this action will be skipped if the directory already exists and has the completion marker file
@@ -99,20 +79,29 @@ pub enum IncludeAction {
 pub struct IncludeEntry {
     pub path: RelativePathBuf,
     pub apply_on: ApplyOn,
+    /// For directories, passed through to all files in the directory
+    pub overwrite: bool,
     #[serde(flatten)]
     pub action: IncludeAction,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum ModsUpdateBehavior {
+pub enum ResourceUpdateBehavior {
     /// Mods will be validated at every launch,
     /// any changes by the user will be reverted
     Strict,
+    /// All resources will be validated at every launch,
+    /// any changes by the user will be reverted
+    StrictAll,
     /// Same as Strict, but only mod file sizes will be validated
     StrictFast,
-    /// Mods will only be validated on instance updates, mod additions
-    /// and deletionsby the user will be preserved
+    /// Same as StrictAll, but only resource file sizes will be validated.
+    /// Will be slower than StrictFast, because file sizes for non-mod resources
+    /// are not available.
+    StrictAllFast,
+    /// Resources will only be validated on instance updates, mod additions
+    /// and deletions by the user will be preserved
     #[default]
     Lenient,
 }
@@ -147,7 +136,7 @@ pub struct InstanceMetadata {
     #[serde(default)]
     pub mod_entries: Vec<ModEntry>,
     #[serde(default)]
-    pub mods_update_behavior: ModsUpdateBehavior,
+    pub resource_update_behavior: ResourceUpdateBehavior,
 
     /// base URL for assets
     /// if not set, the launcher will download assets from Mojang servers
@@ -186,7 +175,7 @@ pub enum InstanceMetadataError {
     MissingClientDownload,
     #[error("Missing version metadata")]
     MissingVersionMetadata,
-    #[error("failed to read instance metadata file: {0}")]
+    #[error("io error: {0}")]
     ReadFileIo(#[from] std::io::Error),
     #[error("failed to parse instance metadata JSON: {0}")]
     Json(#[from] serde_json::Error),
@@ -210,6 +199,39 @@ pub enum InstanceMetadataError {
     WriteFileJson(#[from] files::WriteFileJsonError),
     #[error("failed while building manifest metadata: {0}")]
     Manifest(#[from] ManifestError),
+    #[error("missing object in include entry: {0}")]
+    MissingObject(String),
+    #[error("include entry and object paths do not match: {0}")]
+    PathMismatch(String),
+}
+
+#[derive(Default)]
+pub struct TaskSet {
+    pub check_tasks: Vec<CheckTask>,
+    pub config_option_tasks: Vec<ConfigOptionTask>,
+    pub delete_tasks: Vec<DeleteTask>,
+}
+
+impl ops::AddAssign<TaskSet> for TaskSet {
+    fn add_assign(&mut self, rhs: TaskSet) {
+        self.check_tasks.extend(rhs.check_tasks);
+        self.config_option_tasks.extend(rhs.config_option_tasks);
+        self.delete_tasks.extend(rhs.delete_tasks);
+    }
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum InstallCause {
+    Update,
+    Run,
+}
+
+pub struct InstallParams {
+    pub data_dir: DataDir,
+    pub minecraft_dir: PathBuf,
+    pub cause: InstallCause,
+    pub force_overwrite: bool,
+    pub reset_mods: bool,
 }
 
 impl InstanceMetadata {
@@ -295,13 +317,48 @@ impl InstanceMetadata {
         self.auth_backend.as_ref()
     }
 
+    pub async fn get_all_install_tasks(
+        &self,
+        client: &reqwest::Client,
+        params: &InstallParams,
+    ) -> Result<TaskSet, InstanceMetadataError> {
+        let mut tasks = TaskSet::default();
+        if params.cause == InstallCause::Update
+            || matches!(
+                self.resource_update_behavior,
+                ResourceUpdateBehavior::StrictAll | ResourceUpdateBehavior::StrictAllFast
+            )
+        {
+            // TODO: handle StrictAllFast
+            tasks
+                .check_tasks
+                .push(self.get_client_check_task(&params.data_dir)?);
+            tasks
+                .check_tasks
+                .extend(self.get_library_check_tasks(&params.data_dir)?);
+            tasks
+                .check_tasks
+                .extend(self.get_asset_check_tasks(client, &params.data_dir).await?);
+        }
+        if params.cause == InstallCause::Update
+            || self.resource_update_behavior != ResourceUpdateBehavior::Lenient
+        {
+            tasks.check_tasks.extend(self.get_mod_check_tasks(params)?);
+        }
+        tasks += self.get_include_tasks(params)?;
+        Ok(tasks)
+    }
+
     pub async fn mark_include_downloads_complete(
         &self,
         minecraft_dir: &Path,
     ) -> Result<(), InstanceMetadataError> {
         for rule in &self.include {
+            if !matches!(rule.action, IncludeAction::Directory(_)) {
+                continue;
+            }
             let rule_path = rule.path.to_path(minecraft_dir);
-            if rule_path.exists() && rule_path.is_dir() {
+            if rule_path.is_dir() {
                 tokio::fs::write(rule_path.join(COMPLETION_MARKER_FILE), b"").await?;
             }
         }
@@ -339,7 +396,7 @@ impl InstanceMetadata {
         Ok(paths)
     }
 
-    pub fn get_library_check_tasks(
+    fn get_library_check_tasks(
         &self,
         data_dir: &DataDir,
     ) -> Result<Vec<CheckTask>, InstanceMetadataError> {
@@ -359,7 +416,7 @@ impl InstanceMetadata {
         Ok(tasks)
     }
 
-    pub async fn get_asset_check_tasks(
+    async fn get_asset_check_tasks(
         &self,
         client: &reqwest::Client,
         data_dir: &DataDir,
@@ -387,6 +444,81 @@ impl InstanceMetadata {
         }
 
         Ok(tasks)
+    }
+
+    fn get_include_tasks(&self, params: &InstallParams) -> Result<TaskSet, InstanceMetadataError> {
+        let mut tasks = TaskSet::default();
+        let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+
+        let mut include_file = |object: &Object, path: PathBuf, overwrite: bool| {
+            if overwrite || !path.exists() {
+                tasks.check_tasks.push(CheckTask {
+                    url: object.url.clone(),
+                    remote_sha1: Some(object.sha1.clone()),
+                    remote_size: None,
+                    path,
+                });
+            }
+        };
+
+        // includes are sorted from the most specific to the less specific by the generator.
+        // seen_paths is only used to avoid deleting files included by more specific rules,
+        // preventing object intersections is done by the generator
+        for entry in &self.include {
+            let entry_path = entry.path.to_path(&params.minecraft_dir);
+            if entry.apply_on == ApplyOn::Update && params.cause != InstallCause::Update {
+                continue;
+            }
+            match &entry.action {
+                IncludeAction::File(action) => {
+                    let object = action.object.as_ref().ok_or_else(|| {
+                        InstanceMetadataError::MissingObject(entry.path.to_string())
+                    })?;
+                    if entry.path != object.path {
+                        return Err(InstanceMetadataError::PathMismatch(entry.path.to_string()));
+                    }
+                    include_file(object, entry_path.clone(), entry.overwrite);
+                    seen_paths.insert(entry_path);
+                }
+                IncludeAction::ConfigOptions(action) => {
+                    tasks.config_option_tasks.push(ConfigOptionTask {
+                        path: entry_path,
+                        config_type: action.config_type,
+                        options: action.options.clone(),
+                    });
+                }
+                IncludeAction::Directory(action) => {
+                    if action.skip_if_dir_exists
+                        && entry_path.exists()
+                        && entry_path.join(COMPLETION_MARKER_FILE).exists()
+                    {
+                        continue;
+                    }
+                    for object in action.objects.iter() {
+                        let path = object.path.to_path(&params.minecraft_dir);
+                        include_file(object, path.clone(), entry.overwrite);
+                        seen_paths.insert(path);
+                    }
+                    if action.delete_extra || params.force_overwrite {
+                        let dir_path = entry.path.to_path(&params.minecraft_dir);
+                        for file in files::get_files_ignore_paths(&dir_path, &seen_paths) {
+                            tasks.delete_tasks.push(DeleteTask { path: file.clone() });
+                        }
+                    }
+                }
+            }
+        }
+
+        // TODO: can duplicates be added?
+        tasks.check_tasks = files::dedup_check_tasks(tasks.check_tasks);
+        Ok(tasks)
+    }
+
+    fn get_mod_check_tasks(
+        &self,
+        params: &InstallParams,
+    ) -> Result<Vec<CheckTask>, InstanceMetadataError> {
+        
     }
 
     pub fn get_libraries_with_overrides(&self) -> Vec<Library> {
@@ -501,7 +633,7 @@ mod tests {
             name: "Test".to_string(),
             auth_backend: None,
             include,
-            mods_update_behavior: ModsUpdateBehavior::Lenient,
+            resource_update_behavior: ResourceUpdateBehavior::Lenient,
             mod_entries,
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: Vec::new(),
