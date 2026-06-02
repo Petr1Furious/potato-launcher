@@ -12,6 +12,7 @@ fn main() {
         "INSTANCE_MANIFEST_URLS",
         "BACKEND_API_BASE",
         "VERSION",
+        "USE_NATIVE_GLFW_DEFAULT",
     ] {
         println!("cargo:rerun-if-env-changed={name}");
     }
@@ -22,6 +23,10 @@ fn main() {
     let launcher_icon = env::var("LAUNCHER_ICON").ok();
     let backend_api_base = env::var("BACKEND_API_BASE").ok();
     let version = env::var("VERSION").ok();
+    let use_native_glfw_default = env::var("USE_NATIVE_GLFW_DEFAULT")
+        .unwrap_or_else(|_| "false".into())
+        .parse::<bool>()
+        .expect("USE_NATIVE_GLFW_DEFAULT must be a boolean");
 
     // INSTANCE_MANIFEST_URLS takes priority; VERSION_MANIFEST_URL is only used
     // as a fallback when INSTANCE_MANIFEST_URLS is unset.
@@ -46,6 +51,7 @@ pub const LAUNCHER_ICON: Option<&str> = {launcher_icon:?};
 pub const INSTANCE_MANIFEST_URLS: &[&str] = &[{urls_literal}];
 pub const BACKEND_API_BASE: Option<&str> = {backend_api_base:?};
 pub const VERSION: Option<&str> = {version:?};
+pub const USE_NATIVE_GLFW_DEFAULT: bool = {use_native_glfw_default};
 "#
     );
 

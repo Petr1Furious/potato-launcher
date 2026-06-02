@@ -28,6 +28,8 @@ use launcher_bridge::{
     InstanceOrigin, InstanceView, LauncherSettingsView, LocalLoader, MessageToBackend,
     NotificationLevel,
 };
+#[cfg(target_os = "linux")]
+use launcher_build_config::use_native_glfw_default;
 use launcher_i18n as t;
 use url::Url;
 use uuid::Uuid;
@@ -264,6 +266,20 @@ impl Render for InstancesPage {
         {
             window.minimize_window();
         }
+        let finished_hidden: Vec<Uuid> = self
+            .hidden_launches
+            .iter()
+            .copied()
+            .filter(|id| {
+                !instances.iter().any(|instance| {
+                    instance.id == *id
+                        && matches!(
+                            instance.status,
+                            InstanceLiveStatus::Launching | InstanceLiveStatus::Running
+                        )
+                })
+            })
+            .collect();
         self.hidden_launches.retain(|id| {
             instances.iter().any(|instance| {
                 instance.id == *id
@@ -273,6 +289,9 @@ impl Render for InstancesPage {
                     )
             })
         });
+        if !finished_hidden.is_empty() {
+            window.activate_window();
+        }
         let groups = group_instances(&instances);
         let backend_names = backend_display_names(&backends);
         if self
@@ -2045,7 +2064,63 @@ fn java_section(
                     this
                 }
             })
+            .child(native_glfw_toggle(instance, sender.clone(), cx))
         })
+}
+
+#[cfg(target_os = "linux")]
+fn native_glfw_toggle(
+    instance: &InstanceView,
+    sender: BackendSender,
+    cx: &mut Context<InstancesPage>,
+) -> gpui::Div {
+    let id = instance.id;
+    let enabled = instance
+        .use_native_glfw
+        .unwrap_or_else(use_native_glfw_default);
+    h_flex()
+        .justify_between()
+        .items_center()
+        .gap_2()
+        .child(
+            v_flex()
+                .min_w_0()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_semibold()
+                        .child(t::instances::use_native_glfw_title()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(t::instances::use_native_glfw_desc()),
+                ),
+        )
+        .child(
+            Button::new(format!("toggle-native-glfw-{id}"))
+                .label(if enabled {
+                    t::common::on()
+                } else {
+                    t::common::off()
+                })
+                .on_click(move |_, _, _| {
+                    sender.send(MessageToBackend::SetInstanceUseNativeGlfw {
+                        instance: id,
+                        enabled: !enabled,
+                    });
+                }),
+        )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn native_glfw_toggle(
+    _instance: &InstanceView,
+    _sender: BackendSender,
+    _cx: &mut Context<InstancesPage>,
+) -> gpui::Div {
+    div()
 }
 
 fn launcher_settings_section(

@@ -72,6 +72,8 @@ pub struct InstanceUserSettingsEntry {
     pub jvm_flags: Option<String>,
     #[serde(default)]
     pub java_path: Option<String>,
+    #[serde(default)]
+    pub use_native_glfw: Option<bool>,
 }
 
 impl InstanceUserSettings {
@@ -440,6 +442,7 @@ impl BackendState {
                             .java_path
                             .as_ref()
                             .map(|p| Arc::<str>::from(p.clone())),
+                        use_native_glfw: settings.use_native_glfw,
                     },
                 )
             })
@@ -1148,6 +1151,33 @@ impl BackendState {
         self.creating_local.contains_key(&instance)
     }
 
+    async fn set_instance_use_native_glfw(
+        &mut self,
+        instance: Uuid,
+        enabled: bool,
+        tx: &FrontendSender,
+    ) {
+        if self.is_local_install_in_progress(instance) {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Warning,
+                message: Arc::from(launcher_i18n::notifications::java_path_install_in_progress()),
+            });
+            return;
+        }
+        self.instance_settings.entry_mut(instance).use_native_glfw = Some(enabled);
+        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+            log::error!("Failed to save native GLFW setting for instance {instance}: {err:#}");
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::failed_save_native_glfw(
+                    err.to_string(),
+                )),
+            });
+            return;
+        }
+        self.emit_snapshot(tx);
+    }
+
     async fn set_instance_java_path(
         &mut self,
         instance: Uuid,
@@ -1270,6 +1300,7 @@ impl BackendState {
             xmx_mb: settings.and_then(|settings| settings.xmx_mb),
             jvm_flags: settings.and_then(|settings| settings.jvm_flags.clone()),
             java_path: settings.and_then(|settings| settings.java_path.clone()),
+            use_native_glfw: settings.and_then(|settings| settings.use_native_glfw),
             launcher_dir: self.launcher_dir.clone(),
             local_instances: self.instance_storage.all().to_vec(),
             account_entries: self.launch_accounts(),
@@ -1532,6 +1563,11 @@ pub async fn run(
                     }
                     MessageToBackend::SetInstanceJavaPath { instance, path } => {
                         state.set_instance_java_path(instance, path, &frontend).await;
+                    }
+                    MessageToBackend::SetInstanceUseNativeGlfw { instance, enabled } => {
+                        state
+                            .set_instance_use_native_glfw(instance, enabled, &frontend)
+                            .await;
                     }
                     MessageToBackend::ResolveJavaPath(instance) => {
                         state.resolve_java_path(instance, internal_sender.clone());

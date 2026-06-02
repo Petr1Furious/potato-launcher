@@ -464,6 +464,8 @@ pub mod instances {
             "status_outdated" => Some(status_outdated()),
             "status_running" => Some(status_running()),
             "update" => Some(update()),
+            "use_native_glfw_desc" => Some(use_native_glfw_desc()),
+            "use_native_glfw_title" => Some(use_native_glfw_title()),
             "used_by_installed" => Some(used_by_installed()),
             _ => None,
         }
@@ -778,6 +780,18 @@ pub mod instances {
             _ => "Update",
         }
     }
+    pub fn use_native_glfw_desc() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Только Linux. Использует системную libglfw.so вместо встроенных LWJGL natives.",
+            _ => "Linux only. Uses the system libglfw.so instead of the bundled LWJGL natives.",
+        }
+    }
+    pub fn use_native_glfw_title() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Использовать нативную версию GLFW",
+            _ => "Use native GLFW",
+        }
+    }
     pub fn used_by_installed() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Используется установленными инстансами",
@@ -1087,6 +1101,12 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Не удалось сохранить переопределение памяти: {error}"),
             _ => format!("Failed to save memory override: {error}"),
+        }
+    }
+    pub fn failed_save_native_glfw(error: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Не удалось сохранить настройку native GLFW: {error}"),
+            _ => format!("Failed to save native GLFW setting: {error}"),
         }
     }
     pub fn failed_save_offline_account(error: String) -> String {

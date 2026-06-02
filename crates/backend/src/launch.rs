@@ -13,7 +13,7 @@ use launcher_auth::{
     storage::{AccountKey, StorageAccountEntry},
 };
 use launcher_bridge::{FrontendSender, MessageToFrontend};
-use launcher_build_config::{launcher_name, version};
+use launcher_build_config::{launcher_name, use_native_glfw_default, version};
 use tokio::process::{Child, Command};
 use utils::{
     java,
@@ -55,6 +55,7 @@ pub(crate) struct LaunchRequest {
     pub(crate) xmx_mb: Option<u64>,
     pub(crate) jvm_flags: Option<String>,
     pub(crate) java_path: Option<String>,
+    pub(crate) use_native_glfw: Option<bool>,
     pub(crate) launcher_dir: PathBuf,
     pub(crate) local_instances: Vec<LocalInstance>,
     pub(crate) account_entries: Vec<(AccountKey, AuthProviderConfig, AccountData)>,
@@ -87,6 +88,9 @@ pub(crate) enum LaunchError {
         "invalid custom Java path: the configured executable is missing or incompatible with Java {0}"
     )]
     InvalidCustomJavaPath(String),
+    #[cfg(target_os = "linux")]
+    #[error("failed to find native GLFW library: {0}")]
+    NativeGlfwNotFound(#[from] utils::compat::NativeGlfwError),
     #[error("classpath entry does not exist: {0}")]
     MissingClasspathEntry(String),
     #[error("authlib-injector is missing at {0}")]
@@ -171,6 +175,8 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
             .await
             .ok_or_else(|| LaunchError::JavaNotFound(java_version.clone()))?
     };
+    let minecraft_dir_short = instance_dir.minecraft_dir();
+    let minecraft_dir_game = game_directory_for_launch(&minecraft_dir_short)?;
     let args = build_launch_arguments(&LaunchBuildContext {
         metadata: &metadata,
         provider: &provider,
@@ -178,12 +184,14 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         online,
         xmx_mb: request.xmx_mb,
         jvm_flags: request.jvm_flags.as_deref(),
+        use_native_glfw: request
+            .use_native_glfw
+            .unwrap_or_else(use_native_glfw_default),
         data_dir: &data_dir,
-        instance_dir: &instance_dir,
+        game_directory: &minecraft_dir_game,
     })?;
 
-    let minecraft_dir = instance_dir.minecraft_dir();
-    tokio::fs::create_dir_all(&minecraft_dir).await?;
+    tokio::fs::create_dir_all(&minecraft_dir_short).await?;
 
     let logs_dir = LogsDir::root().to_fs(&data_dir);
     tokio::fs::create_dir_all(&logs_dir).await?;
@@ -203,7 +211,7 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         .args(args.java)
         .arg(args.main_class)
         .args(args.game)
-        .current_dir(minecraft_dir)
+        .current_dir(&minecraft_dir_short)
         .stdout(log_file.try_clone()?)
         .stderr(log_file);
 
@@ -233,8 +241,10 @@ struct LaunchBuildContext<'a> {
     online: bool,
     xmx_mb: Option<u64>,
     jvm_flags: Option<&'a str>,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    use_native_glfw: bool,
     data_dir: &'a DataDir,
-    instance_dir: &'a InstanceDirFS,
+    game_directory: &'a Path,
 }
 
 fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArguments, LaunchError> {
@@ -246,12 +256,12 @@ fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArgument
         xmx_mb,
         jvm_flags,
         data_dir,
-        instance_dir,
+        game_directory,
+        ..
     } = ctx;
     let classpath = classpath(metadata, data_dir)?;
     let libraries_dir = LibrariesDir::root().to_fs(data_dir);
     let natives_dir = NativesDir::for_id(metadata.get_parent_id()?).to_fs(data_dir);
-    let minecraft_dir = instance_dir.minecraft_dir();
     let assets_dir = AssetsDir::root().to_fs(data_dir);
     let asset_index = metadata.get_asset_index()?;
     let variables = HashMap::from([
@@ -272,7 +282,7 @@ fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArgument
             account.user_info.username.clone(),
         ),
         ("version_name".to_string(), metadata.get_id()?.to_string()),
-        ("game_directory".to_string(), path_string(&minecraft_dir)),
+        ("game_directory".to_string(), path_string(game_directory)),
         ("assets_root".to_string(), path_string(&assets_dir)),
         ("assets_index_name".to_string(), asset_index.id.clone()),
         (
@@ -312,6 +322,13 @@ fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArgument
     ]);
     if let Some(flags) = jvm_flags {
         java_args.extend(flags.split_whitespace().map(ToString::to_string));
+    }
+
+    #[cfg(target_os = "linux")]
+    if ctx.use_native_glfw {
+        let glfw_path = utils::compat::linux_find_native_glfw()?;
+        log::info!("Using native GLFW at {glfw_path}");
+        java_args.push(format!("-Dorg.lwjgl.glfw.libname={glfw_path}"));
     }
 
     if *online && let Some(auth_url) = provider.get_injector_url() {
@@ -356,7 +373,29 @@ fn classpath(metadata: &InstanceMetadata, data_dir: &DataDir) -> Result<String, 
             paths.push(path);
         }
     }
-    Ok(paths.join(PATH_SEPARATOR))
+    let joined = paths.join(PATH_SEPARATOR);
+    Ok({
+        #[cfg(target_os = "windows")]
+        {
+            joined.replace('/', "\\")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            joined
+        }
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn game_directory_for_launch(path: &Path) -> Result<PathBuf, LaunchError> {
+    Ok(PathBuf::from(utils::compat::win_get_long_path_name(
+        &path.to_string_lossy(),
+    )?))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn game_directory_for_launch(path: &Path) -> Result<PathBuf, LaunchError> {
+    Ok(path.to_path_buf())
 }
 
 fn process_args(

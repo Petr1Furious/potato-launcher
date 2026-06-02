@@ -59,6 +59,10 @@ pub enum MessageToBackend {
         instance: Uuid,
         path: Option<String>,
     },
+    SetInstanceUseNativeGlfw {
+        instance: Uuid,
+        enabled: bool,
+    },
     ResolveJavaPath(Uuid),
     CreateLocalInstance {
         display_name: String,
@@ -147,6 +151,8 @@ pub struct InstanceView {
     pub jvm_flags: Option<Arc<str>>,
     pub java_path: Option<Arc<str>>,
     pub required_java_version: Option<Arc<str>>,
+    /// `None` uses the launcher build default.
+    pub use_native_glfw: Option<bool>,
 }
 
 impl InstanceView {

@@ -1,3 +1,5 @@
+#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+
 use std::path::PathBuf;
 
 use launcher_build_config::data_dir_name;

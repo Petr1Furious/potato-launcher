@@ -1,4 +1,6 @@
 pub mod adaptive_download;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub mod compat;
 pub mod files;
 pub mod java;
 pub mod logging;

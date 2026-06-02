@@ -61,6 +61,10 @@ pub fn version() -> Option<&'static str> {
     VERSION
 }
 
+pub fn use_native_glfw_default() -> bool {
+    USE_NATIVE_GLFW_DEFAULT
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

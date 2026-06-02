@@ -39,6 +39,7 @@ pub struct InstanceUserSettingsView {
     pub xmx_mb: Option<u64>,
     pub jvm_flags: Option<Arc<str>>,
     pub java_path: Option<Arc<str>>,
+    pub use_native_glfw: Option<bool>,
 }
 
 pub struct InstanceLiveState<'a> {
@@ -185,6 +186,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             jvm_flags: settings.jvm_flags,
             java_path: settings.java_path,
             required_java_version: metadata.required_java_version,
+            use_native_glfw: settings.use_native_glfw,
         });
     }
 
@@ -231,6 +233,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             jvm_flags: None,
             java_path: None,
             required_java_version: None,
+            use_native_glfw: None,
         });
     }
 
@@ -295,6 +298,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 jvm_flags: settings.jvm_flags,
                 java_path: settings.java_path,
                 required_java_version: Some(Arc::from(entry.required_java_version.as_str())),
+                use_native_glfw: settings.use_native_glfw,
             });
         }
     }

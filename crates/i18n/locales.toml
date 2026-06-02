@@ -278,6 +278,14 @@ ru = "Java не найдена"
 en = "Set Path"
 ru = "Задать путь"
 
+[instances.use_native_glfw_title]
+en = "Use native GLFW"
+ru = "Использовать нативную версию GLFW"
+
+[instances.use_native_glfw_desc]
+en = "Linux only. Uses the system libglfw.so instead of the bundled LWJGL natives."
+ru = "Только Linux. Использует системную libglfw.so вместо встроенных LWJGL natives."
+
 [instances.java_install_required]
 en = "Wait for the local install to finish before configuring Java."
 ru = "Дождитесь завершения локальной установки, чтобы настроить Java."
@@ -285,6 +293,10 @@ ru = "Дождитесь завершения локальной установ�
 [notifications.java_path_install_in_progress]
 en = "Java path cannot be changed while a local install is in progress"
 ru = "Путь к Java нельзя изменить, пока идёт локальная установка"
+
+[notifications.failed_save_native_glfw]
+en = "Failed to save native GLFW setting: ${error: String}"
+ru = "Не удалось сохранить настройку native GLFW: ${error: String}"
 
 [instances.used_by_installed]
 en = "Used by installed instances"
