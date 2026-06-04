@@ -427,11 +427,12 @@ pub mod instances {
             "delete" => Some(delete()),
             "hard_resync" => Some(hard_resync()),
             "install" => Some(install()),
-            "java_auto" => Some(java_auto()),
             "java_browse" => Some(java_browse()),
+            "java_clear" => Some(java_clear()),
+            "java_find" => Some(java_find()),
             "java_install_required" => Some(java_install_required()),
             "java_not_found" => Some(java_not_found()),
-            "java_path_auto" => Some(java_path_auto()),
+            "java_path_auto_detect" => Some(java_path_auto_detect()),
             "java_resolving" => Some(java_resolving()),
             "java_section" => Some(java_section()),
             "jvm_flags_default" => Some(jvm_flags_default()),
@@ -530,16 +531,22 @@ pub mod instances {
             _ => "Install",
         }
     }
-    pub fn java_auto() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Авто",
-            _ => "Auto",
-        }
-    }
     pub fn java_browse() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Выбрать",
             _ => "Browse",
+        }
+    }
+    pub fn java_clear() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Сбросить",
+            _ => "Clear",
+        }
+    }
+    pub fn java_find() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Найти",
+            _ => "Find",
         }
     }
     pub fn java_install_required() -> &'static str {
@@ -554,10 +561,10 @@ pub mod instances {
             _ => "Java not found",
         }
     }
-    pub fn java_path_auto() -> &'static str {
+    pub fn java_path_auto_detect() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "<авто>",
-            _ => "<auto>",
+            1 => "(автоопределение)",
+            _ => "(auto-detect)",
         }
     }
     pub fn java_resolving() -> &'static str {
@@ -1167,8 +1174,8 @@ pub mod notifications {
     }
     pub fn java_path_cleared() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Путь к Java сброшен на автоматический",
-            _ => "Java path reset to automatic",
+            1 => "Путь к Java сброшен",
+            _ => "Java path cleared",
         }
     }
     pub fn java_path_install_in_progress() -> &'static str {

@@ -254,17 +254,21 @@ ru = "Java"
 en = "Requires Java ${version: String}"
 ru = "Требуется Java ${version: String}"
 
-[instances.java_path_auto]
-en = "<auto>"
-ru = "<авто>"
+[instances.java_path_auto_detect]
+en = "(auto-detect)"
+ru = "(автоопределение)"
 
 [instances.java_browse]
 en = "Browse"
 ru = "Выбрать"
 
-[instances.java_auto]
-en = "Auto"
-ru = "Авто"
+[instances.java_find]
+en = "Find"
+ru = "Найти"
+
+[instances.java_clear]
+en = "Clear"
+ru = "Сбросить"
 
 [instances.java_resolving]
 en = "Resolving..."
@@ -723,8 +727,8 @@ en = "Java path set"
 ru = "Путь к Java задан"
 
 [notifications.java_path_cleared]
-en = "Java path reset to automatic"
-ru = "Путь к Java сброшен на автоматический"
+en = "Java path cleared"
+ru = "Путь к Java сброшен"
 
 [notifications.already_launching_or_running]
 en = "Instance is already launching or running"

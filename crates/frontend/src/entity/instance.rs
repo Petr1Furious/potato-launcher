@@ -52,6 +52,18 @@ impl InstanceEntries {
 
     pub fn set_progress(&mut self, update: InstanceProgressUpdate, cx: &mut Context<Self>) {
         if let Some(instance) = self.entries.iter_mut().find(|entry| entry.id == update.id) {
+            if let InstanceLiveStatus::Installing {
+                stage,
+                current,
+                total,
+                ..
+            } = &instance.status
+                && *stage == update.stage
+                && update.total == *total
+                && update.current < *current
+            {
+                return;
+            }
             instance.status = InstanceLiveStatus::Installing {
                 stage: update.stage,
                 current: update.current,

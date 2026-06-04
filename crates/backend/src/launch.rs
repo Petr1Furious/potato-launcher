@@ -55,6 +55,7 @@ pub(crate) struct LaunchRequest {
     pub(crate) xmx_mb: Option<u64>,
     pub(crate) jvm_flags: Option<String>,
     pub(crate) java_path: Option<String>,
+    pub(crate) resolved_java: Option<java::JavaInstallation>,
     pub(crate) use_native_glfw: Option<bool>,
     pub(crate) launcher_dir: PathBuf,
     pub(crate) local_instances: Vec<LocalInstance>,
@@ -101,6 +102,8 @@ pub(crate) enum LaunchError {
     Auth(#[from] launcher_auth::flow::PerformAuthError),
     #[error("file I/O failed while launching: {0}")]
     Io(#[from] std::io::Error),
+    #[error("failed to prepare Java for launch: {0}")]
+    JavaPrepare(#[from] anyhow::Error),
 }
 
 pub(crate) fn default_offline_account() -> (AccountKey, AuthProviderConfig, AccountData) {
@@ -161,19 +164,23 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
     };
     let refreshed_account =
         (account_data != original_account_data).then(|| (provider.clone(), account_data.clone()));
-    let java_version = metadata.get_java_version();
-    let java = if let Some(path) = request.java_path.as_deref() {
-        let java_path = std::path::Path::new(path);
-        if !java::check_java(&java_version, java_path).await {
-            return Err(LaunchError::InvalidCustomJavaPath(java_version));
-        }
-        java::get_installation_pub(java_path)
-            .await
-            .ok_or_else(|| LaunchError::InvalidCustomJavaPath(java_version))?
+    let java = if let Some(installation) = request.resolved_java {
+        installation
     } else {
-        java::get_java(&java_version, &data_dir)
-            .await
-            .ok_or_else(|| LaunchError::JavaNotFound(java_version.clone()))?
+        let java_version = metadata.get_java_version();
+        if let Some(path) = request.java_path.as_deref() {
+            let java_path = std::path::Path::new(path);
+            if !java::check_java(&java_version, java_path).await {
+                return Err(LaunchError::InvalidCustomJavaPath(java_version));
+            }
+            java::get_installation_pub(java_path)
+                .await
+                .ok_or_else(|| LaunchError::InvalidCustomJavaPath(java_version))?
+        } else {
+            java::get_java(&java_version, &data_dir)
+                .await
+                .ok_or_else(|| LaunchError::JavaNotFound(java_version.clone()))?
+        }
     };
     let minecraft_dir_short = instance_dir.minecraft_dir();
     let minecraft_dir_game = game_directory_for_launch(&minecraft_dir_short)?;
@@ -436,7 +443,7 @@ fn normalize_xmx(value: Option<&str>) -> String {
     }
 }
 
-async fn read_metadata(instance_dir: &InstanceDirFS) -> Result<InstanceMetadata, LaunchError> {
+pub(crate) async fn read_metadata(instance_dir: &InstanceDirFS) -> Result<InstanceMetadata, LaunchError> {
     Ok(InstanceMetadata::read_local(instance_dir).await?)
 }
 

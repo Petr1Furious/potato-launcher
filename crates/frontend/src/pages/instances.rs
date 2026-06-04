@@ -115,7 +115,7 @@ impl InstancesPage {
         let jvm_flags_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::jvm_flags()));
         let java_path_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t::instances::java_path_auto()));
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::instances::java_path_auto_detect()));
         let java_path_input_for_instances = java_path_input.clone();
         let _instances_subscription = cx.subscribe_in(
             &data.instances,
@@ -1501,6 +1501,26 @@ fn status_badge(
         .child(div().text_xs().text_center().line_clamp(2).child(status))
 }
 
+fn start_add_required_account(
+    provider: &AuthProviderConfig,
+    sender: &BackendSender,
+    offline_nickname_input: &gpui::Entity<InputState>,
+    cx: &App,
+) {
+    match provider {
+        AuthProviderConfig::Offline(_) => {
+            let nickname = offline_nickname_input.read(cx).value().trim().to_string();
+            let nickname = if nickname.is_empty() {
+                "Player".to_string()
+            } else {
+                nickname
+            };
+            sender.send(MessageToBackend::SubmitOfflineNickname(nickname));
+        }
+        _ => sender.send(MessageToBackend::StartAddAccount(provider.clone())),
+    }
+}
+
 fn card_actions(primary: Button, settings: Button) -> gpui::Div {
     h_flex()
         .w_full()
@@ -1550,12 +1570,14 @@ fn action_button(
                 return Button::new(format!("add-account-{}", instance.id))
                     .label(t::accounts::add_account_section())
                     .on_click(cx.listener(move |page, _, _, cx| {
-                        page.selected_instance = None;
-                        page.show_accounts_panel = true;
-                        page.show_global_settings = false;
-                        page.show_backend_settings = false;
-                        page.preferred_add_provider = provider.clone();
-                        cx.notify();
+                        if let Some(provider) = provider.clone() {
+                            start_add_required_account(
+                                &provider,
+                                &sender,
+                                &page.offline_nickname_input,
+                                cx,
+                            );
+                        }
                     }));
             }
             Button::new(format!("play-{}", instance.id))
@@ -1595,12 +1617,14 @@ fn action_button(
                 let provider = instance.auth_provider.clone();
                 cx.listener(move |page, _, _, cx| {
                     if instance.launch_blocked_reason.is_some() {
-                        page.selected_instance = None;
-                        page.show_accounts_panel = true;
-                        page.show_global_settings = false;
-                        page.show_backend_settings = false;
-                        page.preferred_add_provider = provider.clone();
-                        cx.notify();
+                        if let Some(provider) = provider.clone() {
+                            start_add_required_account(
+                                &provider,
+                                &sender,
+                                &page.offline_nickname_input,
+                                cx,
+                            );
+                        }
                     } else {
                         sender.send(MessageToBackend::Launch {
                             instance: instance.id,
@@ -1698,16 +1722,17 @@ fn account_detail_sections(
                     ))),
             )
             .when(matching_accounts.is_empty(), |this| {
+                let sender = sender.clone();
                 this.child(
                     Button::new(format!("add-required-account-{}", instance.id))
                         .label(t::instances::add_account())
                         .on_click(cx.listener(move |page, _, _, cx| {
-                            page.selected_instance = None;
-                            page.show_accounts_panel = true;
-                            page.show_backend_settings = false;
-                            page.show_global_settings = false;
-                            page.preferred_add_provider = Some(required_provider_for_add.clone());
-                            cx.notify();
+                            start_add_required_account(
+                                &required_provider_for_add,
+                                &sender,
+                                &page.offline_nickname_input,
+                                cx,
+                            );
                         })),
                 )
             })
@@ -1985,8 +2010,8 @@ fn java_section(
                 h_flex()
                     .gap_2()
                     .child(
-                        Button::new(format!("java-auto-{id}"))
-                            .label(t::instances::java_auto())
+                        Button::new(format!("java-find-{id}"))
+                            .label(t::instances::java_find())
                             .on_click({
                                 let sender = sender.clone();
                                 cx.listener(move |page, _, _, cx| {
@@ -1999,7 +2024,7 @@ fn java_section(
                     )
                     .child(
                         Button::new(format!("java-clear-{id}"))
-                            .label(t::common::default())
+                            .label(t::instances::java_clear())
                             .disabled(instance.java_path.is_none())
                             .on_click({
                                 let sender = sender.clone();
@@ -2887,7 +2912,8 @@ fn progress_ratio(status: &InstanceLiveStatus) -> Option<f32> {
     if !*show_bar || *total <= 1 {
         None
     } else {
-        Some((*current as f32 / *total as f32).clamp(0.0, 1.0))
+        let current = (*current).min(*total);
+        Some((current as f32 / *total as f32).clamp(0.0, 1.0))
     }
 }
 

@@ -160,6 +160,7 @@ pub struct BackendState {
     install_errors: HashMap<Uuid, Arc<str>>,
     installed_overrides: HashSet<Uuid>,
     launching: HashSet<Uuid>,
+    java_prep_tasks: HashSet<Uuid>,
     running: HashSet<Uuid>,
     launch_tasks: HashMap<Uuid, LaunchHandle>,
     launch_errors: HashMap<Uuid, Arc<str>>,
@@ -186,6 +187,9 @@ enum BackendEvent {
     InstallFinished {
         id: Uuid,
         result: Result<install::InstallOutput, Arc<str>>,
+    },
+    LaunchPrepFinished {
+        id: Uuid,
     },
     LaunchStarted {
         id: Uuid,
@@ -312,6 +316,7 @@ impl BackendState {
             install_errors: HashMap::new(),
             installed_overrides: HashSet::new(),
             launching: HashSet::new(),
+            java_prep_tasks: HashSet::new(),
             running: HashSet::new(),
             launch_tasks: HashMap::new(),
             launch_errors: HashMap::new(),
@@ -758,6 +763,15 @@ impl BackendState {
     }
 
     fn cancel_install(&mut self, id: Uuid, tx: &FrontendSender) {
+        if self.java_prep_tasks.remove(&id) {
+            if let Some(handle) = self.launch_tasks.remove(&id) {
+                handle.task.abort();
+            }
+            self.installing.remove(&id);
+            self.emit_snapshot(tx);
+            return;
+        }
+
         if let Some(handle) = self.install_tasks.remove(&id) {
             handle.abort();
         }
@@ -1263,7 +1277,10 @@ impl BackendState {
         tx: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) {
-        if self.launching.contains(&id) || self.running.contains(&id) {
+        if self.launching.contains(&id)
+            || self.running.contains(&id)
+            || self.java_prep_tasks.contains(&id)
+        {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Info,
                 message: Arc::from(launcher_i18n::notifications::already_launching_or_running()),
@@ -1291,24 +1308,70 @@ impl BackendState {
         }
 
         self.launch_errors.remove(&id);
-        self.launching.insert(id);
-        let (kill_tx, mut kill_rx) = oneshot::channel();
+        self.java_prep_tasks.insert(id);
+        self.installing.insert(
+            id,
+            instances::InstallProgressView {
+                stage: launcher_bridge::ProgressStage::Java,
+                current: 0,
+                total: 0,
+                message: Arc::from(launcher_i18n::progress::installing_java()),
+                show_bar: false,
+            },
+        );
+        self.emit_snapshot(&tx);
+
+        let java_path = settings.and_then(|settings| settings.java_path.clone());
         let request = launch::LaunchRequest {
             id,
             account,
             bypass_required_provider,
             xmx_mb: settings.and_then(|settings| settings.xmx_mb),
             jvm_flags: settings.and_then(|settings| settings.jvm_flags.clone()),
-            java_path: settings.and_then(|settings| settings.java_path.clone()),
+            java_path: java_path.clone(),
+            resolved_java: None,
             use_native_glfw: settings.and_then(|settings| settings.use_native_glfw),
             launcher_dir: self.launcher_dir.clone(),
             local_instances: self.instance_storage.all().to_vec(),
             account_entries: self.launch_accounts(),
-            frontend: tx,
+            frontend: tx.clone(),
         };
         let internal_for_task = internal.clone();
+        let (kill_tx, mut kill_rx) = oneshot::channel();
         let task = tokio::spawn(async move {
-            match launch::launch_instance(request).await {
+            let launch_result = async {
+                let local = request
+                    .local_instances
+                    .iter()
+                    .find(|instance| instance.id == request.id)
+                    .ok_or_else(|| launch::LaunchError::InstanceNotFound(request.id))?;
+                let data_dir = DataDir::new(request.launcher_dir.clone());
+                let instance_dir = InstancesDir::root()
+                    .instance_dir(&local.dir_name)
+                    .with_data_dir(data_dir.clone());
+                let metadata = launch::read_metadata(&instance_dir).await?;
+                let progress = install::BackendProgressReporter::new(
+                    request.id,
+                    request.frontend.clone(),
+                    internal_for_task.clone(),
+                );
+                let java = install::resolve_java_for_launch(
+                    &metadata,
+                    &data_dir,
+                    java_path.as_deref(),
+                    &progress,
+                )
+                .await?;
+                let _ = internal_for_task.send(BackendEvent::LaunchPrepFinished { id });
+                launch::launch_instance(launch::LaunchRequest {
+                    resolved_java: Some(java),
+                    ..request
+                })
+                .await
+            }
+            .await;
+
+            match launch_result {
                 Ok(start) => {
                     if let Some((provider, account)) = start.refreshed_account {
                         let _ = internal_for_task
@@ -1328,6 +1391,7 @@ impl BackendState {
                 }
                 Err(err) => {
                     log::error!("Failed to launch instance {id}: {err:#}");
+                    let _ = internal_for_task.send(BackendEvent::LaunchPrepFinished { id });
                     let _ = internal_for_task.send(BackendEvent::LaunchFinished {
                         id,
                         exit: launcher_bridge::ExitOutcome::Error(Arc::<str>::from(format!(
@@ -1344,6 +1408,13 @@ impl BackendState {
                 task,
             },
         );
+    }
+
+    fn handle_launch_prep_finished(&mut self, id: Uuid, tx: &FrontendSender) {
+        self.java_prep_tasks.remove(&id);
+        self.installing.remove(&id);
+        self.launching.insert(id);
+        self.emit_snapshot(tx);
     }
 
     fn handle_launch_started(&mut self, id: Uuid, tx: &FrontendSender) {
@@ -1385,6 +1456,8 @@ impl BackendState {
         if let Some(mut handle) = self.launch_tasks.remove(&id) {
             handle.kill.take();
         }
+        self.java_prep_tasks.remove(&id);
+        self.installing.remove(&id);
         self.launching.remove(&id);
         self.running.remove(&id);
         match &exit {
@@ -1622,7 +1695,9 @@ pub async fn run(
                         state.handle_fetch_finished(url, result, &frontend);
                     }
                     Some(BackendEvent::InstallProgress { id, stage, current, total, message, show_bar }) => {
-                        if state.install_tasks.contains_key(&id) {
+                        if state.install_tasks.contains_key(&id)
+                            || state.java_prep_tasks.contains(&id)
+                        {
                             state.installing.insert(id, instances::InstallProgressView {
                                 stage,
                                 current,
@@ -1631,7 +1706,9 @@ pub async fn run(
                                 show_bar,
                             });
                         }
-                        state.emit_snapshot(&frontend);
+                    }
+                    Some(BackendEvent::LaunchPrepFinished { id }) => {
+                        state.handle_launch_prep_finished(id, &frontend);
                     }
                     Some(BackendEvent::InstallFinished { id, result }) => {
                         state.handle_install_finished(id, result, &frontend).await;

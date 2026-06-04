@@ -18,7 +18,7 @@ use winreg::enums::*;
 use crate::paths::{DataDir, JavaDir};
 use crate::progress::ProgressTracker;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct JavaInstallation {
     pub version: String,
     pub path: PathBuf,

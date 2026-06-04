@@ -87,18 +87,23 @@ impl ProgressReporter for BackendProgressReporter {
             .message
             .clone()
             .unwrap_or_else(|| stage_message(&event.stage).to_string());
+        let current = if event.total > 0 {
+            event.current.min(event.total)
+        } else {
+            event.current
+        };
 
         self.frontend.send(MessageToFrontend::InstanceProgress {
             id: self.id,
             stage,
-            current: event.current,
+            current,
             total: event.total,
             message: Arc::<str>::from(message.clone()),
         });
         let _ = self.internal.send(BackendEvent::InstallProgress {
             id: self.id,
             stage,
-            current: event.current,
+            current,
             total: event.total,
             message: Arc::<str>::from(message),
             show_bar: event.total > 1,
@@ -297,6 +302,51 @@ pub(crate) async fn install_game_files(
     extract_natives(metadata, data_dir, extract_progress).await?;
 
     Ok(())
+}
+
+pub(crate) async fn resolve_java_for_launch(
+    metadata: &InstanceMetadata,
+    data_dir: &DataDir,
+    configured_path: Option<&str>,
+    progress: &BackendProgressReporter,
+) -> anyhow::Result<java::JavaInstallation> {
+    let java_version = metadata.get_java_version();
+    if let Some(path) = configured_path {
+        let java_path = Path::new(path);
+        if java::check_java(&java_version, java_path).await
+            && let Some(installation) = java::get_installation_pub(java_path).await
+        {
+            progress
+                .handle(
+                    ProgressStage::Java,
+                    launcher_i18n::progress::java_already_installed(),
+                )
+                .finish();
+            return Ok(installation);
+        }
+    }
+    if let Some(installation) = java::get_java(&java_version, data_dir).await {
+        progress
+            .handle(
+                ProgressStage::Java,
+                launcher_i18n::progress::java_already_installed(),
+            )
+            .finish();
+        return Ok(installation);
+    }
+
+    java::download_java(
+        &java_version,
+        data_dir,
+        progress.handle(
+            ProgressStage::Java,
+            launcher_i18n::progress::installing_java_version(java_version.clone()),
+        ),
+    )
+    .await?;
+    java::get_java(&java_version, data_dir)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("Java {java_version} is still missing after download"))
 }
 
 pub(crate) async fn ensure_java(

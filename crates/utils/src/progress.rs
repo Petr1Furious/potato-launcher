@@ -140,6 +140,9 @@ where
 
     fn finish(&self) {
         self.update(|state| {
+            if state.total > 0 && state.current > state.total {
+                state.total = state.current;
+            }
             state.finished = true;
         });
     }
