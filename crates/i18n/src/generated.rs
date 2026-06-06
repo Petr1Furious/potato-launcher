@@ -447,6 +447,8 @@ pub mod instances {
             "open_instance_folder" => Some(open_instance_folder()),
             "open_latest_launch_log" => Some(open_latest_launch_log()),
             "open_launcher_directory" => Some(open_launcher_directory()),
+            "optional_mods_desc" => Some(optional_mods_desc()),
+            "optional_mods_title" => Some(optional_mods_title()),
             "override_suffix" => Some(override_suffix()),
             "play" => Some(play()),
             "play_again" => Some(play_again()),
@@ -659,6 +661,18 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Открыть папку лаунчера",
             _ => "Open Launcher Directory",
+        }
+    }
+    pub fn optional_mods_desc() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Выберите, какие опциональные моды устанавливать для этого инстанса.",
+            _ => "Choose which optional mods to install for this instance.",
+        }
+    }
+    pub fn optional_mods_title() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Опциональные моды",
+            _ => "Optional mods",
         }
     }
     pub fn override_suffix() -> &'static str {
@@ -976,6 +990,7 @@ pub mod notifications {
             "minecraft_running" => Some(minecraft_running()),
             "minecraft_terminated" => Some(minecraft_terminated()),
             "offline_nickname_empty" => Some(offline_nickname_empty()),
+            "optional_mod_install_in_progress" => Some(optional_mod_install_in_progress()),
             "preparing_install" => Some(preparing_install()),
             "preparing_local_instance" => Some(preparing_local_instance()),
             "selected_account_must_match" => Some(selected_account_must_match()),
@@ -1122,6 +1137,12 @@ pub mod notifications {
             _ => format!("Failed to save offline account: {error}"),
         }
     }
+    pub fn failed_save_optional_mod(error: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Не удалось сохранить настройку опционального мода: {error}"),
+            _ => format!("Failed to save optional mod setting: {error}"),
+        }
+    }
     pub fn failed_save_refreshed_account(error: String) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Не удалось сохранить обновлённый аккаунт: {error}"),
@@ -1238,10 +1259,34 @@ pub mod notifications {
             _ => "Minecraft was terminated",
         }
     }
+    pub fn mod_added(mod_id: String, path: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Восстановлен мод {mod_id} ({path})"),
+            _ => format!("Restored mod {mod_id} ({path})"),
+        }
+    }
+    pub fn mod_removed(mod_id: String, path: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Удалён мод {mod_id} ({path})"),
+            _ => format!("Removed mod {mod_id} ({path})"),
+        }
+    }
     pub fn offline_nickname_empty() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Офлайн-ник не может быть пустым",
             _ => "Offline nickname cannot be empty",
+        }
+    }
+    pub fn optional_mod_install_in_progress() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Опциональные моды нельзя изменить, пока идёт локальная установка",
+            _ => "Optional mods cannot be changed while a local install is in progress",
+        }
+    }
+    pub fn optional_mod_sync_failed(error: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Не удалось синхронизировать опциональные моды: {error}"),
+            _ => format!("Failed to sync optional mods: {error}"),
         }
     }
     pub fn preparing_install() -> &'static str {
@@ -1375,6 +1420,7 @@ pub mod progress {
             "installing" => Some(installing()),
             "installing_java" => Some(installing_java()),
             "java_already_installed" => Some(java_already_installed()),
+            "syncing_optional_mods" => Some(syncing_optional_mods()),
             _ => None,
         }
     }
@@ -1460,6 +1506,12 @@ pub mod progress {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Java уже установлена",
             _ => "Java is already installed",
+        }
+    }
+    pub fn syncing_optional_mods() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Синхронизация опциональных модов...",
+            _ => "Syncing optional mods...",
         }
     }
 }

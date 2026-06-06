@@ -74,6 +74,8 @@ pub struct InstanceUserSettingsEntry {
     pub java_path: Option<String>,
     #[serde(default)]
     pub use_native_glfw: Option<bool>,
+    #[serde(default)]
+    pub optional_mod_sets: HashMap<String, bool>,
 }
 
 impl InstanceUserSettings {
@@ -187,6 +189,10 @@ enum BackendEvent {
     InstallFinished {
         id: Uuid,
         result: Result<install::InstallOutput, Arc<str>>,
+    },
+    ModSyncFinished {
+        id: Uuid,
+        result: Result<(), Arc<str>>,
     },
     LaunchPrepFinished {
         id: Uuid,
@@ -448,6 +454,7 @@ impl BackendState {
                             .as_ref()
                             .map(|p| Arc::<str>::from(p.clone())),
                         use_native_glfw: settings.use_native_glfw,
+                        optional_mod_sets: settings.optional_mod_sets.clone(),
                     },
                 )
             })
@@ -479,6 +486,7 @@ impl BackendState {
                         auth_provider: metadata.auth_backend.clone(),
                         default_xmx_mb: parse_xmx_mb(metadata.default_xmx.as_deref()),
                         required_java_version: Some(Arc::from(metadata.get_java_version())),
+                        mod_sync: metadata.mod_sync.clone(),
                     },
                 ))
             })
@@ -652,10 +660,7 @@ impl BackendState {
     fn start_install(
         &mut self,
         id: Uuid,
-        
-        cause: InstallCause,
         force_overwrite: bool,
-        reset_mods: bool,
         tx: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) {
@@ -681,9 +686,14 @@ impl BackendState {
 
         let request = install::InstallRequest {
             id,
-            cause,
+            cause: instance::instance_metadata::InstallCause::Update,
             force_overwrite,
-            reset_mods,
+            optional_mod_preferences: self
+                .instance_settings
+                .instances
+                .get(&id)
+                .map(|entry| entry.optional_mod_sets.clone())
+                .unwrap_or_default(),
             launcher_dir: DataDir::new(self.launcher_dir.clone()),
             client: self.client.clone(),
             local_instances: self.instance_storage.all().to_vec(),
@@ -1170,6 +1180,130 @@ impl BackendState {
         self.creating_local.contains_key(&instance)
     }
 
+    async fn set_optional_mod_set_enabled(
+        &mut self,
+        instance: Uuid,
+        set_id: String,
+        enabled: bool,
+        tx: &FrontendSender,
+        internal: mpsc::UnboundedSender<BackendEvent>,
+    ) {
+        if self.install_tasks.contains_key(&instance) {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Info,
+                message: Arc::from(launcher_i18n::notifications::install_already_running()),
+            });
+            return;
+        }
+        if self.is_local_install_in_progress(instance) {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Warning,
+                message: Arc::from(
+                    launcher_i18n::notifications::optional_mod_install_in_progress(),
+                ),
+            });
+            return;
+        }
+        let Some(local) = self
+            .instance_storage
+            .all()
+            .iter()
+            .find(|entry| entry.id == instance)
+        else {
+            return;
+        };
+        let data_dir = DataDir::new(self.launcher_dir.clone());
+        let instance_dir = InstancesDir::root()
+            .instance_dir(&local.dir_name)
+            .with_data_dir(data_dir.clone());
+        let Ok(metadata) = InstanceMetadata::read_local(&instance_dir).await else {
+            return;
+        };
+        let is_optional = metadata
+            .mod_sync
+            .optional_sets
+            .iter()
+            .any(|entry| entry.id == set_id);
+        if !is_optional {
+            return;
+        }
+
+        self.instance_settings
+            .entry_mut(instance)
+            .optional_mod_sets
+            .insert(set_id, enabled);
+        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+            log::error!("Failed to save optional mod set setting for instance {instance}: {err:#}");
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::failed_save_optional_mod(
+                    err.to_string(),
+                )),
+            });
+            return;
+        }
+        self.emit_snapshot(tx);
+
+        let optional_mod_preferences = self
+            .instance_settings
+            .instances
+            .get(&instance)
+            .map(|entry| entry.optional_mod_sets.clone())
+            .unwrap_or_default();
+        self.install_errors.remove(&instance);
+        self.installing.insert(
+            instance,
+            instances::InstallProgressView {
+                stage: ProgressStage::Files,
+                current: 0,
+                total: 0,
+                message: Arc::from(launcher_i18n::progress::syncing_optional_mods()),
+                show_bar: false,
+            },
+        );
+
+        let client = self.client.clone();
+        let dir_name = local.dir_name.clone();
+        let frontend = tx.clone();
+        let handle = tokio::spawn(async move {
+            let result = install::sync_instance_mods(
+                &client,
+                data_dir,
+                &dir_name,
+                instance,
+                optional_mod_preferences,
+                frontend,
+                internal.clone(),
+            )
+            .await
+            .map_err(|err| Arc::<str>::from(format!("{err:#}")));
+            let _ = internal.send(BackendEvent::ModSyncFinished {
+                id: instance,
+                result,
+            });
+        });
+        self.install_tasks.insert(instance, handle);
+    }
+
+    async fn handle_mod_sync_finished(
+        &mut self,
+        id: Uuid,
+        result: Result<(), Arc<str>>,
+        tx: &FrontendSender,
+    ) {
+        self.install_tasks.remove(&id);
+        self.installing.remove(&id);
+        if let Err(err) = result {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::optional_mod_sync_failed(
+                    err.to_string(),
+                )),
+            });
+        }
+        self.emit_snapshot(tx);
+    }
+
     async fn set_instance_use_native_glfw(
         &mut self,
         instance: Uuid,
@@ -1647,6 +1781,21 @@ pub async fn run(
                             .set_instance_use_native_glfw(instance, enabled, &frontend)
                             .await;
                     }
+                    MessageToBackend::SetOptionalModSetEnabled {
+                        instance,
+                        set_id,
+                        enabled,
+                    } => {
+                        state
+                            .set_optional_mod_set_enabled(
+                                instance,
+                                set_id,
+                                enabled,
+                                &frontend,
+                                internal_sender.clone(),
+                            )
+                            .await;
+                    }
                     MessageToBackend::ResolveJavaPath(instance) => {
                         state.resolve_java_path(instance, internal_sender.clone());
                     }
@@ -1717,6 +1866,9 @@ pub async fn run(
                     }
                     Some(BackendEvent::InstallFinished { id, result }) => {
                         state.handle_install_finished(id, result, &frontend).await;
+                    }
+                    Some(BackendEvent::ModSyncFinished { id, result }) => {
+                        state.handle_mod_sync_finished(id, result, &frontend).await;
                     }
                     Some(BackendEvent::LaunchStarted { id }) => {
                         state.handle_launch_started(id, &frontend);

@@ -19,6 +19,7 @@ use utils::{
 
 use crate::{
     assets::{AssetIndex, AssetsMetadata},
+    mod_sync::{ModSyncError, build_mod_sync_plan},
     os::{get_os_name, get_system_arch},
     overrides::with_overrides,
 };
@@ -85,31 +86,34 @@ pub struct IncludeEntry {
     pub action: IncludeAction,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ResourceUpdateBehavior {
-    /// Mods will be validated at every launch,
-    /// any changes by the user will be reverted
-    Strict,
-    /// All resources will be validated at every launch,
-    /// any changes by the user will be reverted
-    StrictAll,
-    /// Same as Strict, but only mod file sizes will be validated
-    StrictFast,
-    /// Same as StrictAll, but only resource file sizes will be validated.
-    /// Will be slower than StrictFast, because file sizes for non-mod resources
-    /// are not available.
-    StrictAllFast,
-    /// Resources will only be validated on instance updates, mod additions
-    /// and deletions by the user will be preserved
-    #[default]
-    Lenient,
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ModEntry {
     pub mod_id: String,
     pub object: Object,
+}
+
+pub use crate::install_params::{InstallCause, InstallParams};
+pub use crate::mod_sync::{ModSyncSettings, ModSyncWarning};
+
+pub struct InstallTasks {
+    pub tasks: TaskSet,
+    /// Warnings from mod sync related to illegal user actions (e.g. deleting a required mod)
+    pub mod_warnings: Vec<ModSyncWarning>,
+}
+
+#[derive(Debug)]
+pub struct EnableOptionalModTask {
+    pub source: PathBuf,
+    pub target: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceSyncMode {
+    #[default]
+    OnUpdate,
+    Always,
+    AlwaysFast,
 }
 
 /// Complete metadata for a single instance.
@@ -133,10 +137,13 @@ pub struct InstanceMetadata {
     #[serde(default)]
     pub include: Vec<IncludeEntry>,
 
+    /// Mod jars declared by the instance manifest
     #[serde(default)]
     pub mod_entries: Vec<ModEntry>,
-    #[serde(default)]
-    pub resource_update_behavior: ResourceUpdateBehavior,
+    /// How local mod jars are reconciled with `mod_entries` on install/update/launch
+    pub mod_sync: ModSyncSettings,
+    /// When to verify client jar, libraries, and assets (separate from mod sync)
+    pub resource_sync: ResourceSyncMode,
 
     /// base URL for assets
     /// if not set, the launcher will download assets from Mojang servers
@@ -203,6 +210,10 @@ pub enum InstanceMetadataError {
     MissingObject(String),
     #[error("include entry and object paths do not match: {0}")]
     PathMismatch(String),
+    #[error("mod sync failed: {0}")]
+    ModSync(#[from] ModSyncError),
+    #[error("failed while checking local files for download: {0}")]
+    GetDownloadTasks(#[from] files::GetDownloadTasksError),
 }
 
 #[derive(Default)]
@@ -210,6 +221,7 @@ pub struct TaskSet {
     pub check_tasks: Vec<CheckTask>,
     pub config_option_tasks: Vec<ConfigOptionTask>,
     pub delete_tasks: Vec<DeleteTask>,
+    pub enable_optional_mod_tasks: Vec<EnableOptionalModTask>,
 }
 
 impl ops::AddAssign<TaskSet> for TaskSet {
@@ -217,21 +229,9 @@ impl ops::AddAssign<TaskSet> for TaskSet {
         self.check_tasks.extend(rhs.check_tasks);
         self.config_option_tasks.extend(rhs.config_option_tasks);
         self.delete_tasks.extend(rhs.delete_tasks);
+        self.enable_optional_mod_tasks
+            .extend(rhs.enable_optional_mod_tasks);
     }
-}
-
-#[derive(PartialEq, Clone, Copy)]
-pub enum InstallCause {
-    Update,
-    Run,
-}
-
-pub struct InstallParams {
-    pub data_dir: DataDir,
-    pub minecraft_dir: PathBuf,
-    pub cause: InstallCause,
-    pub force_overwrite: bool,
-    pub reset_mods: bool,
 }
 
 impl InstanceMetadata {
@@ -321,32 +321,42 @@ impl InstanceMetadata {
         &self,
         client: &reqwest::Client,
         params: &InstallParams,
-    ) -> Result<TaskSet, InstanceMetadataError> {
+    ) -> Result<InstallTasks, InstanceMetadataError> {
         let mut tasks = TaskSet::default();
         if params.cause == InstallCause::Update
             || matches!(
-                self.resource_update_behavior,
-                ResourceUpdateBehavior::StrictAll | ResourceUpdateBehavior::StrictAllFast
+                self.resource_sync,
+                ResourceSyncMode::Always | ResourceSyncMode::AlwaysFast
             )
         {
-            // TODO: handle StrictAllFast
             tasks
                 .check_tasks
-                .push(self.get_client_check_task(&params.data_dir)?);
+                .push(self.get_client_check_task(&params.instance_dir.data_dir())?);
             tasks
                 .check_tasks
-                .extend(self.get_library_check_tasks(&params.data_dir)?);
-            tasks
-                .check_tasks
-                .extend(self.get_asset_check_tasks(client, &params.data_dir).await?);
+                .extend(self.get_library_check_tasks(&params.instance_dir.data_dir())?);
+            tasks.check_tasks.extend(
+                self.get_asset_check_tasks(client, &params.instance_dir.data_dir())
+                    .await?,
+            );
         }
-        if params.cause == InstallCause::Update
-            || self.resource_update_behavior != ResourceUpdateBehavior::Lenient
-        {
-            tasks.check_tasks.extend(self.get_mod_check_tasks(params)?);
-        }
-        tasks += self.get_include_tasks(params)?;
-        Ok(tasks)
+
+        let mod_plan = build_mod_sync_plan(&self.mod_entries, &self.mod_sync, params)?;
+        let include_tasks = self.get_include_tasks(params)?;
+        tasks.check_tasks.extend(mod_plan.tasks.check_tasks);
+        tasks.check_tasks.extend(include_tasks.check_tasks);
+        tasks
+            .config_option_tasks
+            .extend(include_tasks.config_option_tasks);
+        tasks.delete_tasks.extend(mod_plan.tasks.delete_tasks);
+        tasks
+            .enable_optional_mod_tasks
+            .extend(mod_plan.tasks.enable_optional_mod_tasks);
+
+        Ok(InstallTasks {
+            tasks,
+            mod_warnings: mod_plan.warnings,
+        })
     }
 
     pub async fn mark_include_downloads_complete(
@@ -465,7 +475,7 @@ impl InstanceMetadata {
         // seen_paths is only used to avoid deleting files included by more specific rules,
         // preventing object intersections is done by the generator
         for entry in &self.include {
-            let entry_path = entry.path.to_path(&params.minecraft_dir);
+            let entry_path = entry.path.to_path(&params.instance_dir.minecraft_dir());
             if entry.apply_on == ApplyOn::Update && params.cause != InstallCause::Update {
                 continue;
             }
@@ -495,12 +505,12 @@ impl InstanceMetadata {
                         continue;
                     }
                     for object in action.objects.iter() {
-                        let path = object.path.to_path(&params.minecraft_dir);
+                        let path = object.path.to_path(&params.instance_dir.minecraft_dir());
                         include_file(object, path.clone(), entry.overwrite);
                         seen_paths.insert(path);
                     }
                     if action.delete_extra || params.force_overwrite {
-                        let dir_path = entry.path.to_path(&params.minecraft_dir);
+                        let dir_path = entry.path.to_path(&params.instance_dir.minecraft_dir());
                         for file in files::get_files_ignore_paths(&dir_path, &seen_paths) {
                             tasks.delete_tasks.push(DeleteTask { path: file.clone() });
                         }
@@ -512,13 +522,6 @@ impl InstanceMetadata {
         // TODO: can duplicates be added?
         tasks.check_tasks = files::dedup_check_tasks(tasks.check_tasks);
         Ok(tasks)
-    }
-
-    fn get_mod_check_tasks(
-        &self,
-        params: &InstallParams,
-    ) -> Result<Vec<CheckTask>, InstanceMetadataError> {
-        
     }
 
     pub fn get_libraries_with_overrides(&self) -> Vec<Library> {
@@ -633,8 +636,9 @@ mod tests {
             name: "Test".to_string(),
             auth_backend: None,
             include,
-            resource_update_behavior: ResourceUpdateBehavior::Lenient,
             mod_entries,
+            mod_sync: ModSyncSettings::default(),
+            resource_sync: ResourceSyncMode::OnUpdate,
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: Vec::new(),
             authlib_injector: crate::authlib::default_authlib_injector_library(),

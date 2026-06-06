@@ -2,26 +2,25 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::OsStr,
     fs, io,
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 
 use either::Either;
 use instance::{
     instance_metadata::{
-        ApplyOn, ConfigType, IncludeAction, IncludeActionConfigOptions, IncludeActionDirectory,
-        IncludeEntry, InstallCause, InstallParams, InstanceMetadata, Object,
-        ResourceUpdateBehavior,
+        IncludeActionConfigOptions, InstallCause, InstallParams, InstanceMetadata, ModSyncWarning,
     },
     manifest::InstanceManifestEntry,
+    mod_sync,
     storage::{LocalInstance, RemoteSource},
 };
-use launcher_bridge::{FrontendSender, MessageToFrontend};
+use launcher_bridge::{FrontendSender, MessageToFrontend, NotificationLevel};
 use tokio::sync::mpsc;
 use url::Url;
 use utils::{
     adaptive_download,
-    files::{self, CheckTask},
+    files::{self, ConfigType},
     java,
     paths::{DataDir, InstanceDirFS, InstancesDir, NativesDir},
     progress::{
@@ -39,7 +38,7 @@ pub(crate) struct InstallRequest {
     // TODO: pass the whole InstallParams here?
     pub(crate) cause: InstallCause,
     pub(crate) force_overwrite: bool,
-    pub(crate) reset_mods: bool,
+    pub(crate) optional_mod_preferences: HashMap<String, bool>,
 
     pub(crate) launcher_dir: DataDir,
     pub(crate) client: reqwest::Client,
@@ -158,6 +157,12 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     let progress =
         BackendProgressReporter::new(plan.view_id, request.frontend.clone(), request.internal);
 
+    let previous_mod_entries = InstanceMetadata::read_local(&instance_dir)
+        .await
+        .ok()
+        .map(|metadata| metadata.mod_entries)
+        .unwrap_or_default();
+
     let metadata = install_metadata(
         &request.client,
         &plan.entry,
@@ -169,18 +174,28 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     )
     .await?;
 
+    let optional_sets_enabled = mod_sync::resolve_optional_set_enabled(
+        &metadata.mod_sync,
+        &request.optional_mod_preferences,
+    );
+
     let install_params = InstallParams {
-        data_dir: request.launcher_dir.clone(),
-        minecraft_dir: instance_dir.minecraft_dir(),
+        instance_dir: instance_dir.clone(),
         cause: request.cause,
         force_overwrite: request.force_overwrite,
-        reset_mods: request.reset_mods,
+        previous_mod_entries,
+        optional_sets_enabled,
     };
-    install_game_files(&request.client, &metadata, install_params, &progress).await?;
+    install_game_files(
+        &request.client,
+        &metadata,
+        &install_params,
+        &progress,
+        &request.frontend,
+    )
+    .await?;
 
-    if cause == InstallCause::Update {
-        ensure_java(&metadata, &data_dir, &progress).await?;
-    }
+    ensure_java(&metadata, &request.launcher_dir, &progress).await?;
 
     let instance = if let Some(mut existing) = plan.existing {
         existing.source = Some(plan.source);
@@ -404,16 +419,26 @@ async fn apply_config_options(
 pub(crate) async fn install_game_files(
     client: &reqwest::Client,
     metadata: &InstanceMetadata,
-    params: InstallParams<'_>,
+    params: &InstallParams,
     progress: &BackendProgressReporter,
+    frontend: &FrontendSender,
 ) -> anyhow::Result<()> {
-    let tasks = metadata.get_all_install_tasks(client, &params).await?;
+    let install_tasks = metadata.get_all_install_tasks(client, params).await?;
+
+    for warning in &install_tasks.mod_warnings {
+        notify_mod_sync_warning(frontend, warning);
+    }
+
+    for delete_task in &install_tasks.tasks.delete_tasks {
+        files::remove_file_or_dir(&delete_task.path).await?;
+    }
 
     let check_progress = progress.handle(
         ProgressStage::Checking,
         launcher_i18n::progress::checking_install_files(),
     );
-    let download_tasks = files::get_download_tasks(tasks.check_tasks, check_progress).await?;
+    let download_tasks =
+        files::get_download_tasks(install_tasks.tasks.check_tasks, check_progress).await?;
 
     let download_progress = progress.handle(
         ProgressStage::Downloading,
@@ -421,20 +446,84 @@ pub(crate) async fn install_game_files(
     );
     adaptive_download::download_files(download_tasks, download_progress).await?;
 
+    enable_optional_mods(install_tasks.tasks.enable_optional_mod_tasks).await?;
+
     metadata
-        .mark_include_downloads_complete(&params.minecraft_dir)
+        .mark_include_downloads_complete(&params.instance_dir.minecraft_dir())
         .await?;
 
     if params.cause == InstallCause::Update {
-        // TODO: do we want to run this in StrictAll mode?
         let extract_progress = progress.handle(
             ProgressStage::Extracting,
             launcher_i18n::progress::extracting_native_libraries(),
         );
-        extract_natives(metadata, data_dir, extract_progress).await?;
+        extract_natives(metadata, params.instance_dir.data_dir(), extract_progress).await?;
     }
 
     Ok(())
+}
+
+async fn enable_optional_mods(
+    tasks: Vec<instance::instance_metadata::EnableOptionalModTask>,
+) -> io::Result<()> {
+    for task in tasks {
+        if let Some(parent) = task.target.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        files::remove_file_or_dir(&task.target).await?;
+        if let Err(err) = tokio::fs::hard_link(&task.source, &task.target).await {
+            log::error!(
+                "Failed to hardlink optional mod from {} to {}; falling back to copy: {err}",
+                task.source.display(),
+                task.target.display()
+            );
+            tokio::fs::copy(&task.source, &task.target).await?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn sync_instance_mods(
+    client: &reqwest::Client,
+    launcher_dir: DataDir,
+    dir_name: &str,
+    view_id: Uuid,
+    optional_mod_preferences: HashMap<String, bool>,
+    frontend: FrontendSender,
+    internal: mpsc::UnboundedSender<BackendEvent>,
+) -> anyhow::Result<()> {
+    let instance_dir = InstancesDir::root()
+        .instance_dir(dir_name)
+        .with_data_dir(launcher_dir.clone());
+    let metadata = InstanceMetadata::read_local(&instance_dir).await?;
+    let optional_sets_enabled =
+        mod_sync::resolve_optional_set_enabled(&metadata.mod_sync, &optional_mod_preferences);
+    let progress = BackendProgressReporter::new(view_id, frontend.clone(), internal);
+    let install_params = InstallParams {
+        instance_dir,
+        cause: InstallCause::Update,
+        force_overwrite: false,
+        previous_mod_entries: metadata.mod_entries.clone(),
+        optional_sets_enabled,
+    };
+    install_game_files(client, &metadata, &install_params, &progress, &frontend).await
+}
+
+fn notify_mod_sync_warning(frontend: &FrontendSender, warning: &ModSyncWarning) {
+    let message = match warning {
+        ModSyncWarning::ModRemoved { mod_id, path } => {
+            log::warn!("Removed mod {mod_id} at {}", path.display());
+            launcher_i18n::notifications::mod_removed(mod_id.clone(), path.display().to_string())
+        }
+        ModSyncWarning::ModAdded { mod_id, path } => {
+            log::warn!("Restored mod {mod_id} to {}", path.display());
+            launcher_i18n::notifications::mod_added(mod_id.clone(), path.display().to_string())
+        }
+    };
+    frontend.send(MessageToFrontend::Notification {
+        level: NotificationLevel::Warning,
+        message: Arc::from(message),
+    });
 }
 
 pub(crate) async fn resolve_java_for_launch(
@@ -686,106 +775,4 @@ mod tests {
         assert_eq!(plan.dir_name, "Vanilla");
         assert!(plan.existing.is_some());
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use instance::instance_metadata::ResourceUpdateBehavior;
-
-    fn empty_metadata(include: Vec<IncludeEntry>, mod_entries: Vec<ModEntry>) -> InstanceMetadata {
-        InstanceMetadata {
-            name: "Test".to_string(),
-            auth_backend: None,
-            include,
-            resource_update_behavior: ResourceUpdateBehavior::Lenient,
-            mod_entries,
-            resources_url_base: ResourcesUrlBase::default(),
-            extra_forge_libs: Vec::new(),
-            authlib_injector: crate::authlib::default_authlib_injector_library(),
-            default_xmx: None,
-            versions: Vec::new(),
-            overrides_applied: true,
-        }
-    }
-
-    #[tokio::test]
-    async fn include_tasks_respect_completion_marker_for_incremental_rules() {
-        let dir =
-            std::env::temp_dir().join(format!("potato-install-test-{}", uuid::Uuid::new_v4()));
-        let include_dir = dir.join("config");
-        tokio::fs::create_dir_all(&include_dir).await.unwrap();
-        tokio::fs::write(include_dir.join(COMPLETION_MARKER_FILE), b"")
-            .await
-            .unwrap();
-        tokio::fs::write(include_dir.join("options.txt"), b"present")
-            .await
-            .unwrap();
-
-        let metadata = empty_metadata(
-            vec![IncludeEntry {
-                path: RelativePathBuf::from("config"),
-                apply_on: ApplyOn::Update,
-                overwrite: false,
-                action: IncludeAction::Directory(IncludeActionDirectory {
-                    delete_extra: true,
-                    skip_if_dir_exists: true,
-                    objects: vec![Object {
-                        path: RelativePathBuf::from("config/options.txt"),
-                        sha1: "abc".to_string(),
-                        size: None,
-                        url: Url::parse("https://example.com/options.txt").unwrap(),
-                    }],
-                }),
-            }],
-            vec![],
-        );
-
-        let tasks = apply_includes(&metadata, false, &dir).await.unwrap();
-
-        assert!(tasks.is_empty());
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    #[tokio::test]
-    async fn include_tasks_force_overwrite_even_when_file_exists() {
-        let dir =
-            std::env::temp_dir().join(format!("potato-install-test-{}", uuid::Uuid::new_v4()));
-        let include_dir = dir.join("config");
-        tokio::fs::create_dir_all(&include_dir).await.unwrap();
-        tokio::fs::write(include_dir.join("options.txt"), b"present")
-            .await
-            .unwrap();
-
-        let metadata = empty_metadata(
-            vec![IncludeEntry {
-                path: RelativePathBuf::from("config"),
-                apply_on: ApplyOn::Update,
-                overwrite: false,
-                action: IncludeAction::Directory(IncludeActionDirectory {
-                    delete_extra: true,
-                    skip_if_dir_exists: true,
-                    objects: vec![Object {
-                        path: RelativePathBuf::from("config/options.txt"),
-                        sha1: "abc".to_string(),
-                        size: None,
-                        url: Url::parse("https://example.com/options.txt").unwrap(),
-                    }],
-                }),
-            }],
-            vec![],
-        );
-
-        let tasks = apply_includes(&metadata, true, &dir).await.unwrap();
-
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].path, include_dir.join("options.txt"));
-        let _ = tokio::fs::remove_dir_all(dir).await;
-    }
-
-    // TODO: test for mods
-    // TODO: test for other include options:
-    // TODO:   - more-specific rules override less-specific ones
-    // TODO:   - delete_extra
-    // TODO:   - partial configs
 }

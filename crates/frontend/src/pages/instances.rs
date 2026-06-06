@@ -114,8 +114,9 @@ impl InstancesPage {
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::memory_mib()));
         let jvm_flags_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::jvm_flags()));
-        let java_path_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t::instances::java_path_auto_detect()));
+        let java_path_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t::instances::java_path_auto_detect())
+        });
         let java_path_input_for_instances = java_path_input.clone();
         let _instances_subscription = cx.subscribe_in(
             &data.instances,
@@ -871,6 +872,16 @@ impl InstancesPage {
                 ),
                 cx,
             ))
+            .when(
+                instance.locally_installed && !instance.optional_mod_sets.is_empty(),
+                |this| {
+                    this.child(detail_section(
+                        t::instances::optional_mods_title(),
+                        optional_mods_section(&instance, sender.clone(), cx),
+                        cx,
+                    ))
+                },
+            )
             .child(detail_section(
                 t::instances::actions(),
                 action_section(
@@ -2091,6 +2102,43 @@ fn java_section(
             })
             .child(native_glfw_toggle(instance, sender.clone(), cx))
         })
+}
+
+fn optional_mods_section(
+    instance: &InstanceView,
+    sender: BackendSender,
+    cx: &mut Context<InstancesPage>,
+) -> gpui::Div {
+    let id = instance.id;
+    let syncing = matches!(instance.status, InstanceLiveStatus::Installing { .. });
+    v_flex()
+        .gap_2()
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(t::instances::optional_mods_desc()),
+        )
+        .children(instance.optional_mod_sets.iter().map(|optional_set| {
+            let set_id = optional_set.set_id.to_string();
+            let display_name = optional_set.display_name.to_string();
+            let enabled = optional_set.enabled;
+            let checkbox_id = format!("optional-mod-set-{id}-{set_id}");
+            Checkbox::new(checkbox_id)
+                .checked(enabled)
+                .disabled(syncing)
+                .label(display_name)
+                .on_click({
+                    let sender = sender.clone();
+                    move |_, _, _| {
+                        sender.send(MessageToBackend::SetOptionalModSetEnabled {
+                            instance: id,
+                            set_id: set_id.clone(),
+                            enabled: !enabled,
+                        });
+                    }
+                })
+        }))
 }
 
 #[cfg(target_os = "linux")]

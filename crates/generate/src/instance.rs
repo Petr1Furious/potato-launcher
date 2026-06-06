@@ -1,28 +1,28 @@
 use instance::{
     authlib::default_authlib_injector_library,
     instance_metadata::{
-        ApplyOn, IncludeAction, IncludeEntry, InstanceMetadata, ResourceUpdateBehavior, Object
+        IncludeAction, IncludeEntry, InstanceMetadata, ModEntry, Object, ResourceSyncMode,
     },
     manifest::VanillaVersionManifest,
+    mod_sync::ModSyncSettings,
     overrides::with_overrides,
     version_metadata::{Library, OsArch, VersionMetadata},
 };
 use launcher_auth::providers::AuthProviderConfig;
 use log::{debug, info, warn};
-use rand::seq::IndexedRandom;
 use relative_path::{RelativePath, RelativePathBuf};
 use reqwest::Client;
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
 use url::Url;
 use utils::{
     files::{self, CheckTask, CopyTask},
     paths::{
-        AssetsDir, BaseUrl, DataDir, InstanceDir, InstanceDirFS, LibrariesDir, ResourcesUrlBase,
+        AssetsDir, BaseUrl, DataDir, InstanceDir, InstanceDirFS, LibrariesDir, ModsDir,
+        ResourcesUrlBase,
     },
     progress,
 };
@@ -47,7 +47,7 @@ pub enum Loader {
 
 async fn get_file_object(
     base_path: &Path,
-    path: &RelativePathBuf,
+    path: &RelativePath,
     base_url: &BaseUrl,
     instance_dir: &InstanceDir,
 ) -> Result<Object, GetObjectsError> {
@@ -60,17 +60,20 @@ async fn get_file_object(
     }
     // TODO: other non-file cases?
 
-    let hash = files::hash_files(&vec![full_path.clone()], progress::no_progress_bar())
-        .await?
-        .into_iter()
-        .next()
-        .expect("hash_files should return one hash");
+    let hash = files::hash_files(
+        std::slice::from_ref(&full_path),
+        progress::no_progress_bar(),
+    )
+    .await?
+    .into_iter()
+    .next()
+    .expect("hash_files should return one hash");
     let object_url = instance_dir
         .minecraft_dir()
-        .instance_object_path(&path)
+        .instance_object_path(path)
         .to_url(base_url);
     Ok(Object {
-        path: path.clone(),
+        path: path.into(),
         sha1: hash.clone(),
         // size is not used for includes
         size: None,
@@ -106,6 +109,109 @@ async fn get_directory_objects(
     }
 
     Ok(objects)
+}
+
+fn validate_mod_sync_overrides(
+    mod_entries: &[ModEntry],
+    mod_sync: &ModSyncSettings,
+) -> Result<(), GenerateError> {
+    let mod_ids = mod_entries
+        .iter()
+        .map(|entry| entry.mod_id.as_str())
+        .collect::<HashSet<_>>();
+    let mut policy_ids = HashSet::new();
+
+    for mod_id in &mod_sync.blocked {
+        if mod_ids.contains(mod_id.as_str()) {
+            return Err(GenerateError::BlockedModInPack(mod_id.clone()));
+        }
+        if !policy_ids.insert(mod_id.as_str()) {
+            return Err(GenerateError::ConflictingModSyncPolicy(mod_id.clone()));
+        }
+    }
+
+    for mod_id in &mod_sync.required {
+        if !mod_ids.contains(mod_id.as_str()) {
+            return Err(GenerateError::OverrideModNotInPack(mod_id.clone()));
+        }
+        if !policy_ids.insert(mod_id.as_str()) {
+            return Err(GenerateError::ConflictingModSyncPolicy(mod_id.clone()));
+        }
+    }
+
+    let mut set_ids = HashSet::new();
+    for set in &mod_sync.optional_sets {
+        if !set_ids.insert(set.id.as_str()) {
+            return Err(GenerateError::DuplicateOptionalSet(set.id.clone()));
+        }
+        for mod_id in &set.mod_ids {
+            if !mod_ids.contains(mod_id.as_str()) {
+                return Err(GenerateError::OverrideModNotInPack(mod_id.clone()));
+            }
+            if !policy_ids.insert(mod_id.as_str()) {
+                return Err(GenerateError::ConflictingModSyncPolicy(mod_id.clone()));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn collect_mod_entries(
+    source_dir: &Path,
+    base_url: &BaseUrl,
+    instance_dir: &InstanceDir,
+    mod_sync: &ModSyncSettings,
+) -> Result<Vec<ModEntry>, GenerateError> {
+    let mods_dir_rel = RelativePathBuf::from(ModsDir::name());
+    let mods_dir = mods_dir_rel.to_path(source_dir);
+    if !mods_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let blocked = mod_sync
+        .blocked
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&mods_dir).map_err(GetObjectsError::Io)? {
+        let path = entry.map_err(GetObjectsError::Io)?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jar") {
+            continue;
+        }
+        let mod_id = match utils::mod_id::extract_mod_id(&path) {
+            Ok(Some(mod_id)) => mod_id,
+            Ok(None) => {
+                warn!("Skipping mod jar without mod id: {}", path.display());
+                continue;
+            }
+            Err(err) => {
+                return Err(GenerateError::ModIdExtract(
+                    path.display().to_string(),
+                    err.to_string(),
+                ));
+            }
+        };
+        if blocked.contains(mod_id.as_str()) {
+            return Err(GenerateError::BlockedModInPack(mod_id));
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                GenerateError::ModIdExtract(
+                    path.display().to_string(),
+                    "missing file name".to_string(),
+                )
+            })?;
+        let rel_path = RelativePathBuf::from(format!("{}/{file_name}", ModsDir::name()));
+        let object = get_file_object(source_dir, &rel_path, base_url, instance_dir).await?;
+        entries.push(ModEntry { mod_id, object });
+    }
+
+    entries.sort_by(|left, right| left.mod_id.cmp(&right.mod_id));
+    Ok(entries)
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -274,7 +380,9 @@ pub struct InstanceSpec {
     #[serde(default)]
     pub include_rules: Vec<IncludeEntry>,
     #[serde(default)]
-    pub resource_update_behavior: ResourceUpdateBehavior,
+    pub mod_sync: ModSyncSettings,
+    #[serde(default)]
+    pub resource_sync: ResourceSyncMode,
 
     pub auth_backend: Option<AuthProviderConfig>,
     pub default_xmx: Option<String>,
@@ -291,7 +399,7 @@ pub struct InstanceGenerator {
     pub client: Client,
     /// `object`/`objects` fields must be unset for include_rules
     pub spec: InstanceSpec,
-    /// If absent, includes won't be processed
+    /// If absent, includes won't be processed.
     /// Always present in instance-builder, never present on local instance generation
     pub remote_config: Option<RemoteConfig>,
 }
@@ -316,6 +424,16 @@ pub enum GenerateError {
     AuthlibLibrary(#[from] instance::version_metadata::LibraryError),
     #[error("objects must be unset in include rules")]
     IncludeObjectsSet,
+    #[error("blocked mod id appears in mod pack: {0}")]
+    BlockedModInPack(String),
+    #[error("optional/required override not present in mod pack: {0}")]
+    OverrideModNotInPack(String),
+    #[error("mod id appears in more than one mod sync policy: {0}")]
+    ConflictingModSyncPolicy(String),
+    #[error("duplicate optional mod set id: {0}")]
+    DuplicateOptionalSet(String),
+    #[error("failed to extract mod id from {0}: {1}")]
+    ModIdExtract(String, String),
 }
 
 pub struct GeneratorResult {
@@ -449,15 +567,22 @@ impl InstanceGenerator {
                 // Handled separately, because we may want to put default contents for a config file,
                 // but overwrite some config keys. This is not done in builder, where seen_paths is only
                 // used to determine which files have to be deleted
-                let mut existing_paths = HashMap::from([
-                    (false, HashSet::new()),
-                    (true, HashSet::new()),
-                ]);
+                let mut existing_paths =
+                    HashMap::from([(false, HashSet::new()), (true, HashSet::new())]);
                 let mut sorted_rules = self.spec.include_rules.to_vec();
                 sorted_rules.sort_by(|a, b| a.path.cmp(&b.path).reverse());
-                for rule in sorted_rules {
-                    match rule.action {
-                        IncludeAction::File(ref action) => {
+                for mut rule in sorted_rules {
+                    if rule.path.components().count() == 1 && rule.path.as_str() == ModsDir::name()
+                    {
+                        warn!(
+                            "Skipping mods directory include rule, mods are now managed separately"
+                        );
+                        continue;
+                    }
+                    let overwrite = rule.overwrite;
+                    let rule_path = rule.path.clone();
+                    match &mut rule.action {
+                        IncludeAction::File(action) => {
                             if action.object.is_some() {
                                 return Err(GenerateError::IncludeObjectsSet);
                             }
@@ -466,16 +591,15 @@ impl InstanceGenerator {
                                 &rule.path,
                                 &remote_config.download_server_base,
                                 instance_dir.rel(),
-                            ).await?;
+                            )
+                            .await?;
                             copy_tasks.push(CopyTask {
                                 source: object.path.to_path(source_dir),
                                 target: object.path.to_path(instance_dir.minecraft_dir()),
                             });
-                            let mut entry = rule.clone();
-                            entry.action.object = Some(object);
-                            include.push(entry);
+                            action.object = Some(object);
                         }
-                        IncludeAction::Directory(ref action) => {
+                        IncludeAction::Directory(action) => {
                             if !action.objects.is_empty() {
                                 return Err(GenerateError::IncludeObjectsSet);
                             }
@@ -494,16 +618,16 @@ impl InstanceGenerator {
                                 source: object.path.to_path(source_dir),
                                 target: object.path.to_path(instance_dir.minecraft_dir()),
                             }));
-                            let mut entry = rule.clone();
-                            entry.action.objects = objects;
-                            include.push(entry);
+                            action.objects = objects;
                         }
-                        IncludeAction::ConfigOptions(..) => {
-                            include.push(rule.clone());
-                        }
+                        IncludeAction::ConfigOptions(..) => {}
                     }
                     // TODO: include all the files for Directory
-                    existing_paths[&rule.overwrite].insert(rule.path.to_path(source_dir));
+                    existing_paths
+                        .get_mut(&overwrite)
+                        .expect("overwrite key initialized")
+                        .insert(rule_path.to_path(source_dir));
+                    include.push(rule);
                 }
             } else {
                 warn!("Ignoring include rules, source_dir is not set");
@@ -530,6 +654,21 @@ impl InstanceGenerator {
                 .to_resources_url_base(&include_config.download_server_base);
         }
 
+        let mod_entries = if let (Some(source_dir), Some(remote_config)) =
+            (&self.spec.source_dir, &self.remote_config)
+        {
+            collect_mod_entries(
+                source_dir,
+                &remote_config.download_server_base,
+                instance_dir.rel(),
+                &self.spec.mod_sync,
+            )
+            .await?
+        } else {
+            Vec::new()
+        };
+        validate_mod_sync_overrides(&mod_entries, &self.spec.mod_sync)?;
+
         let authlib_injector = default_authlib_injector_library();
         check_tasks.extend(authlib_injector.get_check_tasks(output_dir, os_arch)?);
 
@@ -538,8 +677,9 @@ impl InstanceGenerator {
                 name: self.spec.name,
                 auth_backend: self.spec.auth_backend,
                 include,
-                mod_entries: todo!(),
-                resource_update_behavior: self.spec.resource_update_behavior,
+                mod_entries,
+                mod_sync: self.spec.mod_sync.clone(),
+                resource_sync: self.spec.resource_sync,
                 resources_url_base,
                 extra_forge_libs,
                 authlib_injector,

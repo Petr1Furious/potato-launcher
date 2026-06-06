@@ -16,3 +16,6 @@ url.workspace = true
 relative-path.workspace = true
 log.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+zip.workspace = true

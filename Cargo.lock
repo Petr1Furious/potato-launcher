@@ -3345,6 +3345,7 @@ dependencies = [
  "url",
  "utils",
  "uuid",
+ "zip",
 ]
 
 [[package]]
@@ -3659,9 +3660,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "either",
  "flate2",
  "futures",
- "either",
  "generate",
  "instance",
  "launcher-auth",

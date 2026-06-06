@@ -11,14 +11,31 @@
             "loader_version": "47.3.7",
             "include": [
                 {
-                    "path": "mods"
-                },
-                {
                     "path": "config",
                     "overwrite": false
                 }
             ],
             "include_from": "<...>/PrismLauncher/instances/Monifactory/minecraft",
+            "mod_sync": {
+                "mode": "delta",
+                "required": [
+                    "some-required-mod"
+                ],
+                "blocked": [
+                    "some-blocked-mod"
+                ],
+                "optional_sets": [
+                    {
+                        "id": "jei",
+                        "display_name": "Just Enough Items (JEI)",
+                        "enabled_by_default": false,
+                        "mod_ids": [
+                            "jei-1.20.1-forge-15.2.0.27"
+                        ]
+                    }
+                ]
+            },
+            "resource_sync": "on_update",
             "auth_backend": {
                 "type": "telegram",
                 "auth_base_url": "https://your.auth.domain"

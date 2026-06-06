@@ -443,7 +443,9 @@ fn normalize_xmx(value: Option<&str>) -> String {
     }
 }
 
-pub(crate) async fn read_metadata(instance_dir: &InstanceDirFS) -> Result<InstanceMetadata, LaunchError> {
+pub(crate) async fn read_metadata(
+    instance_dir: &InstanceDirFS,
+) -> Result<InstanceMetadata, LaunchError> {
     Ok(InstanceMetadata::read_local(instance_dir).await?)
 }
 

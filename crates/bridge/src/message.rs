@@ -63,6 +63,11 @@ pub enum MessageToBackend {
         instance: Uuid,
         enabled: bool,
     },
+    SetOptionalModSetEnabled {
+        instance: Uuid,
+        set_id: String,
+        enabled: bool,
+    },
     ResolveJavaPath(Uuid),
     CreateLocalInstance {
         display_name: String,
@@ -153,6 +158,15 @@ pub struct InstanceView {
     pub required_java_version: Option<Arc<str>>,
     /// `None` uses the launcher build default.
     pub use_native_glfw: Option<bool>,
+    pub optional_mod_sets: Arc<[OptionalModSetView]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OptionalModSetView {
+    pub set_id: Arc<str>,
+    pub display_name: Arc<str>,
+    pub enabled: bool,
+    pub enabled_by_default: bool,
 }
 
 impl InstanceView {

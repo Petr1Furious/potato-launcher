@@ -11,6 +11,8 @@ const INSTANCES_DIR_NAME: &str = "instances";
 const VERSIONS_DIR_NAME: &str = "versions";
 const VERSIONS_REPLACED_DIR_NAME: &str = "versions_replaced";
 const MINECRAFT_DIR_NAME: &str = "minecraft";
+const MODS_DIR_NAME: &str = "mods";
+const OPTIONAL_MODS_DIR_NAME: &str = "optional_mods";
 const META_FILE_NAME: &str = "meta.json";
 const AUTH_DATA_FILE_NAME: &str = "auth_data.json";
 const JAVA_DIR_NAME: &str = "java";
@@ -150,6 +152,8 @@ path_type!(VersionsDir, dir);
 path_type!(VersionsReplacedDir, dir);
 path_type!(AssetsDir, dir);
 path_type!(AssetsObjectsDir, dir);
+path_type!(ModsDir, dir);
+path_type!(OptionalModsDir, dir);
 path_type!(InstanceMetaPath, file);
 path_type!(JavaBinPath, file);
 path_type!(AuthDataPath, file);
@@ -222,6 +226,14 @@ impl InstanceDirFS {
         self.rel.minecraft_dir().to_fs(&self.data_dir)
     }
 
+    pub fn mods_dir(&self) -> PathBuf {
+        self.rel.minecraft_dir().mods_dir().to_fs(&self.data_dir)
+    }
+
+    pub fn optional_mods_dir(&self) -> PathBuf {
+        self.rel.optional_mods_dir().to_fs(&self.data_dir)
+    }
+
     pub fn meta_path(&self) -> PathBuf {
         self.rel.meta_path().to_fs(&self.data_dir)
     }
@@ -257,6 +269,10 @@ impl InstanceDir {
         MinecraftDir(self.0.join(MINECRAFT_DIR_NAME))
     }
 
+    pub fn optional_mods_dir(&self) -> OptionalModsDir {
+        OptionalModsDir(self.0.join(OPTIONAL_MODS_DIR_NAME))
+    }
+
     pub fn meta_path(&self) -> InstanceMetaPath {
         InstanceMetaPath(self.0.join(META_FILE_NAME))
     }
@@ -265,6 +281,36 @@ impl InstanceDir {
 impl MinecraftDir {
     pub fn instance_object_path(&self, object_path: &RelativePath) -> InstanceObjectPath {
         InstanceObjectPath(self.0.join(object_path))
+    }
+
+    pub fn mods_dir(&self) -> ModsDir {
+        ModsDir(self.0.join(MODS_DIR_NAME))
+    }
+}
+
+impl ModsDir {
+    pub fn name() -> &'static str {
+        MODS_DIR_NAME
+    }
+
+    pub fn mod_jar_path(&self, filename: &str) -> InstanceObjectPath {
+        InstanceObjectPath(self.0.join(filename))
+    }
+
+    pub fn to_fs_at(&self, minecraft_dir: &Path) -> PathBuf {
+        self.0.to_fs(minecraft_dir)
+    }
+}
+
+impl OptionalModsDir {
+    pub fn mod_jar_path(&self, filename: &str) -> InstanceObjectPath {
+        InstanceObjectPath(self.0.join(filename))
+    }
+}
+
+impl InstanceObjectPath {
+    pub fn to_relative_path(&self) -> &RelativePath {
+        &self.0.0
     }
 }
 
@@ -308,8 +354,8 @@ impl LibrariesDir {
 
 #[derive(thiserror::Error, Debug)]
 pub enum LibraryError {
-    #[error("Invalid library path")]
-    InvalidLibraryPath,
+    #[error("Invalid library path: {path}")]
+    InvalidLibraryPath { path: RelativePathBuf },
 }
 
 impl LibraryPath {
@@ -321,7 +367,9 @@ impl LibraryPath {
         Ok(NativePath(
             self.0
                 .parent()
-                .ok_or(LibraryError::InvalidLibraryPath)?
+                .ok_or(LibraryError::InvalidLibraryPath {
+                    path: self.0.0.clone(),
+                })?
                 .join(native_name)
                 .join(filename),
         ))

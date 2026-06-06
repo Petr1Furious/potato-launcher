@@ -290,6 +290,14 @@ ru = "Использовать нативную версию GLFW"
 en = "Linux only. Uses the system libglfw.so instead of the bundled LWJGL natives."
 ru = "Только Linux. Использует системную libglfw.so вместо встроенных LWJGL natives."
 
+[instances.optional_mods_title]
+en = "Optional mods"
+ru = "Опциональные моды"
+
+[instances.optional_mods_desc]
+en = "Choose which optional mods to install for this instance."
+ru = "Выберите, какие опциональные моды устанавливать для этого инстанса."
+
 [instances.java_install_required]
 en = "Wait for the local install to finish before configuring Java."
 ru = "Дождитесь завершения локальной установки, чтобы настроить Java."
@@ -301,6 +309,18 @@ ru = "Путь к Java нельзя изменить, пока идёт лока
 [notifications.failed_save_native_glfw]
 en = "Failed to save native GLFW setting: ${error: String}"
 ru = "Не удалось сохранить настройку native GLFW: ${error: String}"
+
+[notifications.optional_mod_install_in_progress]
+en = "Optional mods cannot be changed while a local install is in progress"
+ru = "Опциональные моды нельзя изменить, пока идёт локальная установка"
+
+[notifications.failed_save_optional_mod]
+en = "Failed to save optional mod setting: ${error: String}"
+ru = "Не удалось сохранить настройку опционального мода: ${error: String}"
+
+[notifications.optional_mod_sync_failed]
+en = "Failed to sync optional mods: ${error: String}"
+ru = "Не удалось синхронизировать опциональные моды: ${error: String}"
 
 [instances.used_by_installed]
 en = "Used by installed instances"
@@ -570,6 +590,10 @@ ru = "Установка Java"
 en = "Installing"
 ru = "Установка"
 
+[progress.syncing_optional_mods]
+en = "Syncing optional mods..."
+ru = "Синхронизация опциональных модов..."
+
 [progress.checking_install_files]
 en = "Checking install files"
 ru = "Проверка файлов установки"
@@ -629,6 +653,14 @@ ru = "Не удалось сохранить установленный инст
 [notifications.install_failed]
 en = "Install failed: ${error: String}"
 ru = "Ошибка установки: ${error: String}"
+
+[notifications.mod_removed]
+en = "Removed mod ${mod_id: String} (${path: String})"
+ru = "Удалён мод ${mod_id: String} (${path: String})"
+
+[notifications.mod_added]
+en = "Restored mod ${mod_id: String} (${path: String})"
+ru = "Восстановлен мод ${mod_id: String} (${path: String})"
 
 [notifications.stop_before_delete]
 en = "Stop the instance before deleting it"

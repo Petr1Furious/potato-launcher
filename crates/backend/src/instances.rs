@@ -4,10 +4,15 @@ use std::{
     sync::Arc,
 };
 
-use instance::{manifest::InstanceManifest, storage::LocalInstance};
+use instance::{
+    manifest::InstanceManifest,
+    mod_sync::{self, ModSyncSettings},
+    storage::LocalInstance,
+};
 use launcher_auth::{providers::AuthProviderConfig, storage::AccountKey};
 use launcher_bridge::{
-    AccountView, InstanceLiveStatus, InstanceOrigin, InstanceView, ProgressStage,
+    AccountView, InstanceLiveStatus, InstanceOrigin, InstanceView, OptionalModSetView,
+    ProgressStage,
 };
 use url::Url;
 use uuid::Uuid;
@@ -30,6 +35,34 @@ pub struct LocalMetadataView {
     pub auth_provider: Option<AuthProviderConfig>,
     pub default_xmx_mb: Option<u64>,
     pub required_java_version: Option<Arc<str>>,
+    pub mod_sync: ModSyncSettings,
+}
+
+pub fn build_optional_mod_set_views(
+    mod_sync: &ModSyncSettings,
+    user_preferences: &std::collections::HashMap<String, bool>,
+) -> Arc<[OptionalModSetView]> {
+    let enabled = mod_sync::resolve_optional_set_enabled(mod_sync, user_preferences);
+    mod_sync
+        .optional_sets
+        .iter()
+        .map(|set| {
+            let set_id = set.id.clone();
+            OptionalModSetView {
+                set_id: Arc::<str>::from(set_id.as_str()),
+                display_name: Arc::<str>::from(if set.display_name.is_empty() {
+                    set.id.clone()
+                } else {
+                    set.display_name.clone()
+                }),
+                enabled: *enabled
+                    .get(set_id.as_str())
+                    .unwrap_or(&set.enabled_by_default),
+                enabled_by_default: set.enabled_by_default,
+            }
+        })
+        .collect::<Vec<_>>()
+        .into()
 }
 
 #[derive(Clone, Debug, Default)]
@@ -40,6 +73,7 @@ pub struct InstanceUserSettingsView {
     pub jvm_flags: Option<Arc<str>>,
     pub java_path: Option<Arc<str>>,
     pub use_native_glfw: Option<bool>,
+    pub optional_mod_sets: std::collections::HashMap<String, bool>,
 }
 
 pub struct InstanceLiveState<'a> {
@@ -187,6 +221,10 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             java_path: settings.java_path,
             required_java_version: metadata.required_java_version,
             use_native_glfw: settings.use_native_glfw,
+            optional_mod_sets: build_optional_mod_set_views(
+                &metadata.mod_sync,
+                &settings.optional_mod_sets,
+            ),
         });
     }
 
@@ -234,6 +272,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             java_path: None,
             required_java_version: None,
             use_native_glfw: None,
+            optional_mod_sets: Arc::from([]),
         });
     }
 
@@ -299,6 +338,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 java_path: settings.java_path,
                 required_java_version: Some(Arc::from(entry.required_java_version.as_str())),
                 use_native_glfw: settings.use_native_glfw,
+                optional_mod_sets: Arc::from([]),
             });
         }
     }

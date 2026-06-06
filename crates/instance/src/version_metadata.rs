@@ -16,7 +16,8 @@ use utils::{
 use crate::{
     assets::{AssetIndex, AssetsMetadata, AssetsMetadataError},
     authlib::default_authlib_injector_library,
-    instance_metadata::{InstanceMetadata, ResourceUpdateBehavior},
+    instance_metadata::{InstanceMetadata, ResourceSyncMode},
+    mod_sync::ModSyncSettings,
 };
 
 use super::manifest::VersionMetadataInfo;
@@ -314,7 +315,7 @@ pub enum VersionMetadataError {
     #[error("network request failed while fetching version metadata: {0}")]
     Reqwest(#[from] reqwest::Error),
     #[error("failed to check local version metadata state: {0}")]
-    DownloadCheckIo(#[from] std::io::Error),
+    DownloadCheckIo(#[from] files::GetDownloadTasksError),
     #[error("failed to parse downloaded version metadata JSON: {0}")]
     DownloadFileParsed(#[from] files::DownloadFileParsedError),
     #[error("failed to hash version metadata for manifest: {0}")]
@@ -678,10 +679,7 @@ impl VersionMetadata {
         data_dir: &DataDir,
     ) -> Result<Self, VersionMetadataError> {
         let check_task = metadata_info.to_check_task(data_dir);
-        if let Some(download_task) = files::get_download_task(&check_task)
-            .await
-            .map_err(VersionMetadataError::DownloadCheckIo)?
-        {
+        if let Some(download_task) = files::get_download_task(&check_task).await? {
             Ok(files::download_file_parsed(client, &download_task).await?)
         } else {
             Self::read_local(data_dir, &metadata_info.id).await
@@ -732,7 +730,8 @@ impl VersionMetadata {
             auth_backend: None,
             include: vec![],
             mod_entries: vec![],
-            resource_update_behavior: ResourceUpdateBehavior::default(),
+            mod_sync: ModSyncSettings::default(),
+            resource_sync: ResourceSyncMode::default(),
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: vec![],
             authlib_injector: default_authlib_injector_library(),

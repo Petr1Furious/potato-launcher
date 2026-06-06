@@ -46,7 +46,7 @@ pub enum AssetsMetadataError {
     #[error("network request failed while fetching assets metadata: {0}")]
     Reqwest(#[from] reqwest::Error),
     #[error("failed to determine whether asset index needs download: {0}")]
-    DownloadCheckIo(std::io::Error),
+    DownloadCheckIo(#[from] files::GetDownloadTasksError),
     #[error("failed to parse downloaded assets metadata JSON: {0}")]
     DownloadFileParsed(#[from] files::DownloadFileParsedError),
     #[error("failed to read local assets metadata JSON: {0}")]
@@ -70,10 +70,7 @@ impl AssetsMetadata {
         data_dir: &DataDir,
     ) -> Result<Self, AssetsMetadataError> {
         let check_task = asset_index.get_check_task(data_dir);
-        if let Some(download_task) = files::get_download_task(&check_task)
-            .await
-            .map_err(AssetsMetadataError::DownloadCheckIo)?
-        {
+        if let Some(download_task) = files::get_download_task(&check_task).await? {
             Ok(files::download_file_parsed(client, &download_task).await?)
         } else {
             Ok(files::read_file_parsed(&get_asset_index_path(data_dir, &asset_index.id)).await?)
