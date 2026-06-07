@@ -9,9 +9,7 @@ use std::{
 use anyhow::anyhow;
 use either::Either;
 use instance::{
-    instance_metadata::{
-        IncludeActionConfigOptions, InstallCause, InstallParams, InstanceMetadata, ModSyncWarning,
-    },
+    instance_metadata::{InstallCause, InstallParams, InstanceMetadata, ModSyncWarning},
     manifest::InstanceManifestEntry,
     mod_sync,
     storage::{LocalInstance, RemoteSource},
@@ -21,7 +19,7 @@ use tokio::sync::mpsc;
 use url::Url;
 use utils::{
     adaptive_download,
-    files::{self, ConfigType},
+    files::{self, ConfigOptionTask, ConfigType},
     java,
     paths::{DataDir, InstanceDirFS, InstancesDir, NativesDir},
     progress::{
@@ -204,7 +202,9 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
         existing
     } else {
         if request.cause == InstallCause::Run {
-            return Err(anyhow!("attempting to run an instance that is not installed"));
+            return Err(anyhow!(
+                "attempting to run an instance that is not installed"
+            ));
         }
         LocalInstance::new_remote(
             plan.view_id,
@@ -295,35 +295,30 @@ async fn install_metadata(
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum ApplyIncludesError {
-    #[error("failed to delete file: {0}")]
-    DeleteFileError(std::io::Error),
+pub enum ConfigTaskError {
     #[error("failed to read config file: {0}")]
-    ReadConfigError(std::io::Error),
+    ReadConfig(std::io::Error),
     #[error("failed to write config file: {0}")]
-    WriteConfigError(std::io::Error),
+    WriteConfig(std::io::Error),
     #[error("failed to parse/serialize config file: {0}")]
-    ParseJsonConfigError(#[from] serde_json::Error),
+    ParseJsonConfig(#[from] serde_json::Error),
     #[error("failed to parse/serialize config file: {0}")]
-    ParseYamlConfigError(#[from] serde_saphyr::Error),
+    ParseYamlConfig(#[from] serde_saphyr::Error),
     #[error("failed to parse config file: {0}")]
-    SerializeYamlConfigError(#[from] serde_saphyr::ser::Error),
+    SerializeYamlConfig(#[from] serde_saphyr::ser::Error),
     #[error("failed to serialize config file: {0}")]
-    ParseTomlConfigError(#[from] toml_edit::TomlError),
+    ParseTomlConfig(#[from] toml_edit::TomlError),
     #[error("invalid config file structure: {0}")]
-    ConfigStructureError(String),
+    ConfigStructure(String),
 }
 
-async fn apply_config_options(
-    path: &Path,
-    action: &IncludeActionConfigOptions,
-) -> Result<(), ApplyIncludesError> {
-    let contents = if path.exists() {
-        tokio::fs::read_to_string(path)
+async fn run_config_option_task(task: &ConfigOptionTask) -> Result<(), ConfigTaskError> {
+    let contents = if task.path.exists() {
+        tokio::fs::read_to_string(&task.path)
             .await
-            .map_err(ApplyIncludesError::ReadConfigError)?
+            .map_err(ConfigTaskError::ReadConfig)?
     } else {
-        match action.config_type {
+        match task.config_type {
             ConfigType::Json => "{}".to_string(),
             ConfigType::Yaml => "---\n".to_string(),
             ConfigType::Toml => "".to_string(),
@@ -331,14 +326,14 @@ async fn apply_config_options(
         }
     };
     // TODO: better errors
-    let new_contents = match action.config_type {
+    let new_contents = match task.config_type {
         ConfigType::Json | ConfigType::Yaml => {
-            let mut value: serde_json::Value = match action.config_type {
+            let mut value: serde_json::Value = match task.config_type {
                 ConfigType::Json => serde_json::from_str(&contents)?,
                 ConfigType::Yaml => serde_saphyr::from_str(&contents)?,
                 _ => unreachable!(),
             };
-            for option in &action.options {
+            for option in &task.options {
                 let mut current = &mut value;
                 for key in option.key.clone() {
                     match key {
@@ -346,22 +341,20 @@ async fn apply_config_options(
                             current = current
                                 .as_object_mut()
                                 .ok_or_else(|| {
-                                    ApplyIncludesError::ConfigStructureError(
-                                        "expected object".into(),
-                                    )
+                                    ConfigTaskError::ConfigStructure("expected object".into())
                                 })?
                                 .entry(key)
                                 .or_insert(serde_json::Value::Null);
                         }
                         Either::Right(index) => {
                             let array = current.as_array_mut().ok_or_else(|| {
-                                ApplyIncludesError::ConfigStructureError("expected array".into())
+                                ConfigTaskError::ConfigStructure("expected array".into())
                             })?;
                             let len = array.len();
                             if index == len {
                                 array.push(serde_json::Value::Null);
                             } else if index > len {
-                                return Err(ApplyIncludesError::ConfigStructureError(
+                                return Err(ConfigTaskError::ConfigStructure(
                                     "cannot access index".into(),
                                 ));
                             }
@@ -371,7 +364,7 @@ async fn apply_config_options(
                 }
                 *current = option.value.clone();
             }
-            match action.config_type {
+            match task.config_type {
                 ConfigType::Json => serde_json::to_string_pretty(&value)?,
                 ConfigType::Yaml => serde_saphyr::to_string(&value)?,
                 _ => unreachable!(),
@@ -415,9 +408,9 @@ async fn apply_config_options(
         }
         ConfigType::Properties => todo!(),
     };
-    tokio::fs::write(path, new_contents)
+    tokio::fs::write(&task.path, new_contents)
         .await
-        .map_err(ApplyIncludesError::WriteConfigError)
+        .map_err(ConfigTaskError::WriteConfig)
 }
 
 pub(crate) async fn install_game_files(
@@ -451,6 +444,10 @@ pub(crate) async fn install_game_files(
     adaptive_download::download_files(download_tasks, download_progress).await?;
 
     enable_optional_mods(install_tasks.tasks.enable_optional_mod_tasks).await?;
+
+    for config_task in &install_tasks.tasks.config_option_tasks {
+        run_config_option_task(config_task).await?;
+    }
 
     metadata
         .mark_include_downloads_complete(&params.instance_dir.minecraft_dir())
