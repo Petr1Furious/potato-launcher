@@ -27,7 +27,7 @@ pub struct OptionalModSet {
     pub mod_ids: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub struct ModSyncSettings {
     pub mode: ModSyncMode,
     #[serde(default)]
@@ -36,17 +36,6 @@ pub struct ModSyncSettings {
     pub blocked: Vec<String>,
     #[serde(default)]
     pub optional_sets: Vec<OptionalModSet>,
-}
-
-impl Default for ModSyncSettings {
-    fn default() -> Self {
-        Self {
-            mode: ModSyncMode::Delta,
-            required: Vec::new(),
-            blocked: Vec::new(),
-            optional_sets: Vec::new(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

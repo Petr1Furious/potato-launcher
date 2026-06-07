@@ -17,7 +17,9 @@ use catalog::{
     BackendCatalogEntry, CatalogFetchResult, backend_status, delete_cached_manifest,
     fetch_backend_catalog, load_cached_manifest, save_cached_manifest,
 };
-use instance::{instance_metadata::InstanceMetadata, storage::InstanceStorage};
+use instance::{
+    install_params::InstallCause, instance_metadata::InstanceMetadata, storage::InstanceStorage,
+};
 use launcher_auth::{
     AccountData,
     flow::{AuthMessage, AuthMessageProvider, perform_auth},
@@ -188,6 +190,7 @@ enum BackendEvent {
     },
     InstallFinished {
         id: Uuid,
+        is_run: bool,
         result: Result<install::InstallOutput, Arc<str>>,
     },
     ModSyncFinished {
@@ -652,9 +655,44 @@ impl BackendState {
 
         let handle = tokio::spawn(async move {
             let result = local::create_local_instance(request).await;
-            let _ = internal.send(BackendEvent::InstallFinished { id, result });
+            let _ = internal.send(BackendEvent::InstallFinished {
+                id,
+                is_run: false,
+                result,
+            });
         });
         self.install_tasks.insert(id, handle);
+    }
+
+    fn prepare_install(
+        &self,
+        id: Uuid,
+        is_run: bool,
+        force_overwrite: bool,
+        tx: FrontendSender,
+        internal: mpsc::UnboundedSender<BackendEvent>,
+    ) -> install::InstallRequest {
+        install::InstallRequest {
+            id,
+            cause: if is_run {
+                InstallCause::Run
+            } else {
+                InstallCause::Update
+            },
+            force_overwrite,
+            optional_mod_preferences: self
+                .instance_settings
+                .instances
+                .get(&id)
+                .map(|entry| entry.optional_mod_sets.clone())
+                .unwrap_or_default(),
+            launcher_dir: DataDir::new(self.launcher_dir.clone()),
+            client: self.client.clone(),
+            local_instances: self.instance_storage.all().to_vec(),
+            catalogs: self.catalogs.clone(),
+            frontend: tx,
+            internal,
+        }
     }
 
     fn start_install(
@@ -684,29 +722,16 @@ impl BackendState {
             },
         );
 
-        let request = install::InstallRequest {
-            id,
-            cause: instance::instance_metadata::InstallCause::Update,
-            force_overwrite,
-            optional_mod_preferences: self
-                .instance_settings
-                .instances
-                .get(&id)
-                .map(|entry| entry.optional_mod_sets.clone())
-                .unwrap_or_default(),
-            launcher_dir: DataDir::new(self.launcher_dir.clone()),
-            client: self.client.clone(),
-            local_instances: self.instance_storage.all().to_vec(),
-            catalogs: self.catalogs.clone(),
-            frontend: tx,
-            internal: internal.clone(),
-        };
-
+        let request = self.prepare_install(id, false, force_overwrite, tx, internal.clone());
         let handle = tokio::spawn(async move {
             let result = install::install_instance(request)
                 .await
                 .map_err(|err| Arc::<str>::from(format!("{err:#}")));
-            let _ = internal.send(BackendEvent::InstallFinished { id, result });
+            let _ = internal.send(BackendEvent::InstallFinished {
+                id,
+                is_run: false,
+                result,
+            });
         });
         self.install_tasks.insert(id, handle);
     }
@@ -714,11 +739,14 @@ impl BackendState {
     async fn handle_install_finished(
         &mut self,
         id: Uuid,
+        is_run: bool,
         result: Result<install::InstallOutput, Arc<str>>,
         tx: &FrontendSender,
     ) {
-        self.install_tasks.remove(&id);
-        self.installing.remove(&id);
+        if !is_run {
+            self.install_tasks.remove(&id);
+            self.installing.remove(&id);
+        }
 
         match result {
             Ok(output) => {
@@ -738,10 +766,14 @@ impl BackendState {
                 match save_result {
                     Ok(()) => {
                         self.install_errors.remove(&output.instance.id);
-                        tx.send(MessageToFrontend::Notification {
-                            level: NotificationLevel::Success,
-                            message: Arc::from(launcher_i18n::notifications::install_completed()),
-                        });
+                        if !is_run {
+                            tx.send(MessageToFrontend::Notification {
+                                level: NotificationLevel::Success,
+                                message: Arc::from(
+                                    launcher_i18n::notifications::install_completed(),
+                                ),
+                            });
+                        }
                     }
                     Err(err) => {
                         log::error!(
@@ -875,7 +907,11 @@ impl BackendState {
 
         let handle = tokio::spawn(async move {
             let result = local::create_local_instance(request).await;
-            let _ = internal.send(BackendEvent::InstallFinished { id, result });
+            let _ = internal.send(BackendEvent::InstallFinished {
+                id,
+                is_run: false,
+                result,
+            });
         });
         self.install_tasks.insert(id, handle);
     }
@@ -1461,6 +1497,7 @@ impl BackendState {
         self.emit_snapshot(&tx);
 
         let java_path = settings.and_then(|settings| settings.java_path.clone());
+        let install_request = self.prepare_install(id, true, false, tx.clone(), internal.clone());
         let request = launch::LaunchRequest {
             id,
             account,
@@ -1475,9 +1512,25 @@ impl BackendState {
             account_entries: self.launch_accounts(),
             frontend: tx.clone(),
         };
-        let internal_for_task = internal.clone();
         let (kill_tx, mut kill_rx) = oneshot::channel();
         let task = tokio::spawn(async move {
+            let install_result = install::install_instance(install_request)
+                .await
+                .map_err(|err| Arc::<str>::from(format!("{err:#}")));
+            let _ = internal.send(BackendEvent::InstallFinished {
+                id,
+                is_run: true,
+                result: install_result.clone(),
+            });
+            if let Err(err) = install_result {
+                log::error!("Failed to update instance {id} on launch: {err}");
+                let _ = internal.send(BackendEvent::LaunchPrepFinished { id });
+                let _ = internal.send(BackendEvent::LaunchFinished {
+                    id,
+                    exit: launcher_bridge::ExitOutcome::Error(err),
+                });
+                return;
+            }
             let launch_result = async {
                 let local = request
                     .local_instances
@@ -1492,7 +1545,7 @@ impl BackendState {
                 let progress = install::BackendProgressReporter::new(
                     request.id,
                     request.frontend.clone(),
-                    internal_for_task.clone(),
+                    internal.clone(),
                 );
                 let java = install::resolve_java_for_launch(
                     &metadata,
@@ -1501,7 +1554,7 @@ impl BackendState {
                     &progress,
                 )
                 .await?;
-                let _ = internal_for_task.send(BackendEvent::LaunchPrepFinished { id });
+                let _ = internal.send(BackendEvent::LaunchPrepFinished { id });
                 launch::launch_instance(launch::LaunchRequest {
                     resolved_java: Some(java),
                     ..request
@@ -1513,10 +1566,10 @@ impl BackendState {
             match launch_result {
                 Ok(start) => {
                     if let Some((provider, account)) = start.refreshed_account {
-                        let _ = internal_for_task
-                            .send(BackendEvent::LaunchAccountUpdated { provider, account });
+                        let _ =
+                            internal.send(BackendEvent::LaunchAccountUpdated { provider, account });
                     }
-                    let _ = internal_for_task.send(BackendEvent::LaunchStarted { id });
+                    let _ = internal.send(BackendEvent::LaunchStarted { id });
                     let mut child = start.child;
                     let exit = tokio::select! {
                         status = child.wait() => exit_outcome(status),
@@ -1526,12 +1579,12 @@ impl BackendState {
                             launcher_bridge::ExitOutcome::Terminated
                         }
                     };
-                    let _ = internal_for_task.send(BackendEvent::LaunchFinished { id, exit });
+                    let _ = internal.send(BackendEvent::LaunchFinished { id, exit });
                 }
                 Err(err) => {
                     log::error!("Failed to launch instance {id}: {err:#}");
-                    let _ = internal_for_task.send(BackendEvent::LaunchPrepFinished { id });
-                    let _ = internal_for_task.send(BackendEvent::LaunchFinished {
+                    let _ = internal.send(BackendEvent::LaunchPrepFinished { id });
+                    let _ = internal.send(BackendEvent::LaunchFinished {
                         id,
                         exit: launcher_bridge::ExitOutcome::Error(Arc::<str>::from(format!(
                             "{err:#}"
@@ -1864,8 +1917,8 @@ pub async fn run(
                     Some(BackendEvent::LaunchPrepFinished { id }) => {
                         state.handle_launch_prep_finished(id, &frontend);
                     }
-                    Some(BackendEvent::InstallFinished { id, result }) => {
-                        state.handle_install_finished(id, result, &frontend).await;
+                    Some(BackendEvent::InstallFinished { id, is_run, result }) => {
+                        state.handle_install_finished(id, is_run, result, &frontend).await;
                     }
                     Some(BackendEvent::ModSyncFinished { id, result }) => {
                         state.handle_mod_sync_finished(id, result, &frontend).await;

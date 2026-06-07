@@ -38,12 +38,8 @@ pub fn get_files_in_dir(path: &Path) -> Result<Vec<PathBuf>, GetFilesInDirError>
 }
 
 pub fn get_files_ignore_paths(path: &Path, ignore_paths: &HashSet<PathBuf>) -> Vec<PathBuf> {
-    // TODO: use ignore_paths here
-    if path.is_file() {
-        return vec![path.to_path_buf()];
-    }
-
     if !path.is_dir() {
+        // TODO: return error
         return vec![];
     }
 

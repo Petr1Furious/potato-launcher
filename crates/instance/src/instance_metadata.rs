@@ -342,16 +342,8 @@ impl InstanceMetadata {
         }
 
         let mod_plan = build_mod_sync_plan(&self.mod_entries, &self.mod_sync, params)?;
-        let include_tasks = self.get_include_tasks(params)?;
-        tasks.check_tasks.extend(mod_plan.tasks.check_tasks);
-        tasks.check_tasks.extend(include_tasks.check_tasks);
-        tasks
-            .config_option_tasks
-            .extend(include_tasks.config_option_tasks);
-        tasks.delete_tasks.extend(mod_plan.tasks.delete_tasks);
-        tasks
-            .enable_optional_mod_tasks
-            .extend(mod_plan.tasks.enable_optional_mod_tasks);
+        tasks += mod_plan.tasks;
+        tasks += self.get_include_tasks(params)?;
 
         Ok(InstallTasks {
             tasks,

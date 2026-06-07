@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::anyhow;
 use either::Either;
 use instance::{
     instance_metadata::{
@@ -157,12 +158,6 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     let progress =
         BackendProgressReporter::new(plan.view_id, request.frontend.clone(), request.internal);
 
-    let previous_mod_entries = InstanceMetadata::read_local(&instance_dir)
-        .await
-        .ok()
-        .map(|metadata| metadata.mod_entries)
-        .unwrap_or_default();
-
     let metadata = install_metadata(
         &request.client,
         &plan.entry,
@@ -174,11 +169,15 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     )
     .await?;
 
+    let previous_mod_entries = InstanceMetadata::read_local(&instance_dir)
+        .await
+        .ok()
+        .map(|metadata| metadata.mod_entries)
+        .unwrap_or_default();
     let optional_sets_enabled = mod_sync::resolve_optional_set_enabled(
         &metadata.mod_sync,
         &request.optional_mod_preferences,
     );
-
     let install_params = InstallParams {
         instance_dir: instance_dir.clone(),
         cause: request.cause,
@@ -195,13 +194,18 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     )
     .await?;
 
-    ensure_java(&metadata, &request.launcher_dir, &progress).await?;
+    if request.cause == InstallCause::Update {
+        ensure_java(&metadata, &request.launcher_dir, &progress).await?;
+    }
 
     let instance = if let Some(mut existing) = plan.existing {
         existing.source = Some(plan.source);
         existing.last_synced_sha1 = Some(plan.entry.sha1);
         existing
     } else {
+        if request.cause == InstallCause::Run {
+            return Err(anyhow!("attempting to run an instance that is not installed"));
+        }
         LocalInstance::new_remote(
             plan.view_id,
             plan.dir_name,
