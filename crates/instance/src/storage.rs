@@ -1,14 +1,71 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    fmt,
+    path::PathBuf,
 };
 
+use launcher_auth::storage::AccountKey;
 use serde::{Deserialize, Serialize};
 use url::Url;
-use utils::paths::{DataDir, InstancesDir};
+use utils::paths::{DataDir, InstanceDirFS, InstancesDir};
 use uuid::Uuid;
 
-const LOCAL_INSTANCE_FILE: &str = "local_instance.json";
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(transparent)]
+pub struct InstanceId(String);
+
+impl InstanceId {
+    pub fn local_new() -> Self {
+        Self(format!("local:{}", Uuid::new_v4()))
+    }
+
+    pub fn remote(manifest_url: &Url, name: &str) -> Self {
+        Self(format!(
+            "remote:{}#{}",
+            canonical_manifest_url(manifest_url),
+            encode_component(name)
+        ))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for InstanceId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for InstanceId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for InstanceId {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
+fn canonical_manifest_url(url: &Url) -> String {
+    url.as_str().trim_end_matches('/').to_string()
+}
+
+fn encode_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteSource {
@@ -16,12 +73,41 @@ pub struct RemoteSource {
     pub name_in_manifest: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InstanceState {
+    PendingRemote,
+    #[default]
+    Installed,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LocalInstance {
-    pub id: Uuid,
+    pub id: InstanceId,
+    #[serde(skip)]
     pub dir_name: String,
+    #[serde(default)]
+    pub state: InstanceState,
     pub source: Option<RemoteSource>,
     pub last_synced_sha1: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstanceUserSettings {
+    #[serde(default)]
+    pub selected_account: Option<AccountKey>,
+    #[serde(default)]
+    pub account_override: Option<AccountKey>,
+    #[serde(default)]
+    pub xmx_mb: Option<u64>,
+    #[serde(default)]
+    pub jvm_flags: Option<String>,
+    #[serde(default)]
+    pub java_path: Option<String>,
+    #[serde(default)]
+    pub use_native_glfw: Option<bool>,
+    #[serde(default)]
+    pub optional_mod_sets: HashMap<String, bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -62,10 +148,10 @@ pub enum InstanceStorageError {
         source: std::io::Error,
     },
     #[error("local instance id not found: {0}")]
-    MissingInstance(Uuid),
+    MissingInstance(InstanceId),
     #[error("duplicate local instance id {id} in {first_path:?} and {duplicate_path:?}")]
     DuplicateInstanceId {
-        id: Uuid,
+        id: InstanceId,
         first_path: PathBuf,
         duplicate_path: PathBuf,
     },
@@ -79,7 +165,7 @@ pub enum InstanceStorageError {
 
 impl LocalInstance {
     pub fn new_remote(
-        id: Uuid,
+        id: InstanceId,
         dir_name: String,
         source: RemoteSource,
         last_synced_sha1: Option<String>,
@@ -87,18 +173,42 @@ impl LocalInstance {
         Self {
             id,
             dir_name,
+            state: InstanceState::Installed,
             source: Some(source),
             last_synced_sha1,
         }
     }
 
-    pub fn new_local(dir_name: String) -> Self {
+    pub fn new_pending_remote(id: InstanceId, dir_name: String, source: RemoteSource) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id,
             dir_name,
+            state: InstanceState::PendingRemote,
+            source: Some(source),
+            last_synced_sha1: None,
+        }
+    }
+
+    pub fn new_local(dir_name: String) -> Self {
+        Self::new_local_with_id(InstanceId::local_new(), dir_name)
+    }
+
+    pub fn new_local_with_id(id: InstanceId, dir_name: String) -> Self {
+        Self {
+            id,
+            dir_name,
+            state: InstanceState::Installed,
             source: None,
             last_synced_sha1: None,
         }
+    }
+
+    pub fn is_installed(&self) -> bool {
+        self.state == InstanceState::Installed
+    }
+
+    pub fn is_pending_remote(&self) -> bool {
+        self.state == InstanceState::PendingRemote
     }
 }
 
@@ -113,7 +223,7 @@ impl InstanceStorage {
             .await
             .map_err(InstanceStorageError::ReadInstancesDir)?;
         let mut instances = Vec::new();
-        let mut seen_ids = HashMap::<Uuid, PathBuf>::new();
+        let mut seen_ids = HashMap::<InstanceId, PathBuf>::new();
 
         while let Some(entry) = read_dir
             .next_entry()
@@ -124,8 +234,13 @@ impl InstanceStorage {
             if !path.is_dir() {
                 continue;
             }
+            let Some(dir_name) = path.file_name().map(|name| name.to_string_lossy().to_string())
+            else {
+                continue;
+            };
+            let instance_dir = instance_dir(data_dir, &dir_name);
 
-            let descriptor = path.join(LOCAL_INSTANCE_FILE);
+            let descriptor = instance_dir.local_instance_descriptor_path();
             if !descriptor.exists() {
                 continue;
             }
@@ -143,13 +258,10 @@ impl InstanceStorage {
                         source,
                     }
                 })?;
-            instance.dir_name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-                .unwrap_or(instance.dir_name);
-            if let Some(first_path) = seen_ids.insert(instance.id, descriptor.clone()) {
+            instance.dir_name = dir_name;
+            if let Some(first_path) = seen_ids.insert(instance.id.clone(), descriptor.clone()) {
                 return Err(InstanceStorageError::DuplicateInstanceId {
-                    id: instance.id,
+                    id: instance.id.clone(),
                     first_path,
                     duplicate_path: descriptor,
                 });
@@ -175,12 +287,12 @@ impl InstanceStorage {
         &self.instances
     }
 
-    pub fn get(&self, id: Uuid) -> Option<&LocalInstance> {
-        self.instances.iter().find(|instance| instance.id == id)
+    pub fn get(&self, id: &InstanceId) -> Option<&LocalInstance> {
+        self.instances.iter().find(|instance| &instance.id == id)
     }
 
-    pub fn get_mut(&mut self, id: Uuid) -> Option<&mut LocalInstance> {
-        self.instances.iter_mut().find(|instance| instance.id == id)
+    pub fn get_mut(&mut self, id: &InstanceId) -> Option<&mut LocalInstance> {
+        self.instances.iter_mut().find(|instance| &instance.id == id)
     }
 
     pub fn allocate_dir_name(&self, base: &str) -> String {
@@ -210,24 +322,24 @@ impl InstanceStorage {
     ) -> Result<(), InstanceStorageError> {
         self.save_instance(data_dir, &instance).await?;
         let existing = self
-            .get_mut(instance.id)
-            .ok_or(InstanceStorageError::MissingInstance(instance.id))?;
+            .get_mut(&instance.id)
+            .ok_or_else(|| InstanceStorageError::MissingInstance(instance.id.clone()))?;
         *existing = instance;
         Ok(())
     }
 
-    pub fn remove(&mut self, id: Uuid) -> Option<LocalInstance> {
+    pub fn remove(&mut self, id: &InstanceId) -> Option<LocalInstance> {
         let index = self
             .instances
             .iter()
-            .position(|instance| instance.id == id)?;
+            .position(|instance| &instance.id == id)?;
         Some(self.instances.remove(index))
     }
 
     pub async fn remove_from_disk(
         &mut self,
         data_dir: &DataDir,
-        id: Uuid,
+        id: &InstanceId,
     ) -> Result<Option<LocalInstance>, InstanceStorageError> {
         let Some(instance) = self.remove(id) else {
             return Ok(None);
@@ -245,7 +357,8 @@ impl InstanceStorage {
         data_dir: &DataDir,
         instance: &LocalInstance,
     ) -> Result<(), InstanceStorageError> {
-        let dir = instances_dir(data_dir).join(&instance.dir_name);
+        let instance_dir = instance_dir(data_dir, &instance.dir_name);
+        let dir = instance_dir.to_fs();
         tokio::fs::create_dir_all(&dir).await.map_err(|source| {
             InstanceStorageError::CreateInstanceDir {
                 path: dir.clone(),
@@ -253,7 +366,7 @@ impl InstanceStorage {
             }
         })?;
 
-        let descriptor = dir.join(LOCAL_INSTANCE_FILE);
+        let descriptor = instance_dir.local_instance_descriptor_path();
         let bytes = serde_json::to_vec_pretty(instance)
             .map_err(InstanceStorageError::SerializeDescriptor)?;
         tokio::fs::write(&descriptor, bytes)
@@ -263,6 +376,29 @@ impl InstanceStorage {
                 source,
             })
     }
+}
+
+pub async fn load_instance_settings(
+    instance_dir: &InstanceDirFS,
+) -> Result<InstanceUserSettings, std::io::Error> {
+    let path = instance_dir.settings_path();
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes).unwrap_or_default()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Ok(InstanceUserSettings::default())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+pub async fn save_instance_settings(
+    instance_dir: &InstanceDirFS,
+    settings: &InstanceUserSettings,
+) -> Result<(), std::io::Error> {
+    tokio::fs::create_dir_all(instance_dir.to_fs()).await?;
+    let bytes = serde_json::to_vec_pretty(settings)
+        .map_err(|err| std::io::Error::other(err.to_string()))?;
+    tokio::fs::write(instance_dir.settings_path(), bytes).await
 }
 
 pub fn allocate_dir_name(taken: &HashSet<&str>, base: &str) -> String {
@@ -305,8 +441,10 @@ fn instances_dir(data_dir: &DataDir) -> PathBuf {
     InstancesDir::root().to_fs(data_dir)
 }
 
-pub fn local_instance_descriptor_path(instance_dir: &Path) -> PathBuf {
-    instance_dir.join(LOCAL_INSTANCE_FILE)
+fn instance_dir(data_dir: &DataDir, dir_name: &str) -> InstanceDirFS {
+    InstancesDir::root()
+        .instance_dir(dir_name)
+        .with_data_dir(data_dir.clone())
 }
 
 #[cfg(test)]
@@ -333,26 +471,26 @@ mod tests {
         };
 
         let first = LocalInstance::new_remote(
-            Uuid::new_v4(),
+            InstanceId::remote(&source.manifest_url, "Vanilla"),
             "Vanilla".to_string(),
             source.clone(),
             Some("first-sha1".to_string()),
         );
         let second = LocalInstance::new_remote(
-            Uuid::new_v4(),
+            InstanceId::remote(&source.manifest_url, "Vanilla Copy"),
             "Vanilla (1)".to_string(),
             source.clone(),
             Some("second-sha1".to_string()),
         );
-        let first_id = first.id;
-        let second_id = second.id;
+        let first_id = first.id.clone();
+        let second_id = second.id.clone();
 
         storage.add(&data_dir, first).await.unwrap();
         storage.add(&data_dir, second).await.unwrap();
 
         let loaded = InstanceStorage::load(&data_dir).await.unwrap();
-        let first = loaded.get(first_id).unwrap();
-        let second = loaded.get(second_id).unwrap();
+        let first = loaded.get(&first_id).unwrap();
+        let second = loaded.get(&second_id).unwrap();
 
         assert_eq!(first.dir_name, "Vanilla");
         assert_eq!(second.dir_name, "Vanilla (1)");
@@ -361,7 +499,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_uuid_descriptors_fail_explicitly() {
+    async fn duplicate_id_descriptors_fail_explicitly() {
         let data_dir = temp_data_dir();
         let instances = instances_dir(&data_dir);
         tokio::fs::create_dir_all(instances.join("One"))
@@ -371,28 +509,37 @@ mod tests {
             .await
             .unwrap();
 
-        let id = Uuid::new_v4();
+        let id = InstanceId::from("local:duplicate");
         let one = LocalInstance {
-            id,
+            id: id.clone(),
             dir_name: "One".to_string(),
+            state: InstanceState::Installed,
             source: None,
             last_synced_sha1: None,
         };
         let two = LocalInstance {
-            id,
+            id: id.clone(),
             dir_name: "Two".to_string(),
+            state: InstanceState::Installed,
             source: None,
             last_synced_sha1: None,
         };
 
+        let one_dir = InstancesDir::root()
+            .instance_dir("One")
+            .with_data_dir(data_dir.clone());
+        let two_dir = InstancesDir::root()
+            .instance_dir("Two")
+            .with_data_dir(data_dir.clone());
+
         tokio::fs::write(
-            local_instance_descriptor_path(&instances.join("One")),
+            one_dir.local_instance_descriptor_path(),
             serde_json::to_vec_pretty(&one).unwrap(),
         )
         .await
         .unwrap();
         tokio::fs::write(
-            local_instance_descriptor_path(&instances.join("Two")),
+            two_dir.local_instance_descriptor_path(),
             serde_json::to_vec_pretty(&two).unwrap(),
         )
         .await
@@ -409,17 +556,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_remote_settings_roundtrip() {
+        let data_dir = temp_data_dir();
+        let mut storage = InstanceStorage::empty();
+        let source = RemoteSource {
+            manifest_url: Url::parse("https://backend.example/manifest.json").unwrap(),
+            name_in_manifest: "Configured".to_string(),
+        };
+        let id = InstanceId::remote(&source.manifest_url, &source.name_in_manifest);
+        let instance = LocalInstance::new_pending_remote(
+            id.clone(),
+            "Configured".to_string(),
+            source.clone(),
+        );
+        storage.add(&data_dir, instance).await.unwrap();
+
+        let settings = InstanceUserSettings {
+            xmx_mb: Some(4096),
+            ..InstanceUserSettings::default()
+        };
+        let configured_dir = InstancesDir::root()
+            .instance_dir("Configured")
+            .with_data_dir(data_dir.clone());
+        save_instance_settings(&configured_dir, &settings).await.unwrap();
+
+        let loaded = InstanceStorage::load(&data_dir).await.unwrap();
+        let pending = loaded.get(&id).unwrap();
+        assert!(pending.is_pending_remote());
+        assert_eq!(pending.source.as_ref(), Some(&source));
+        let loaded_settings = load_instance_settings(&configured_dir).await.unwrap();
+        assert_eq!(loaded_settings.xmx_mb, Some(4096));
+    }
+
+    #[tokio::test]
     async fn remove_from_disk_removes_descriptor_and_directory() {
         let data_dir = temp_data_dir();
         let mut storage = InstanceStorage::empty();
         let instance = LocalInstance::new_local("Local".to_string());
-        let id = instance.id;
+        let id = instance.id.clone();
 
         storage.add(&data_dir, instance).await.unwrap();
         let dir = instances_dir(&data_dir).join("Local");
         assert!(dir.exists());
 
-        let removed = storage.remove_from_disk(&data_dir, id).await.unwrap();
+        let removed = storage.remove_from_disk(&data_dir, &id).await.unwrap();
         assert!(removed.is_some());
         assert!(!dir.exists());
     }

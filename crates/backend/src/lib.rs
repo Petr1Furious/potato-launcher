@@ -18,7 +18,12 @@ use catalog::{
     fetch_backend_catalog, load_cached_manifest, save_cached_manifest,
 };
 use instance::{
-    install_params::InstallCause, instance_metadata::InstanceMetadata, storage::InstanceStorage,
+    install_params::InstallCause,
+    instance_metadata::InstanceMetadata,
+    storage::{
+        InstanceId, InstanceStorage, InstanceUserSettings, LocalInstance, RemoteSource,
+        load_instance_settings, save_instance_settings,
+    },
 };
 use launcher_auth::{
     AccountData,
@@ -38,11 +43,9 @@ use tokio::{
     task::JoinHandle,
 };
 use url::Url;
-use utils::paths::{DataDir, InstancesDir};
-use uuid::Uuid;
+use utils::paths::{DataDir, InstanceDirFS, InstancesDir};
 
 const SETTINGS_FILE: &str = "settings.json";
-const INSTANCE_SETTINGS_FILE: &str = "instance_settings.json";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
@@ -54,53 +57,6 @@ pub struct Settings {
     pub hide_usernames_in_cards: bool,
     #[serde(default)]
     pub language: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct InstanceUserSettings {
-    #[serde(default)]
-    pub instances: HashMap<Uuid, InstanceUserSettingsEntry>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct InstanceUserSettingsEntry {
-    #[serde(default)]
-    pub selected_account: Option<AccountKey>,
-    #[serde(default)]
-    pub account_override: Option<AccountKey>,
-    #[serde(default)]
-    pub xmx_mb: Option<u64>,
-    #[serde(default)]
-    pub jvm_flags: Option<String>,
-    #[serde(default)]
-    pub java_path: Option<String>,
-    #[serde(default)]
-    pub use_native_glfw: Option<bool>,
-    #[serde(default)]
-    pub optional_mod_sets: HashMap<String, bool>,
-}
-
-impl InstanceUserSettings {
-    async fn load(launcher_dir: &Path) -> anyhow::Result<Self> {
-        let path = launcher_dir.join(INSTANCE_SETTINGS_FILE);
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
-        let bytes = tokio::fs::read(path).await?;
-        Ok(serde_json::from_slice(&bytes)?)
-    }
-
-    async fn save(&self, launcher_dir: &Path) -> anyhow::Result<()> {
-        tokio::fs::create_dir_all(launcher_dir).await?;
-        let bytes = serde_json::to_vec_pretty(self)?;
-        tokio::fs::write(launcher_dir.join(INSTANCE_SETTINGS_FILE), bytes).await?;
-        Ok(())
-    }
-
-    fn entry_mut(&mut self, instance: Uuid) -> &mut InstanceUserSettingsEntry {
-        self.instances.entry(instance).or_default()
-    }
 }
 
 impl Settings {
@@ -152,22 +108,20 @@ impl Settings {
 pub struct BackendState {
     launcher_dir: PathBuf,
     settings: Settings,
-    instance_settings: InstanceUserSettings,
     instance_storage: InstanceStorage,
     auth_storage: AuthStorage,
     catalogs: HashMap<Url, BackendCatalogEntry>,
     client: reqwest::Client,
-    installing: HashMap<Uuid, instances::InstallProgressView>,
-    creating_local: HashMap<Uuid, Arc<str>>,
-    creating_local_params: HashMap<Uuid, local::CreateLocalParams>,
-    install_tasks: HashMap<Uuid, JoinHandle<()>>,
-    install_errors: HashMap<Uuid, Arc<str>>,
-    installed_overrides: HashSet<Uuid>,
-    launching: HashSet<Uuid>,
-    java_prep_tasks: HashSet<Uuid>,
-    running: HashSet<Uuid>,
-    launch_tasks: HashMap<Uuid, LaunchHandle>,
-    launch_errors: HashMap<Uuid, Arc<str>>,
+    installing: HashMap<InstanceId, instances::InstallProgressView>,
+    creating_local: HashMap<InstanceId, Arc<str>>,
+    creating_local_params: HashMap<InstanceId, local::CreateLocalParams>,
+    install_tasks: HashMap<InstanceId, JoinHandle<()>>,
+    install_errors: HashMap<InstanceId, Arc<str>>,
+    launching: HashSet<InstanceId>,
+    java_prep_tasks: HashSet<InstanceId>,
+    running: HashSet<InstanceId>,
+    launch_tasks: HashMap<InstanceId, LaunchHandle>,
+    launch_errors: HashMap<InstanceId, Arc<str>>,
 }
 
 struct LaunchHandle {
@@ -181,7 +135,7 @@ enum BackendEvent {
         result: CatalogFetchResult,
     },
     InstallProgress {
-        id: Uuid,
+        id: InstanceId,
         stage: ProgressStage,
         current: u64,
         total: u64,
@@ -189,33 +143,33 @@ enum BackendEvent {
         show_bar: bool,
     },
     InstallFinished {
-        id: Uuid,
+        id: InstanceId,
         is_run: bool,
         result: Result<install::InstallOutput, Arc<str>>,
     },
     ModSyncFinished {
-        id: Uuid,
+        id: InstanceId,
         result: Result<(), Arc<str>>,
     },
     LaunchPrepFinished {
-        id: Uuid,
+        id: InstanceId,
     },
     LaunchStarted {
-        id: Uuid,
+        id: InstanceId,
     },
     LaunchAccountUpdated {
         provider: AuthProviderConfig,
         account: AccountData,
     },
     LaunchFinished {
-        id: Uuid,
+        id: InstanceId,
         exit: launcher_bridge::ExitOutcome,
     },
     AddAccountFinished {
         result: Result<(AuthProviderConfig, AccountData), Arc<str>>,
     },
     JavaResolved {
-        instance: Uuid,
+        instance: InstanceId,
         path: Option<Arc<str>>,
     },
 }
@@ -278,12 +232,6 @@ impl BackendState {
         tokio::fs::create_dir_all(&launcher_dir).await?;
         let data_dir = DataDir::new(launcher_dir.clone());
         let settings = Settings::load(&launcher_dir).await?;
-        let instance_settings = InstanceUserSettings::load(&launcher_dir)
-            .await
-            .unwrap_or_else(|err| {
-                log::warn!("Failed to load instance user settings: {err:?}");
-                InstanceUserSettings::default()
-            });
         let mut catalogs = HashMap::new();
         for url in &settings.backend_urls {
             let entry = match load_cached_manifest(&launcher_dir, url).await {
@@ -313,7 +261,6 @@ impl BackendState {
         Ok(Self {
             launcher_dir,
             settings,
-            instance_settings,
             instance_storage,
             auth_storage,
             catalogs,
@@ -323,7 +270,6 @@ impl BackendState {
             creating_local_params: HashMap::new(),
             install_tasks: HashMap::new(),
             install_errors: HashMap::new(),
-            installed_overrides: HashSet::new(),
             launching: HashSet::new(),
             java_prep_tasks: HashSet::new(),
             running: HashSet::new(),
@@ -425,7 +371,6 @@ impl BackendState {
                 installing: &self.installing,
                 creating_local: &self.creating_local,
                 install_errors: &self.install_errors,
-                installed_overrides: &self.installed_overrides,
                 launching: &self.launching,
                 running: &self.running,
                 launch_errors: &self.launch_errors,
@@ -437,13 +382,37 @@ impl BackendState {
         .into()
     }
 
-    fn instance_settings_views(&self) -> HashMap<Uuid, instances::InstanceUserSettingsView> {
-        self.instance_settings
-            .instances
+    fn instance_settings_views(&self) -> HashMap<InstanceId, instances::InstanceUserSettingsView> {
+        let data_dir = DataDir::new(self.launcher_dir.clone());
+        self.instance_storage
             .iter()
-            .map(|(id, settings)| {
+            .map(|local| {
+                let instance_dir = InstancesDir::root()
+                    .instance_dir(&local.dir_name)
+                    .with_data_dir(data_dir.clone());
+                let settings_path = instance_dir.settings_path();
+                let settings = match std::fs::read(&settings_path) {
+                    Ok(bytes) => serde_json::from_slice::<InstanceUserSettings>(&bytes)
+                        .unwrap_or_else(|err| {
+                            log::warn!(
+                                "Failed to parse instance settings {}: {err:#}",
+                                settings_path.display()
+                            );
+                            InstanceUserSettings::default()
+                        }),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                        InstanceUserSettings::default()
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to read instance settings {}: {err:#}",
+                            settings_path.display()
+                        );
+                        InstanceUserSettings::default()
+                    }
+                };
                 (
-                    *id,
+                    local.id.clone(),
                     instances::InstanceUserSettingsView {
                         selected_account: settings.selected_account.clone(),
                         account_override: settings.account_override.clone(),
@@ -464,19 +433,14 @@ impl BackendState {
             .collect()
     }
 
-    fn launcher_settings_view(&self) -> LauncherSettingsView {
-        LauncherSettingsView {
-            hide_window_after_launch: self.settings.hide_window_after_launch,
-            hide_usernames_in_cards: self.settings.hide_usernames_in_cards,
-            language: self.settings.resolved_language_code().to_string(),
-        }
-    }
-
-    fn local_metadata_views(&self) -> HashMap<Uuid, instances::LocalMetadataView> {
+    fn local_metadata_views(&self) -> HashMap<InstanceId, instances::LocalMetadataView> {
         let data_dir = DataDir::new(self.launcher_dir.clone());
         self.instance_storage
             .iter()
             .filter_map(|local| {
+                if !local.is_installed() {
+                    return None;
+                }
                 let path = InstancesDir::root()
                     .instance_dir(&local.dir_name)
                     .meta_path()
@@ -484,7 +448,7 @@ impl BackendState {
                 let bytes = std::fs::read(path).ok()?;
                 let metadata = serde_json::from_slice::<InstanceMetadata>(&bytes).ok()?;
                 Some((
-                    local.id,
+                    local.id.clone(),
                     instances::LocalMetadataView {
                         auth_provider: metadata.auth_backend.clone(),
                         default_xmx_mb: parse_xmx_mb(metadata.default_xmx.as_deref()),
@@ -494,6 +458,32 @@ impl BackendState {
                 ))
             })
             .collect()
+    }
+
+    fn launcher_settings_view(&self) -> LauncherSettingsView {
+        LauncherSettingsView {
+            hide_window_after_launch: self.settings.hide_window_after_launch,
+            hide_usernames_in_cards: self.settings.hide_usernames_in_cards,
+            language: self.settings.resolved_language_code().to_string(),
+        }
+    }
+
+    fn instance_dir_fs(&self, instance: &LocalInstance) -> InstanceDirFS {
+        let data_dir = DataDir::new(self.launcher_dir.clone());
+        InstancesDir::root()
+            .instance_dir(&instance.dir_name)
+            .with_data_dir(data_dir)
+    }
+
+    fn load_settings_for_id(&self, id: &InstanceId) -> InstanceUserSettings {
+        let Some(instance) = self.instance_storage.get(id) else {
+            return InstanceUserSettings::default();
+        };
+        let instance_dir = self.instance_dir_fs(instance);
+        match std::fs::read(instance_dir.settings_path()) {
+            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+            Err(_) => InstanceUserSettings::default(),
+        }
     }
 
     fn emit_snapshot(&self, tx: &FrontendSender) {
@@ -618,11 +608,11 @@ impl BackendState {
             }
         };
 
-        let id = Uuid::new_v4();
+        let id = InstanceId::local_new();
         self.install_errors.remove(&id);
-        self.creating_local.insert(id, Arc::from(dir_name.clone()));
+        self.creating_local.insert(id.clone(), Arc::from(dir_name.clone()));
         self.creating_local_params.insert(
-            id,
+            id.clone(),
             local::CreateLocalParams {
                 dir_name: dir_name.clone(),
                 minecraft_version: minecraft_version.clone(),
@@ -631,7 +621,7 @@ impl BackendState {
             },
         );
         self.installing.insert(
-            id,
+            id.clone(),
             instances::InstallProgressView {
                 stage: ProgressStage::Metadata,
                 current: 0,
@@ -642,7 +632,7 @@ impl BackendState {
         );
 
         let request = local::CreateLocalRequest {
-            id,
+            id: id.clone(),
             dir_name,
             minecraft_version,
             loader,
@@ -653,10 +643,11 @@ impl BackendState {
             internal: internal.clone(),
         };
 
+        let task_id = id.clone();
         let handle = tokio::spawn(async move {
             let result = local::create_local_instance(request).await;
             let _ = internal.send(BackendEvent::InstallFinished {
-                id,
+                id: task_id,
                 is_run: false,
                 result,
             });
@@ -666,12 +657,13 @@ impl BackendState {
 
     fn prepare_install(
         &self,
-        id: Uuid,
+        id: InstanceId,
         is_run: bool,
         force_overwrite: bool,
         tx: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) -> install::InstallRequest {
+        let optional_mod_preferences = self.load_settings_for_id(&id).optional_mod_sets;
         install::InstallRequest {
             id,
             cause: if is_run {
@@ -680,12 +672,7 @@ impl BackendState {
                 InstallCause::Update
             },
             force_overwrite,
-            optional_mod_preferences: self
-                .instance_settings
-                .instances
-                .get(&id)
-                .map(|entry| entry.optional_mod_sets.clone())
-                .unwrap_or_default(),
+            optional_mod_preferences,
             launcher_dir: DataDir::new(self.launcher_dir.clone()),
             client: self.client.clone(),
             local_instances: self.instance_storage.all().to_vec(),
@@ -697,7 +684,7 @@ impl BackendState {
 
     fn start_install(
         &mut self,
-        id: Uuid,
+        id: InstanceId,
         force_overwrite: bool,
         tx: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
@@ -712,7 +699,7 @@ impl BackendState {
 
         self.install_errors.remove(&id);
         self.installing.insert(
-            id,
+            id.clone(),
             instances::InstallProgressView {
                 stage: ProgressStage::Metadata,
                 current: 0,
@@ -722,13 +709,14 @@ impl BackendState {
             },
         );
 
-        let request = self.prepare_install(id, false, force_overwrite, tx, internal.clone());
+        let request = self.prepare_install(id.clone(), false, force_overwrite, tx, internal.clone());
+        let task_id = id.clone();
         let handle = tokio::spawn(async move {
             let result = install::install_instance(request)
                 .await
                 .map_err(|err| Arc::<str>::from(format!("{err:#}")));
             let _ = internal.send(BackendEvent::InstallFinished {
-                id,
+                id: task_id,
                 is_run: false,
                 result,
             });
@@ -738,7 +726,7 @@ impl BackendState {
 
     async fn handle_install_finished(
         &mut self,
-        id: Uuid,
+        id: InstanceId,
         is_run: bool,
         result: Result<install::InstallOutput, Arc<str>>,
         tx: &FrontendSender,
@@ -753,7 +741,7 @@ impl BackendState {
                 self.creating_local.remove(&id);
                 self.creating_local_params.remove(&id);
                 let data_dir = DataDir::new(self.launcher_dir.clone());
-                let save_result = if self.instance_storage.get(output.instance.id).is_some() {
+                let save_result = if self.instance_storage.get(&output.instance.id).is_some() {
                     self.instance_storage
                         .update(&data_dir, output.instance.clone())
                         .await
@@ -782,7 +770,7 @@ impl BackendState {
                         );
                         let error = Arc::<str>::from(err.to_string());
                         self.install_errors
-                            .insert(output.instance.id, error.clone());
+                            .insert(output.instance.id.clone(), error.clone());
                         tx.send(MessageToFrontend::Notification {
                             level: NotificationLevel::Error,
                             message: Arc::from(
@@ -809,7 +797,7 @@ impl BackendState {
         self.emit_snapshot(tx);
     }
 
-    fn cancel_install(&mut self, id: Uuid, tx: &FrontendSender) {
+    fn cancel_install(&mut self, id: InstanceId, tx: &FrontendSender) {
         if self.java_prep_tasks.remove(&id) {
             if let Some(handle) = self.launch_tasks.remove(&id) {
                 handle.task.abort();
@@ -832,7 +820,7 @@ impl BackendState {
         self.install_errors.remove(&id);
 
         if let Some(dir_name) = dir_name
-            && self.instance_storage.get(id).is_none()
+            && self.instance_storage.get(&id).is_none()
         {
             let launcher_dir = self.launcher_dir.clone();
             tokio::spawn(async move {
@@ -857,7 +845,7 @@ impl BackendState {
 
     fn retry_create_local(
         &mut self,
-        id: Uuid,
+        id: InstanceId,
         tx: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) {
@@ -881,9 +869,9 @@ impl BackendState {
 
         self.install_errors.remove(&id);
         self.creating_local
-            .insert(id, Arc::from(params.dir_name.clone()));
+            .insert(id.clone(), Arc::from(params.dir_name.clone()));
         self.installing.insert(
-            id,
+            id.clone(),
             instances::InstallProgressView {
                 stage: ProgressStage::Metadata,
                 current: 0,
@@ -894,7 +882,7 @@ impl BackendState {
         );
 
         let request = local::CreateLocalRequest {
-            id,
+            id: id.clone(),
             dir_name: params.dir_name,
             minecraft_version: params.minecraft_version,
             loader: params.loader,
@@ -905,10 +893,11 @@ impl BackendState {
             internal: internal.clone(),
         };
 
+        let task_id = id.clone();
         let handle = tokio::spawn(async move {
             let result = local::create_local_instance(request).await;
             let _ = internal.send(BackendEvent::InstallFinished {
-                id,
+                id: task_id,
                 is_run: false,
                 result,
             });
@@ -916,7 +905,7 @@ impl BackendState {
         self.install_tasks.insert(id, handle);
     }
 
-    async fn delete_instance(&mut self, id: Uuid, tx: &FrontendSender) {
+    async fn delete_instance(&mut self, id: InstanceId, tx: &FrontendSender) {
         if self.running.contains(&id) || self.launching.contains(&id) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
@@ -932,7 +921,7 @@ impl BackendState {
             return;
         }
         let data_dir = DataDir::new(self.launcher_dir.clone());
-        match self.instance_storage.remove_from_disk(&data_dir, id).await {
+        match self.instance_storage.remove_from_disk(&data_dir, &id).await {
             Ok(Some(_)) => {
                 self.install_errors.remove(&id);
                 self.launch_errors.remove(&id);
@@ -1047,10 +1036,58 @@ impl BackendState {
             .map(|account| account.provider.clone())
     }
 
-    fn required_provider_for_instance(&self, instance: Uuid) -> Option<AuthProviderConfig> {
+    async fn ensure_instance_for_settings(
+        &mut self,
+        id: &InstanceId,
+    ) -> anyhow::Result<LocalInstance> {
+        if let Some(local) = self.instance_storage.get(id) {
+            return Ok(local.clone());
+        }
+
+        for (url, state) in &self.catalogs {
+            let Some(manifest) = state.manifest() else {
+                continue;
+            };
+            for entry in &manifest.instances {
+                if instances::remote_entry_id(url, &entry.name) == *id {
+                    let source = RemoteSource {
+                        manifest_url: url.clone(),
+                        name_in_manifest: entry.name.clone(),
+                    };
+                    let local = LocalInstance::new_pending_remote(
+                        id.clone(),
+                        self.instance_storage.allocate_dir_name(&entry.name),
+                        source,
+                    );
+                    let data_dir = DataDir::new(self.launcher_dir.clone());
+                    self.instance_storage.add(&data_dir, local.clone()).await?;
+                    return Ok(local);
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "instance {id} was not found in local storage or fetched catalogs"
+        ))
+    }
+
+    async fn update_instance_settings(
+        &mut self,
+        id: &InstanceId,
+        update: impl FnOnce(&mut InstanceUserSettings),
+    ) -> anyhow::Result<InstanceUserSettings> {
+        let local = self.ensure_instance_for_settings(id).await?;
+        let instance_dir = self.instance_dir_fs(&local);
+        let mut settings = load_instance_settings(&instance_dir).await?;
+        update(&mut settings);
+        save_instance_settings(&instance_dir, &settings).await?;
+        Ok(settings)
+    }
+
+    fn required_provider_for_instance(&self, instance: &InstanceId) -> Option<AuthProviderConfig> {
         self.build_instance_views()
             .iter()
-            .find(|view| view.id == instance)
+            .find(|view| &view.id == instance)
             .and_then(|view| view.auth_provider.clone())
     }
 
@@ -1092,12 +1129,12 @@ impl BackendState {
 
     async fn set_instance_account_override(
         &mut self,
-        instance: Uuid,
+        instance: InstanceId,
         account: Option<AccountKey>,
         tx: &FrontendSender,
     ) {
         if let Some(account) = &account
-            && let Some(required) = self.required_provider_for_instance(instance)
+            && let Some(required) = self.required_provider_for_instance(&instance)
             && self.account_provider(account).as_ref() == Some(&required)
         {
             tx.send(MessageToFrontend::Notification {
@@ -1108,8 +1145,10 @@ impl BackendState {
             });
             return;
         }
-        self.instance_settings.entry_mut(instance).account_override = account;
-        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+        if let Err(err) = self
+            .update_instance_settings(&instance, |settings| settings.account_override = account)
+            .await
+        {
             log::error!("Failed to save account override for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
@@ -1123,12 +1162,12 @@ impl BackendState {
 
     async fn set_instance_selected_account(
         &mut self,
-        instance: Uuid,
+        instance: InstanceId,
         account: Option<AccountKey>,
         tx: &FrontendSender,
     ) {
         if let Some(account) = &account
-            && let Some(required) = self.required_provider_for_instance(instance)
+            && let Some(required) = self.required_provider_for_instance(&instance)
             && self.account_provider(account).as_ref() != Some(&required)
         {
             tx.send(MessageToFrontend::Notification {
@@ -1138,12 +1177,15 @@ impl BackendState {
             return;
         }
         let clear_override = account.is_some();
-        let entry = self.instance_settings.entry_mut(instance);
-        entry.selected_account = account;
-        if clear_override {
-            entry.account_override = None;
-        }
-        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+        if let Err(err) = self
+            .update_instance_settings(&instance, |settings| {
+                settings.selected_account = account;
+                if clear_override {
+                    settings.account_override = None;
+                }
+            })
+            .await
+        {
             log::error!("Failed to save selected account for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
@@ -1175,12 +1217,14 @@ impl BackendState {
 
     async fn set_instance_memory(
         &mut self,
-        instance: Uuid,
+        instance: InstanceId,
         xmx_mb: Option<u64>,
         tx: &FrontendSender,
     ) {
-        self.instance_settings.entry_mut(instance).xmx_mb = xmx_mb;
-        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+        if let Err(err) = self
+            .update_instance_settings(&instance, |settings| settings.xmx_mb = xmx_mb)
+            .await
+        {
             log::error!("Failed to save memory override for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
@@ -1194,13 +1238,16 @@ impl BackendState {
 
     async fn set_instance_jvm_flags(
         &mut self,
-        instance: Uuid,
+        instance: InstanceId,
         flags: Option<String>,
         tx: &FrontendSender,
     ) {
-        self.instance_settings.entry_mut(instance).jvm_flags =
+        let normalized =
             flags.and_then(|flags| (!flags.trim().is_empty()).then(|| flags.trim().to_string()));
-        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+        if let Err(err) = self
+            .update_instance_settings(&instance, |settings| settings.jvm_flags = normalized)
+            .await
+        {
             log::error!("Failed to save JVM flags for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
@@ -1212,13 +1259,13 @@ impl BackendState {
         self.emit_snapshot(tx);
     }
 
-    fn is_local_install_in_progress(&self, instance: Uuid) -> bool {
-        self.creating_local.contains_key(&instance)
+    fn is_local_install_in_progress(&self, instance: &InstanceId) -> bool {
+        self.creating_local.contains_key(instance)
     }
 
     async fn set_optional_mod_set_enabled(
         &mut self,
-        instance: Uuid,
+        instance: InstanceId,
         set_id: String,
         enabled: bool,
         tx: &FrontendSender,
@@ -1231,7 +1278,7 @@ impl BackendState {
             });
             return;
         }
-        if self.is_local_install_in_progress(instance) {
+        if self.is_local_install_in_progress(&instance) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
                 message: Arc::from(
@@ -1244,13 +1291,15 @@ impl BackendState {
             .instance_storage
             .all()
             .iter()
-            .find(|entry| entry.id == instance)
+            .find(|entry| entry.id == instance && entry.is_installed())
+            .cloned()
         else {
             return;
         };
+        let dir_name = local.dir_name.clone();
         let data_dir = DataDir::new(self.launcher_dir.clone());
         let instance_dir = InstancesDir::root()
-            .instance_dir(&local.dir_name)
+            .instance_dir(&dir_name)
             .with_data_dir(data_dir.clone());
         let Ok(metadata) = InstanceMetadata::read_local(&instance_dir).await else {
             return;
@@ -1264,31 +1313,32 @@ impl BackendState {
             return;
         }
 
-        self.instance_settings
-            .entry_mut(instance)
-            .optional_mod_sets
-            .insert(set_id, enabled);
-        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
-            log::error!("Failed to save optional mod set setting for instance {instance}: {err:#}");
-            tx.send(MessageToFrontend::Notification {
-                level: NotificationLevel::Error,
-                message: Arc::from(launcher_i18n::notifications::failed_save_optional_mod(
-                    err.to_string(),
-                )),
-            });
-            return;
-        }
+        let settings = match self
+            .update_instance_settings(&instance, |settings| {
+                settings.optional_mod_sets.insert(set_id, enabled);
+            })
+            .await
+        {
+            Ok(settings) => settings,
+            Err(err) => {
+                log::error!(
+                    "Failed to save optional mod set setting for instance {instance}: {err:#}"
+                );
+                tx.send(MessageToFrontend::Notification {
+                    level: NotificationLevel::Error,
+                    message: Arc::from(launcher_i18n::notifications::failed_save_optional_mod(
+                        err.to_string(),
+                    )),
+                });
+                return;
+            }
+        };
         self.emit_snapshot(tx);
 
-        let optional_mod_preferences = self
-            .instance_settings
-            .instances
-            .get(&instance)
-            .map(|entry| entry.optional_mod_sets.clone())
-            .unwrap_or_default();
+        let optional_mod_preferences = settings.optional_mod_sets.clone();
         self.install_errors.remove(&instance);
         self.installing.insert(
-            instance,
+            instance.clone(),
             instances::InstallProgressView {
                 stage: ProgressStage::Files,
                 current: 0,
@@ -1299,14 +1349,14 @@ impl BackendState {
         );
 
         let client = self.client.clone();
-        let dir_name = local.dir_name.clone();
+        let task_instance = instance.clone();
         let frontend = tx.clone();
         let handle = tokio::spawn(async move {
             let result = install::sync_instance_mods(
                 &client,
                 data_dir,
                 &dir_name,
-                instance,
+                task_instance.clone(),
                 optional_mod_preferences,
                 frontend,
                 internal.clone(),
@@ -1314,7 +1364,7 @@ impl BackendState {
             .await
             .map_err(|err| Arc::<str>::from(format!("{err:#}")));
             let _ = internal.send(BackendEvent::ModSyncFinished {
-                id: instance,
+                id: task_instance,
                 result,
             });
         });
@@ -1323,7 +1373,7 @@ impl BackendState {
 
     async fn handle_mod_sync_finished(
         &mut self,
-        id: Uuid,
+        id: InstanceId,
         result: Result<(), Arc<str>>,
         tx: &FrontendSender,
     ) {
@@ -1342,19 +1392,23 @@ impl BackendState {
 
     async fn set_instance_use_native_glfw(
         &mut self,
-        instance: Uuid,
+        instance: InstanceId,
         enabled: bool,
         tx: &FrontendSender,
     ) {
-        if self.is_local_install_in_progress(instance) {
+        if self.is_local_install_in_progress(&instance) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
                 message: Arc::from(launcher_i18n::notifications::java_path_install_in_progress()),
             });
             return;
         }
-        self.instance_settings.entry_mut(instance).use_native_glfw = Some(enabled);
-        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+        if let Err(err) = self
+            .update_instance_settings(&instance, |settings| {
+                settings.use_native_glfw = Some(enabled)
+            })
+            .await
+        {
             log::error!("Failed to save native GLFW setting for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
@@ -1369,18 +1423,18 @@ impl BackendState {
 
     async fn set_instance_java_path(
         &mut self,
-        instance: Uuid,
+        instance: InstanceId,
         path: Option<String>,
         tx: &FrontendSender,
     ) {
-        if self.is_local_install_in_progress(instance) {
+        if self.is_local_install_in_progress(&instance) {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
                 message: Arc::from(launcher_i18n::notifications::java_path_install_in_progress()),
             });
             return;
         }
-        let Some(required_version) = self.required_java_version_for(instance) else {
+        let Some(required_version) = self.required_java_version_for(&instance) else {
             log::error!("Missing required Java version for instance {instance}");
             return;
         };
@@ -1395,8 +1449,10 @@ impl BackendState {
             }
         }
         let is_set = path.is_some();
-        self.instance_settings.entry_mut(instance).java_path = path;
-        if let Err(err) = self.instance_settings.save(&self.launcher_dir).await {
+        if let Err(err) = self
+            .update_instance_settings(&instance, |settings| settings.java_path = path)
+            .await
+        {
             log::error!("Failed to save Java path for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
@@ -1418,21 +1474,21 @@ impl BackendState {
         self.emit_snapshot(tx);
     }
 
-    fn required_java_version_for(&self, instance: Uuid) -> Option<String> {
+    fn required_java_version_for(&self, instance: &InstanceId) -> Option<String> {
         if self.is_local_install_in_progress(instance) {
             return None;
         }
         self.build_instance_views()
             .iter()
-            .find(|v| v.id == instance)
+            .find(|v| &v.id == instance)
             .and_then(|v| v.required_java_version.as_deref().map(str::to_owned))
     }
 
-    fn resolve_java_path(&self, instance: Uuid, internal: mpsc::UnboundedSender<BackendEvent>) {
-        if self.is_local_install_in_progress(instance) {
+    fn resolve_java_path(&self, instance: InstanceId, internal: mpsc::UnboundedSender<BackendEvent>) {
+        if self.is_local_install_in_progress(&instance) {
             return;
         }
-        let Some(required_version) = self.required_java_version_for(instance) else {
+        let Some(required_version) = self.required_java_version_for(&instance) else {
             log::error!("Missing required Java version for instance {instance}");
             return;
         };
@@ -1447,7 +1503,7 @@ impl BackendState {
 
     fn start_launch(
         &mut self,
-        id: Uuid,
+        id: InstanceId,
         account: Option<AccountKey>,
         tx: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
@@ -1463,9 +1519,20 @@ impl BackendState {
             return;
         }
 
-        let settings = self.instance_settings.instances.get(&id);
-        let configured_override = settings.and_then(|settings| settings.account_override.clone());
-        let selected_account = settings.and_then(|settings| settings.selected_account.clone());
+        let Some(local) = self.instance_storage.get(&id) else {
+            return;
+        };
+        if !local.is_installed() {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Warning,
+                message: Arc::from(launcher_i18n::notifications::instance_not_installed_locally()),
+            });
+            return;
+        }
+
+        let settings = self.load_settings_for_id(&id);
+        let configured_override = settings.account_override.clone();
+        let selected_account = settings.selected_account.clone();
         let bypass_required_provider = account.is_none() && configured_override.is_some();
         let account = account.or(configured_override).or(selected_account);
         if account.is_none()
@@ -1483,9 +1550,9 @@ impl BackendState {
         }
 
         self.launch_errors.remove(&id);
-        self.java_prep_tasks.insert(id);
+        self.java_prep_tasks.insert(id.clone());
         self.installing.insert(
-            id,
+            id.clone(),
             instances::InstallProgressView {
                 stage: launcher_bridge::ProgressStage::Java,
                 current: 0,
@@ -1496,68 +1563,71 @@ impl BackendState {
         );
         self.emit_snapshot(&tx);
 
-        let java_path = settings.and_then(|settings| settings.java_path.clone());
-        let install_request = self.prepare_install(id, true, false, tx.clone(), internal.clone());
-        let request = launch::LaunchRequest {
-            id,
-            account,
-            bypass_required_provider,
-            xmx_mb: settings.and_then(|settings| settings.xmx_mb),
-            jvm_flags: settings.and_then(|settings| settings.jvm_flags.clone()),
-            java_path: java_path.clone(),
-            resolved_java: None,
-            use_native_glfw: settings.and_then(|settings| settings.use_native_glfw),
-            launcher_dir: self.launcher_dir.clone(),
-            local_instances: self.instance_storage.all().to_vec(),
-            account_entries: self.launch_accounts(),
-            frontend: tx.clone(),
-        };
+        let java_path = settings.java_path.clone();
+        let install_request = self.prepare_install(id.clone(), true, false, tx.clone(), internal.clone());
+        let xmx_mb = settings.xmx_mb;
+        let jvm_flags = settings.jvm_flags.clone();
+        let use_native_glfw = settings.use_native_glfw;
+        let launcher_dir = self.launcher_dir.clone();
+        let local_instances = self.instance_storage.all().to_vec();
+        let account_entries = self.launch_accounts();
+        let frontend = tx.clone();
         let (kill_tx, mut kill_rx) = oneshot::channel();
+        let task_id = id.clone();
         let task = tokio::spawn(async move {
             let install_result = install::install_instance(install_request)
                 .await
                 .map_err(|err| Arc::<str>::from(format!("{err:#}")));
             let _ = internal.send(BackendEvent::InstallFinished {
-                id,
+                id: task_id.clone(),
                 is_run: true,
                 result: install_result.clone(),
             });
             if let Err(err) = install_result {
-                log::error!("Failed to update instance {id} on launch: {err}");
-                let _ = internal.send(BackendEvent::LaunchPrepFinished { id });
+                log::error!("Failed to update instance {task_id} on launch: {err}");
+                let _ = internal.send(BackendEvent::LaunchPrepFinished { id: task_id.clone() });
                 let _ = internal.send(BackendEvent::LaunchFinished {
-                    id,
+                    id: task_id,
                     exit: launcher_bridge::ExitOutcome::Error(err),
                 });
                 return;
             }
+            let launch_id = task_id.clone();
             let launch_result = async {
-                let local = request
-                    .local_instances
+                let local = local_instances
                     .iter()
-                    .find(|instance| instance.id == request.id)
-                    .ok_or_else(|| launch::LaunchError::InstanceNotFound(request.id))?;
-                let data_dir = DataDir::new(request.launcher_dir.clone());
+                    .find(|instance| instance.id == launch_id)
+                    .ok_or_else(|| launch::LaunchError::InstanceNotFound(launch_id.clone()))?;
+                let data_dir = DataDir::new(launcher_dir.clone());
                 let instance_dir = InstancesDir::root()
                     .instance_dir(&local.dir_name)
                     .with_data_dir(data_dir.clone());
                 let metadata = launch::read_metadata(&instance_dir).await?;
                 let progress = install::BackendProgressReporter::new(
-                    request.id,
-                    request.frontend.clone(),
+                    launch_id.clone(),
+                    frontend.clone(),
                     internal.clone(),
                 );
-                let java = install::resolve_java_for_launch(
+                let java = install::resolve_java(
                     &metadata,
                     &data_dir,
                     java_path.as_deref(),
                     &progress,
                 )
                 .await?;
-                let _ = internal.send(BackendEvent::LaunchPrepFinished { id });
+                let _ = internal.send(BackendEvent::LaunchPrepFinished { id: launch_id.clone() });
                 launch::launch_instance(launch::LaunchRequest {
-                    resolved_java: Some(java),
-                    ..request
+                    id: launch_id.clone(),
+                    account,
+                    bypass_required_provider,
+                    xmx_mb,
+                    jvm_flags,
+                    java,
+                    use_native_glfw,
+                    launcher_dir,
+                    local_instances,
+                    account_entries,
+                    frontend,
                 })
                 .await
             }
@@ -1569,7 +1639,7 @@ impl BackendState {
                         let _ =
                             internal.send(BackendEvent::LaunchAccountUpdated { provider, account });
                     }
-                    let _ = internal.send(BackendEvent::LaunchStarted { id });
+                    let _ = internal.send(BackendEvent::LaunchStarted { id: launch_id.clone() });
                     let mut child = start.child;
                     let exit = tokio::select! {
                         status = child.wait() => exit_outcome(status),
@@ -1579,13 +1649,13 @@ impl BackendState {
                             launcher_bridge::ExitOutcome::Terminated
                         }
                     };
-                    let _ = internal.send(BackendEvent::LaunchFinished { id, exit });
+                    let _ = internal.send(BackendEvent::LaunchFinished { id: launch_id.clone(), exit });
                 }
                 Err(err) => {
-                    log::error!("Failed to launch instance {id}: {err:#}");
-                    let _ = internal.send(BackendEvent::LaunchPrepFinished { id });
+                    log::error!("Failed to launch instance {launch_id}: {err:#}");
+                    let _ = internal.send(BackendEvent::LaunchPrepFinished { id: launch_id.clone() });
                     let _ = internal.send(BackendEvent::LaunchFinished {
-                        id,
+                        id: launch_id.clone(),
                         exit: launcher_bridge::ExitOutcome::Error(Arc::<str>::from(format!(
                             "{err:#}"
                         ))),
@@ -1602,18 +1672,18 @@ impl BackendState {
         );
     }
 
-    fn handle_launch_prep_finished(&mut self, id: Uuid, tx: &FrontendSender) {
+    fn handle_launch_prep_finished(&mut self, id: InstanceId, tx: &FrontendSender) {
         self.java_prep_tasks.remove(&id);
         self.installing.remove(&id);
         self.launching.insert(id);
         self.emit_snapshot(tx);
     }
 
-    fn handle_launch_started(&mut self, id: Uuid, tx: &FrontendSender) {
+    fn handle_launch_started(&mut self, id: InstanceId, tx: &FrontendSender) {
         self.launching.remove(&id);
-        self.running.insert(id);
+        self.running.insert(id.clone());
         tx.send(MessageToFrontend::InstanceProgress {
-            id,
+            id: id.clone(),
             stage: ProgressStage::Launch,
             current: 1,
             total: 1,
@@ -1641,7 +1711,7 @@ impl BackendState {
 
     fn handle_launch_finished(
         &mut self,
-        id: Uuid,
+        id: InstanceId,
         exit: launcher_bridge::ExitOutcome,
         tx: &FrontendSender,
     ) {
@@ -1658,14 +1728,14 @@ impl BackendState {
             }
             launcher_bridge::ExitOutcome::ExitCode(code) => {
                 self.launch_errors.insert(
-                    id,
+                    id.clone(),
                     Arc::from(launcher_i18n::notifications::minecraft_exited_with_code(
                         *code,
                     )),
                 );
             }
             launcher_bridge::ExitOutcome::Error(error) => {
-                self.launch_errors.insert(id, error.clone());
+                self.launch_errors.insert(id.clone(), error.clone());
             }
         }
         tx.send(MessageToFrontend::LaunchFinished {
@@ -1675,7 +1745,7 @@ impl BackendState {
         self.emit_snapshot(tx);
     }
 
-    fn kill_launch(&mut self, id: Uuid, tx: &FrontendSender) {
+    fn kill_launch(&mut self, id: InstanceId, tx: &FrontendSender) {
         if let Some(handle) = self.launch_tasks.get_mut(&id)
             && let Some(kill) = handle.kill.take()
         {
@@ -1687,7 +1757,7 @@ impl BackendState {
             }
             self.launching.remove(&id);
             tx.send(MessageToFrontend::LaunchFinished {
-                instance: id,
+                instance: id.clone(),
                 exit: launcher_bridge::ExitOutcome::Terminated,
             });
         }
@@ -1891,9 +1961,6 @@ pub async fn run(
                         ));
                     }
                     MessageToBackend::Quit => break,
-                    other => {
-                        log::info!("Unhandled backend message: {other:?}");
-                    }
                 }
             }
             event = internal_receiver.recv() => {
@@ -1936,24 +2003,6 @@ pub async fn run(
                         state.handle_add_account_finished(result, &frontend);
                     }
                     Some(BackendEvent::JavaResolved { instance, path }) => {
-                        if let Some(ref p) = path {
-                            state.instance_settings.entry_mut(instance).java_path =
-                                Some(p.to_string());
-                            if let Err(err) =
-                                state.instance_settings.save(&state.launcher_dir).await
-                            {
-                                log::error!(
-                                    "Failed to save resolved Java path for {instance}: {err:#}"
-                                );
-                            }
-                            frontend.send(MessageToFrontend::Notification {
-                                level: NotificationLevel::Success,
-                                message: Arc::from(
-                                    launcher_i18n::notifications::java_path_set(),
-                                ),
-                            });
-                            state.emit_snapshot(&frontend);
-                        }
                         frontend.send(MessageToFrontend::JavaPathResolved { instance, path });
                     }
                     None => break,

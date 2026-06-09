@@ -8,7 +8,7 @@ use generate::instance::{InstanceGenerator, InstanceSpec, Loader};
 use instance::{
     instance_metadata::{InstallCause, InstallParams, ResourceSyncMode},
     mod_sync::ModSyncSettings,
-    storage::{InstanceStorage, LocalInstance, sanitize_dir_name},
+    storage::{InstanceId, InstanceStorage, LocalInstance, sanitize_dir_name},
     version_metadata::OsArch,
 };
 use launcher_bridge::LocalLoader;
@@ -19,12 +19,11 @@ use utils::{
     paths::{DataDir, InstancesDir},
     progress::{ProgressStage, ProgressTracker},
 };
-use uuid::Uuid;
 
 use crate::{
     BackendEvent,
     catalog::BackendCatalogEntry,
-    install::{BackendProgressReporter, InstallOutput, ensure_java, install_game_files},
+    install::{BackendProgressReporter, InstallOutput, install_game_files, resolve_java},
 };
 
 #[derive(Clone)]
@@ -36,7 +35,7 @@ pub(crate) struct CreateLocalParams {
 }
 
 pub(crate) struct CreateLocalRequest {
-    pub id: Uuid,
+    pub id: InstanceId,
     pub dir_name: String,
     pub minecraft_version: String,
     pub loader: LocalLoader,
@@ -127,7 +126,7 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     instance_dir.ensure_dir();
 
     let progress =
-        BackendProgressReporter::new(request.id, request.frontend.clone(), request.internal);
+        BackendProgressReporter::new(request.id.clone(), request.frontend.clone(), request.internal);
 
     let generate_progress = progress.handle(
         ProgressStage::Metadata,
@@ -201,10 +200,9 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     )
     .await?;
 
-    ensure_java(&metadata, &data_dir, &progress).await?;
+    resolve_java(&metadata, &data_dir, None, &progress).await?;
 
-    let mut instance = LocalInstance::new_local(request.dir_name);
-    instance.id = request.id;
+    let instance = LocalInstance::new_local_with_id(request.id, request.dir_name);
 
     Ok(InstallOutput { instance })
 }

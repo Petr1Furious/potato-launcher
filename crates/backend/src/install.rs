@@ -12,7 +12,7 @@ use instance::{
     instance_metadata::{InstallCause, InstallParams, InstanceMetadata, ModSyncWarning},
     manifest::InstanceManifestEntry,
     mod_sync,
-    storage::{LocalInstance, RemoteSource},
+    storage::{self, InstanceId, InstanceState, LocalInstance, RemoteSource},
 };
 use launcher_bridge::{FrontendSender, MessageToFrontend, NotificationLevel};
 use tokio::sync::mpsc;
@@ -26,13 +26,12 @@ use utils::{
         ProgressEvent, ProgressHandle, ProgressReporter, ProgressStage, ProgressTracker, Unit,
     },
 };
-use uuid::Uuid;
 
 use crate::{BackendEvent, catalog::BackendCatalogEntry, instances::remote_entry_id};
 
 #[derive(Clone)]
 pub(crate) struct InstallRequest {
-    pub(crate) id: Uuid,
+    pub(crate) id: InstanceId,
 
     // TODO: pass the whole InstallParams here?
     pub(crate) cause: InstallCause,
@@ -54,7 +53,7 @@ pub(crate) struct InstallOutput {
 
 #[derive(Clone)]
 struct InstallPlan {
-    view_id: Uuid,
+    view_id: InstanceId,
     dir_name: String,
     source: RemoteSource,
     entry: InstanceManifestEntry,
@@ -63,14 +62,14 @@ struct InstallPlan {
 
 #[derive(Clone)]
 pub(crate) struct BackendProgressReporter {
-    id: Uuid,
+    id: InstanceId,
     frontend: FrontendSender,
     internal: mpsc::UnboundedSender<BackendEvent>,
 }
 
 impl BackendProgressReporter {
     pub fn new(
-        id: Uuid,
+        id: InstanceId,
         frontend: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) -> Self {
@@ -105,14 +104,14 @@ impl ProgressReporter for BackendProgressReporter {
         };
 
         self.frontend.send(MessageToFrontend::InstanceProgress {
-            id: self.id,
+            id: self.id.clone(),
             stage,
             current,
             total: event.total,
             message: Arc::<str>::from(message.clone()),
         });
         let _ = self.internal.send(BackendEvent::InstallProgress {
-            id: self.id,
+            id: self.id.clone(),
             stage,
             current,
             total: event.total,
@@ -147,14 +146,14 @@ fn stage_message(stage: &ProgressStage) -> String {
 }
 
 pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<InstallOutput> {
-    let plan = resolve_install_plan(request.id, &request.local_instances, &request.catalogs)?;
+    let plan = resolve_install_plan(&request.id, &request.local_instances, &request.catalogs)?;
     let instance_dir = InstancesDir::root()
         .instance_dir(&plan.dir_name)
         .with_data_dir(request.launcher_dir.clone());
     instance_dir.ensure_dir();
 
     let progress =
-        BackendProgressReporter::new(plan.view_id, request.frontend.clone(), request.internal);
+        BackendProgressReporter::new(plan.view_id.clone(), request.frontend.clone(), request.internal);
 
     let metadata = install_metadata(
         &request.client,
@@ -193,11 +192,17 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     .await?;
 
     if request.cause == InstallCause::Update {
-        ensure_java(&metadata, &request.launcher_dir, &progress).await?;
+        resolve_java(&metadata, &request.launcher_dir, None, &progress).await?;
     }
 
     let instance = if let Some(mut existing) = plan.existing {
+        if request.cause == InstallCause::Run && !existing.is_installed() {
+            return Err(anyhow!(
+                "attempting to run an instance that is not installed"
+            ));
+        }
         existing.source = Some(plan.source);
+        existing.state = InstanceState::Installed;
         existing.last_synced_sha1 = Some(plan.entry.sha1);
         existing
     } else {
@@ -218,11 +223,11 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
 }
 
 fn resolve_install_plan(
-    id: Uuid,
+    id: &InstanceId,
     local_instances: &[LocalInstance],
     catalogs: &HashMap<Url, BackendCatalogEntry>,
 ) -> anyhow::Result<InstallPlan> {
-    if let Some(local) = local_instances.iter().find(|instance| instance.id == id) {
+    if let Some(local) = local_instances.iter().find(|instance| &instance.id == id) {
         return resolve_local_install_plan(local.clone(), catalogs);
     }
 
@@ -231,10 +236,10 @@ fn resolve_install_plan(
             continue;
         };
         for entry in &manifest.instances {
-            if remote_entry_id(url, &entry.name) == id {
+            if remote_entry_id(url, &entry.name) == *id {
                 let dir_name = allocate_dir_name(local_instances, &entry.name);
                 return Ok(InstallPlan {
-                    view_id: id,
+                    view_id: id.clone(),
                     dir_name,
                     source: RemoteSource {
                         manifest_url: url.clone(),
@@ -274,7 +279,7 @@ fn resolve_local_install_plan(
         .ok_or_else(|| anyhow::anyhow!("instance is no longer published by its backend"))?;
 
     Ok(InstallPlan {
-        view_id: local.id,
+        view_id: local.id.clone(),
         dir_name: local.dir_name.clone(),
         source,
         entry,
@@ -488,7 +493,7 @@ pub(crate) async fn sync_instance_mods(
     client: &reqwest::Client,
     launcher_dir: DataDir,
     dir_name: &str,
-    view_id: Uuid,
+    view_id: InstanceId,
     optional_mod_preferences: HashMap<String, bool>,
     frontend: FrontendSender,
     internal: mpsc::UnboundedSender<BackendEvent>,
@@ -527,7 +532,7 @@ fn notify_mod_sync_warning(frontend: &FrontendSender, warning: &ModSyncWarning) 
     });
 }
 
-pub(crate) async fn resolve_java_for_launch(
+pub(crate) async fn resolve_java(
     metadata: &InstanceMetadata,
     data_dir: &DataDir,
     configured_path: Option<&str>,
@@ -570,34 +575,6 @@ pub(crate) async fn resolve_java_for_launch(
     java::get_java(&java_version, data_dir)
         .await
         .ok_or_else(|| anyhow::anyhow!("Java {java_version} is still missing after download"))
-}
-
-pub(crate) async fn ensure_java(
-    metadata: &InstanceMetadata,
-    data_dir: &DataDir,
-    progress: &BackendProgressReporter,
-) -> anyhow::Result<()> {
-    let java_version = metadata.get_java_version();
-    if java::get_java(&java_version, data_dir).await.is_some() {
-        progress
-            .handle(
-                ProgressStage::Java,
-                launcher_i18n::progress::java_already_installed(),
-            )
-            .finish();
-        return Ok(());
-    }
-
-    java::download_java(
-        &java_version,
-        data_dir,
-        progress.handle(
-            ProgressStage::Java,
-            launcher_i18n::progress::installing_java_version(java_version.clone()),
-        ),
-    )
-    .await?;
-    Ok(())
 }
 
 async fn extract_natives(
@@ -655,22 +632,7 @@ fn allocate_dir_name(local_instances: &[LocalInstance], base: &str) -> String {
         .iter()
         .map(|instance| instance.dir_name.as_str())
         .collect::<HashSet<_>>();
-    let normalized = base.trim();
-    let base = if normalized.is_empty() {
-        "Instance"
-    } else {
-        normalized
-    };
-    if !taken.contains(base) {
-        return base.to_string();
-    }
-    for suffix in 1.. {
-        let candidate = format!("{base} ({suffix})");
-        if !taken.contains(candidate.as_str()) {
-            return candidate;
-        }
-    }
-    unreachable!("unbounded suffix search should always return")
+    storage::allocate_dir_name(&taken, base)
 }
 
 #[cfg(test)]
@@ -723,7 +685,7 @@ mod tests {
             }),
         )]);
 
-        let plan = resolve_install_plan(id, &[], &catalogs).unwrap();
+        let plan = resolve_install_plan(&id, &[], &catalogs).unwrap();
 
         assert_eq!(plan.view_id, id);
         assert_eq!(plan.dir_name, "Vanilla");
@@ -748,7 +710,7 @@ mod tests {
     fn resolves_existing_remote_instance_for_update() {
         let url = Url::parse("https://example.com/manifest.json").unwrap();
         let local = LocalInstance::new_remote(
-            Uuid::new_v4(),
+            remote_entry_id(&url, "Vanilla"),
             "Vanilla".to_string(),
             RemoteSource {
                 manifest_url: url.clone(),
@@ -770,7 +732,7 @@ mod tests {
             }),
         )]);
 
-        let plan = resolve_install_plan(local.id, std::slice::from_ref(&local), &catalogs).unwrap();
+        let plan = resolve_install_plan(&local.id, std::slice::from_ref(&local), &catalogs).unwrap();
 
         assert_eq!(plan.view_id, local.id);
         assert_eq!(plan.dir_name, "Vanilla");

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use gpui::{Context, EventEmitter};
+use instance::storage::InstanceId;
 use launcher_bridge::{InstanceLiveStatus, InstanceView, ProgressStage};
-use uuid::Uuid;
 
 #[derive(Clone, Default)]
 pub struct InstanceEntries {
@@ -14,7 +14,7 @@ pub struct InstancesUpdatedEvent;
 
 #[derive(Clone, Debug)]
 pub struct InstanceProgressUpdate {
-    pub id: Uuid,
+    pub id: InstanceId,
     pub stage: ProgressStage,
     pub current: u64,
     pub total: u64,
@@ -24,7 +24,7 @@ pub struct InstanceProgressUpdate {
 
 impl InstanceProgressUpdate {
     pub fn new(
-        id: Uuid,
+        id: InstanceId,
         stage: ProgressStage,
         current: u64,
         total: u64,

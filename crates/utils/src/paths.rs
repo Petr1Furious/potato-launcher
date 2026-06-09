@@ -14,6 +14,8 @@ const MINECRAFT_DIR_NAME: &str = "minecraft";
 const MODS_DIR_NAME: &str = "mods";
 const OPTIONAL_MODS_DIR_NAME: &str = "optional_mods";
 const META_FILE_NAME: &str = "meta.json";
+const LOCAL_INSTANCE_FILE_NAME: &str = "local_instance.json";
+const INSTANCE_SETTINGS_FILE_NAME: &str = "settings.json";
 const AUTH_DATA_FILE_NAME: &str = "auth_data.json";
 const JAVA_DIR_NAME: &str = "java";
 const LOGS_DIR_NAME: &str = "logs";
@@ -155,6 +157,8 @@ path_type!(AssetsObjectsDir, dir);
 path_type!(ModsDir, dir);
 path_type!(OptionalModsDir, dir);
 path_type!(InstanceMetaPath, file);
+path_type!(LocalInstanceDescriptorPath, file);
+path_type!(InstanceSettingsPath, file);
 path_type!(JavaBinPath, file);
 path_type!(AuthDataPath, file);
 path_type!(MetadataPath, file);
@@ -237,6 +241,14 @@ impl InstanceDirFS {
     pub fn meta_path(&self) -> PathBuf {
         self.rel.meta_path().to_fs(&self.data_dir)
     }
+
+    pub fn local_instance_descriptor_path(&self) -> PathBuf {
+        self.rel.local_instance_descriptor_path().to_fs(&self.data_dir)
+    }
+
+    pub fn settings_path(&self) -> PathBuf {
+        self.rel.settings_path().to_fs(&self.data_dir)
+    }
 }
 
 fn ensure_dir(path: &Path) {
@@ -275,6 +287,14 @@ impl InstanceDir {
 
     pub fn meta_path(&self) -> InstanceMetaPath {
         InstanceMetaPath(self.0.join(META_FILE_NAME))
+    }
+
+    pub fn local_instance_descriptor_path(&self) -> LocalInstanceDescriptorPath {
+        LocalInstanceDescriptorPath(self.0.join(LOCAL_INSTANCE_FILE_NAME))
+    }
+
+    pub fn settings_path(&self) -> InstanceSettingsPath {
+        InstanceSettingsPath(self.0.join(INSTANCE_SETTINGS_FILE_NAME))
     }
 }
 

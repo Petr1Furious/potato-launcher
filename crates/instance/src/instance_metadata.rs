@@ -331,12 +331,12 @@ impl InstanceMetadata {
         {
             tasks
                 .check_tasks
-                .push(self.get_client_check_task(&params.instance_dir.data_dir())?);
+                .push(self.get_client_check_task(params.instance_dir.data_dir())?);
             tasks
                 .check_tasks
-                .extend(self.get_library_check_tasks(&params.instance_dir.data_dir())?);
+                .extend(self.get_library_check_tasks(params.instance_dir.data_dir())?);
             tasks.check_tasks.extend(
-                self.get_asset_check_tasks(client, &params.instance_dir.data_dir())
+                self.get_asset_check_tasks(client, params.instance_dir.data_dir())
                     .await?,
             );
         }
@@ -467,7 +467,7 @@ impl InstanceMetadata {
         // seen_paths is only used to avoid deleting files included by more specific rules,
         // preventing object intersections is done by the generator
         for entry in &self.include {
-            let entry_path = entry.path.to_path(&params.instance_dir.minecraft_dir());
+            let entry_path = entry.path.to_path(params.instance_dir.minecraft_dir());
             if entry.apply_on == ApplyOn::Update && params.cause != InstallCause::Update {
                 continue;
             }
@@ -497,12 +497,12 @@ impl InstanceMetadata {
                         continue;
                     }
                     for object in action.objects.iter() {
-                        let path = object.path.to_path(&params.instance_dir.minecraft_dir());
+                        let path = object.path.to_path(params.instance_dir.minecraft_dir());
                         include_file(object, path.clone(), entry.overwrite);
                         seen_paths.insert(path);
                     }
                     if action.delete_extra || params.force_overwrite {
-                        let dir_path = entry.path.to_path(&params.instance_dir.minecraft_dir());
+                        let dir_path = entry.path.to_path(params.instance_dir.minecraft_dir());
                         for file in files::get_files_ignore_paths(&dir_path, &seen_paths) {
                             tasks.delete_tasks.push(DeleteTask { path: file.clone() });
                         }

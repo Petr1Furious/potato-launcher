@@ -3694,10 +3694,10 @@ dependencies = [
 name = "launcher-bridge"
 version = "0.1.0"
 dependencies = [
+ "instance",
  "launcher-auth",
  "tokio",
  "url",
- "uuid",
 ]
 
 [[package]]
@@ -3722,7 +3722,6 @@ dependencies = [
  "launcher-i18n",
  "log",
  "url",
- "uuid",
 ]
 
 [[package]]

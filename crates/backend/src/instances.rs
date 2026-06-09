@@ -1,13 +1,9 @@
-use std::{
-    collections::{HashMap, HashSet, hash_map::DefaultHasher},
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 use instance::{
     manifest::InstanceManifest,
     mod_sync::{self, ModSyncSettings},
-    storage::LocalInstance,
+    storage::{InstanceId, LocalInstance},
 };
 use launcher_auth::{providers::AuthProviderConfig, storage::AccountKey};
 use launcher_bridge::{
@@ -15,7 +11,6 @@ use launcher_bridge::{
     ProgressStage,
 };
 use url::Url;
-use uuid::Uuid;
 
 use crate::catalog::BackendCatalogEntry;
 
@@ -28,7 +23,7 @@ pub struct InstallProgressView {
     pub show_bar: bool,
 }
 
-pub type ProgressMap = HashMap<Uuid, InstallProgressView>;
+pub type ProgressMap = HashMap<InstanceId, InstallProgressView>;
 
 #[derive(Clone, Debug, Default)]
 pub struct LocalMetadataView {
@@ -78,20 +73,19 @@ pub struct InstanceUserSettingsView {
 
 pub struct InstanceLiveState<'a> {
     pub installing: &'a ProgressMap,
-    pub creating_local: &'a HashMap<Uuid, Arc<str>>,
-    pub install_errors: &'a HashMap<Uuid, Arc<str>>,
-    pub installed_overrides: &'a HashSet<Uuid>,
-    pub launching: &'a HashSet<Uuid>,
-    pub running: &'a HashSet<Uuid>,
-    pub launch_errors: &'a HashMap<Uuid, Arc<str>>,
+    pub creating_local: &'a HashMap<InstanceId, Arc<str>>,
+    pub install_errors: &'a HashMap<InstanceId, Arc<str>>,
+    pub launching: &'a HashSet<InstanceId>,
+    pub running: &'a HashSet<InstanceId>,
+    pub launch_errors: &'a HashMap<InstanceId, Arc<str>>,
 }
 
 pub struct InstanceViewBuildInput<'a> {
     pub local_instances: &'a [LocalInstance],
     pub catalogs: &'a HashMap<Url, BackendCatalogEntry>,
     pub live_state: InstanceLiveState<'a>,
-    pub local_metadata: &'a HashMap<Uuid, LocalMetadataView>,
-    pub user_settings: &'a HashMap<Uuid, InstanceUserSettingsView>,
+    pub local_metadata: &'a HashMap<InstanceId, LocalMetadataView>,
+    pub user_settings: &'a HashMap<InstanceId, InstanceUserSettingsView>,
     pub accounts: &'a [AccountView],
 }
 
@@ -108,7 +102,6 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
         installing,
         creating_local,
         install_errors,
-        installed_overrides,
         launching,
         running,
         launch_errors,
@@ -126,6 +119,9 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             running,
             launch_errors,
         );
+        if !local.is_installed() && status == InstanceLiveStatus::Installed {
+            status = InstanceLiveStatus::NotInstalled;
+        }
         let mut orphaned = false;
         let mut manifest_auth_provider = None;
         let (display_name, origin) = match &local.source {
@@ -142,7 +138,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                     (Some(_), Some(remote)) => {
                         manifest_auth_provider = remote.auth_backend.clone();
                         covered_remote_keys.insert(remote_key(&source.manifest_url, &remote.name));
-                        if status == InstanceLiveStatus::Installed
+                        if local.is_installed()
+                            && status == InstanceLiveStatus::Installed
                             && local.last_synced_sha1.as_deref() != Some(remote.sha1.as_str())
                         {
                             status = InstanceLiveStatus::Outdated;
@@ -199,12 +196,12 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             effective_account.is_some(),
         );
         views.push(InstanceView {
-            id: local.id,
+            id: local.id.clone(),
             display_name,
             dir_name: Arc::<str>::from(local.dir_name.clone()),
             origin,
             status,
-            locally_installed: true,
+            locally_installed: local.is_installed(),
             orphaned,
             auth_provider,
             default_xmx_mb: metadata.default_xmx_mb,
@@ -229,7 +226,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
     }
 
     for (id, dir_name) in creating_local.iter() {
-        if local_instances.iter().any(|local| local.id == *id) {
+        if local_instances.iter().any(|local| &local.id == id) {
             continue;
         }
         let status = if let Some(progress) = installing.get(id) {
@@ -252,7 +249,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             }
         };
         views.push(InstanceView {
-            id: *id,
+            id: id.clone(),
             display_name: dir_name.clone(),
             dir_name: dir_name.clone(),
             origin: InstanceOrigin::Local,
@@ -293,8 +290,6 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 }
             } else if let Some(error) = install_errors.get(&id) {
                 InstanceLiveStatus::InstallFailed(error.clone())
-            } else if installed_overrides.contains(&id) {
-                InstanceLiveStatus::Installed
             } else {
                 InstanceLiveStatus::NotInstalled
             };
@@ -307,7 +302,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 accounts,
             );
             views.push(InstanceView {
-                id,
+                id: id.clone(),
                 display_name: Arc::<str>::from(entry.name.clone()),
                 dir_name: Arc::<str>::from(entry.name.clone()),
                 origin: InstanceOrigin::Backend { url: url.clone() },
@@ -353,8 +348,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
     views
 }
 
-pub fn remote_entry_id(url: &Url, name: &str) -> Uuid {
-    uuid_from_seed(&format!("remote:{}:{name}", url.as_str()))
+pub fn remote_entry_id(url: &Url, name: &str) -> InstanceId {
+    InstanceId::remote(url, name)
 }
 
 fn fetched_manifests(
@@ -369,10 +364,10 @@ fn fetched_manifests(
 fn base_local_status(
     local: &LocalInstance,
     installing: &ProgressMap,
-    install_errors: &HashMap<Uuid, Arc<str>>,
-    launching: &HashSet<Uuid>,
-    running: &HashSet<Uuid>,
-    launch_errors: &HashMap<Uuid, Arc<str>>,
+    install_errors: &HashMap<InstanceId, Arc<str>>,
+    launching: &HashSet<InstanceId>,
+    running: &HashSet<InstanceId>,
+    launch_errors: &HashMap<InstanceId, Arc<str>>,
 ) -> InstanceLiveStatus {
     if let Some(progress) = installing.get(&local.id) {
         InstanceLiveStatus::Installing {
@@ -457,19 +452,6 @@ fn launch_blocked_reason(
     Some(Arc::from(launcher_i18n::instances::launch_blocked()))
 }
 
-fn uuid_from_seed(seed: &str) -> Uuid {
-    let mut first = DefaultHasher::new();
-    seed.hash(&mut first);
-    let first = first.finish();
-
-    let mut second = DefaultHasher::new();
-    "potato-launcher".hash(&mut second);
-    seed.hash(&mut second);
-    let second = second.finish();
-
-    Uuid::from_u128(((first as u128) << 64) | (second as u128))
-}
-
 fn remote_key(url: &Url, name: &str) -> String {
     format!("{}::{name}", url.as_str())
 }
@@ -494,7 +476,11 @@ fn instance_bucket(view: &InstanceView) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use instance::{manifest::InstanceManifestEntry, storage::RemoteSource};
+    use instance::{
+        manifest::InstanceManifestEntry,
+        storage::{InstanceState, RemoteSource},
+    };
+    use uuid::Uuid;
 
     use crate::catalog::{BackendCatalogEntry, BackendFetchStatus};
 
@@ -505,14 +491,13 @@ mod tests {
     #[derive(Default)]
     struct TestBuildFixture {
         installing: ProgressMap,
-        creating_local: HashMap<Uuid, Arc<str>>,
-        install_errors: HashMap<Uuid, Arc<str>>,
-        installed_overrides: HashSet<Uuid>,
-        launching: HashSet<Uuid>,
-        running: HashSet<Uuid>,
-        launch_errors: HashMap<Uuid, Arc<str>>,
-        local_metadata: HashMap<Uuid, LocalMetadataView>,
-        user_settings: HashMap<Uuid, InstanceUserSettingsView>,
+        creating_local: HashMap<InstanceId, Arc<str>>,
+        install_errors: HashMap<InstanceId, Arc<str>>,
+        launching: HashSet<InstanceId>,
+        running: HashSet<InstanceId>,
+        launch_errors: HashMap<InstanceId, Arc<str>>,
+        local_metadata: HashMap<InstanceId, LocalMetadataView>,
+        user_settings: HashMap<InstanceId, InstanceUserSettingsView>,
     }
 
     impl TestBuildFixture {
@@ -529,7 +514,6 @@ mod tests {
                     installing: &self.installing,
                     creating_local: &self.creating_local,
                     install_errors: &self.install_errors,
-                    installed_overrides: &self.installed_overrides,
                     launching: &self.launching,
                     running: &self.running,
                     launch_errors: &self.launch_errors,
@@ -545,21 +529,23 @@ mod tests {
     fn derives_statuses_across_multiple_backend_urls() {
         let url_a = Url::parse("https://a.example/manifest.json").unwrap();
         let url_b = Url::parse("https://b.example/manifest.json").unwrap();
-        let local_only_id = Uuid::new_v4();
-        let installed_id = Uuid::new_v4();
-        let outdated_id = Uuid::new_v4();
-        let orphaned_id = Uuid::new_v4();
+        let local_only_id = InstanceId::from("local:only");
+        let installed_id = InstanceId::from("remote:installed");
+        let outdated_id = InstanceId::from("remote:outdated");
+        let orphaned_id = InstanceId::from("remote:orphaned");
 
         let locals = vec![
             LocalInstance {
-                id: local_only_id,
+                id: local_only_id.clone(),
                 dir_name: "Local".to_string(),
+                state: InstanceState::Installed,
                 source: None,
                 last_synced_sha1: None,
             },
             LocalInstance {
-                id: installed_id,
+                id: installed_id.clone(),
                 dir_name: "Installed".to_string(),
+                state: InstanceState::Installed,
                 source: Some(RemoteSource {
                     manifest_url: url_a.clone(),
                     name_in_manifest: "Installed".to_string(),
@@ -567,8 +553,9 @@ mod tests {
                 last_synced_sha1: Some("installed-sha1".to_string()),
             },
             LocalInstance {
-                id: outdated_id,
+                id: outdated_id.clone(),
                 dir_name: "Outdated".to_string(),
+                state: InstanceState::Installed,
                 source: Some(RemoteSource {
                     manifest_url: url_a.clone(),
                     name_in_manifest: "Outdated".to_string(),
@@ -576,8 +563,9 @@ mod tests {
                 last_synced_sha1: Some("old-sha1".to_string()),
             },
             LocalInstance {
-                id: orphaned_id,
+                id: orphaned_id.clone(),
                 dir_name: "Orphaned".to_string(),
+                state: InstanceState::Installed,
                 source: Some(RemoteSource {
                     manifest_url: url_b.clone(),
                     name_in_manifest: "Orphaned".to_string(),
@@ -646,10 +634,11 @@ mod tests {
     #[test]
     fn orphaned_instances_keep_their_backend_origin() {
         let url = Url::parse("https://a.example/manifest.json").unwrap();
-        let id = Uuid::new_v4();
+        let id = InstanceId::from("remote:old-pack");
         let locals = vec![LocalInstance {
-            id,
+            id: id.clone(),
             dir_name: "Old Pack".to_string(),
+            state: InstanceState::Installed,
             source: Some(RemoteSource {
                 manifest_url: url.clone(),
                 name_in_manifest: "Old Pack".to_string(),
@@ -670,10 +659,11 @@ mod tests {
     #[test]
     fn orphaned_instances_stay_orphaned_while_installing() {
         let url = Url::parse("https://a.example/manifest.json").unwrap();
-        let id = Uuid::new_v4();
+        let id = InstanceId::from("remote:old-pack-installing");
         let locals = vec![LocalInstance {
-            id,
+            id: id.clone(),
             dir_name: "Old Pack".to_string(),
+            state: InstanceState::Installed,
             source: Some(RemoteSource {
                 manifest_url: url.clone(),
                 name_in_manifest: "Old Pack".to_string(),
@@ -682,7 +672,7 @@ mod tests {
         }];
         let catalogs = HashMap::from([(url, ok_catalog(manifest([("New Pack", "new")])))]);
         let progress = HashMap::from([(
-            id,
+            id.clone(),
             InstallProgressView {
                 stage: ProgressStage::Files,
                 current: 1,
@@ -708,10 +698,10 @@ mod tests {
         use launcher_auth::providers::OfflineAuthProvider;
 
         let local = LocalInstance::new_local("Local".to_string());
-        let id = local.id;
+        let id = local.id.clone();
         let provider = AuthProviderConfig::Offline(OfflineAuthProvider {});
         let metadata = HashMap::from([(
-            id,
+            id.clone(),
             LocalMetadataView {
                 auth_provider: Some(provider.clone()),
                 default_xmx_mb: Some(3072),
@@ -735,10 +725,10 @@ mod tests {
         use launcher_auth::providers::{MicrosoftAuthProvider, OfflineAuthProvider};
 
         let local = LocalInstance::new_local("Local".to_string());
-        let id = local.id;
+        let id = local.id.clone();
         let required = AuthProviderConfig::Microsoft(MicrosoftAuthProvider {});
         let metadata = HashMap::from([(
-            id,
+            id.clone(),
             LocalMetadataView {
                 auth_provider: Some(required),
                 default_xmx_mb: Some(4096),
@@ -764,12 +754,12 @@ mod tests {
         use launcher_auth::providers::MicrosoftAuthProvider;
 
         let local = LocalInstance::new_local("Local".to_string());
-        let id = local.id;
+        let id = local.id.clone();
         let required = AuthProviderConfig::Microsoft(MicrosoftAuthProvider {});
         let account = test_account(required.clone());
         let selected_key = account.key.clone();
         let metadata = HashMap::from([(
-            id,
+            id.clone(),
             LocalMetadataView {
                 auth_provider: Some(required.clone()),
                 default_xmx_mb: Some(4096),
@@ -777,7 +767,7 @@ mod tests {
             },
         )]);
         let settings = HashMap::from([(
-            id,
+            id.clone(),
             InstanceUserSettingsView {
                 selected_account: Some(selected_key.clone()),
                 account_override: None,
@@ -891,10 +881,10 @@ mod tests {
         use launcher_auth::providers::{MicrosoftAuthProvider, OfflineAuthProvider};
 
         let local = LocalInstance::new_local("Local".to_string());
-        let id = local.id;
+        let id = local.id.clone();
         let override_account = (Uuid::new_v4(), "Tester".to_string());
         let metadata = HashMap::from([(
-            id,
+            id.clone(),
             LocalMetadataView {
                 auth_provider: Some(AuthProviderConfig::Microsoft(MicrosoftAuthProvider {})),
                 default_xmx_mb: Some(4096),
@@ -902,7 +892,7 @@ mod tests {
             },
         )]);
         let settings = HashMap::from([(
-            id,
+            id.clone(),
             InstanceUserSettingsView {
                 selected_account: None,
                 account_override: Some(override_account.clone()),
@@ -931,9 +921,9 @@ mod tests {
     #[test]
     fn progress_view_preserves_message_and_bar_visibility() {
         let local = LocalInstance::new_local("Local".to_string());
-        let id = local.id;
+        let id = local.id.clone();
         let progress = HashMap::from([(
-            id,
+            id.clone(),
             InstallProgressView {
                 stage: ProgressStage::Metadata,
                 current: 1,
@@ -956,7 +946,7 @@ mod tests {
         ));
     }
 
-    fn assert_status(views: &[InstanceView], id: Uuid, expected: InstanceLiveStatus) {
+    fn assert_status(views: &[InstanceView], id: InstanceId, expected: InstanceLiveStatus) {
         let status = &views.iter().find(|view| view.id == id).unwrap().status;
         assert_eq!(status, &expected);
     }

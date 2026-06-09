@@ -385,7 +385,7 @@ impl<'a> ModSyncPlanner<'a> {
         entry
             .object
             .path
-            .to_path(&self.params.instance_dir.minecraft_dir())
+            .to_path(self.params.instance_dir.minecraft_dir())
     }
 
     fn mirror_fast(&self) -> bool {

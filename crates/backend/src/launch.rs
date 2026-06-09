@@ -5,7 +5,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use instance::{instance_metadata::InstanceMetadata, os, storage::LocalInstance};
+use instance::{instance_metadata::InstanceMetadata, os, storage::{InstanceId, LocalInstance}};
 use launcher_auth::{
     AccountData,
     flow::{AuthMessage, AuthMessageProvider, perform_auth},
@@ -49,13 +49,12 @@ const JAVA_21_GC_OPTIONS: &[&str] = &[
 
 #[derive(Clone)]
 pub(crate) struct LaunchRequest {
-    pub(crate) id: Uuid,
+    pub(crate) id: InstanceId,
     pub(crate) account: Option<AccountKey>,
     pub(crate) bypass_required_provider: bool,
     pub(crate) xmx_mb: Option<u64>,
     pub(crate) jvm_flags: Option<String>,
-    pub(crate) java_path: Option<String>,
-    pub(crate) resolved_java: Option<java::JavaInstallation>,
+    pub(crate) java: java::JavaInstallation,
     pub(crate) use_native_glfw: Option<bool>,
     pub(crate) launcher_dir: PathBuf,
     pub(crate) local_instances: Vec<LocalInstance>,
@@ -71,7 +70,7 @@ pub(crate) struct LaunchStart {
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum LaunchError {
     #[error("installed instance {0} was not found")]
-    InstanceNotFound(Uuid),
+    InstanceNotFound(InstanceId),
     #[error("account {0:?} was not found")]
     AccountNotFound(AccountKey),
     #[error("account {account:?} is not compatible with required auth provider {required:?}")]
@@ -83,12 +82,6 @@ pub(crate) enum LaunchError {
     NoCompatibleAccount(AuthProviderConfig),
     #[error("no account is available for launch")]
     NoAccount,
-    #[error("Java {0} was not found; install or repair the instance first")]
-    JavaNotFound(String),
-    #[error(
-        "invalid custom Java path: the configured executable is missing or incompatible with Java {0}"
-    )]
-    InvalidCustomJavaPath(String),
     #[cfg(target_os = "linux")]
     #[error("failed to find native GLFW library: {0}")]
     NativeGlfwNotFound(#[from] utils::compat::NativeGlfwError),
@@ -137,7 +130,7 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         .local_instances
         .iter()
         .find(|instance| instance.id == request.id)
-        .ok_or(LaunchError::InstanceNotFound(request.id))?;
+        .ok_or_else(|| LaunchError::InstanceNotFound(request.id.clone()))?;
     let instance_dir = InstancesDir::root()
         .instance_dir(&local.dir_name)
         .with_data_dir(data_dir.clone());
@@ -164,24 +157,7 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
     };
     let refreshed_account =
         (account_data != original_account_data).then(|| (provider.clone(), account_data.clone()));
-    let java = if let Some(installation) = request.resolved_java {
-        installation
-    } else {
-        let java_version = metadata.get_java_version();
-        if let Some(path) = request.java_path.as_deref() {
-            let java_path = std::path::Path::new(path);
-            if !java::check_java(&java_version, java_path).await {
-                return Err(LaunchError::InvalidCustomJavaPath(java_version));
-            }
-            java::get_installation_pub(java_path)
-                .await
-                .ok_or_else(|| LaunchError::InvalidCustomJavaPath(java_version))?
-        } else {
-            java::get_java(&java_version, &data_dir)
-                .await
-                .ok_or_else(|| LaunchError::JavaNotFound(java_version.clone()))?
-        }
-    };
+    let java = request.java;
     let minecraft_dir_short = instance_dir.minecraft_dir();
     let minecraft_dir_game = game_directory_for_launch(&minecraft_dir_short)?;
     let args = build_launch_arguments(&LaunchBuildContext {
