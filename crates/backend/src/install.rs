@@ -33,7 +33,6 @@ use crate::{BackendEvent, catalog::BackendCatalogEntry, instances::remote_entry_
 pub(crate) struct InstallRequest {
     pub(crate) id: InstanceId,
 
-    // TODO: pass the whole InstallParams here?
     pub(crate) cause: InstallCause,
     pub(crate) force_overwrite: bool,
     pub(crate) optional_mod_preferences: HashMap<String, bool>,
@@ -320,6 +319,298 @@ pub enum ConfigTaskError {
     ConfigStructure(String),
 }
 
+fn config_key_path(key: &[Either<String, usize>]) -> String {
+    let parts = key
+        .iter()
+        .map(|part| match part {
+            Either::Left(key) => serde_json::Value::String(key.clone()),
+            Either::Right(index) => serde_json::Value::Number((*index).into()),
+        })
+        .collect::<Vec<_>>();
+    serde_json::Value::Array(parts).to_string()
+}
+
+fn with_config_option_context(
+    option: &utils::files::ConfigOption,
+    error: ConfigTaskError,
+) -> ConfigTaskError {
+    match error {
+        ConfigTaskError::ConfigStructure(reason) => ConfigTaskError::ConfigStructure(format!(
+            "{reason} while applying option {}",
+            config_key_path(&option.key)
+        )),
+        error => error,
+    }
+}
+
+fn with_config_task_context(task: &ConfigOptionTask, error: ConfigTaskError) -> ConfigTaskError {
+    match error {
+        ConfigTaskError::ConfigStructure(reason) => ConfigTaskError::ConfigStructure(format!(
+            "{:?} config {}: {reason}",
+            task.config_type,
+            task.path.display()
+        )),
+        error => error,
+    }
+}
+
+fn apply_json_config_option(
+    value: &mut serde_json::Value,
+    option: &utils::files::ConfigOption,
+) -> Result<(), ConfigTaskError> {
+    let mut current = value;
+    for key in option.key.clone() {
+        match key {
+            Either::Left(key) => {
+                current = current
+                    .as_object_mut()
+                    .ok_or_else(|| ConfigTaskError::ConfigStructure("expected object".into()))?
+                    .entry(key)
+                    .or_insert(serde_json::Value::Null);
+            }
+            Either::Right(index) => {
+                let array = current
+                    .as_array_mut()
+                    .ok_or_else(|| ConfigTaskError::ConfigStructure("expected array".into()))?;
+                let len = array.len();
+                if index == len {
+                    array.push(serde_json::Value::Null);
+                } else if index > len {
+                    return Err(ConfigTaskError::ConfigStructure(
+                        "cannot access index".into(),
+                    ));
+                }
+                current = array.get_mut(index).expect("array element should exist");
+            }
+        }
+    }
+    *current = option.value.clone();
+    Ok(())
+}
+
+fn apply_json_config_options(
+    value: &mut serde_json::Value,
+    options: &[utils::files::ConfigOption],
+) -> Result<(), ConfigTaskError> {
+    for option in options {
+        apply_json_config_option(value, option)
+            .map_err(|error| with_config_option_context(option, error))?;
+    }
+    Ok(())
+}
+
+fn json_to_toml_value(value: &serde_json::Value) -> Result<toml_edit::Value, ConfigTaskError> {
+    match value {
+        serde_json::Value::Null => Err(ConfigTaskError::ConfigStructure(
+            "TOML config values cannot be null".into(),
+        )),
+        serde_json::Value::Bool(value) => Ok(toml_edit::Value::from(*value)),
+        serde_json::Value::Number(value) => {
+            if let Some(value) = value.as_i64() {
+                Ok(toml_edit::Value::from(value))
+            } else if let Some(value) = value.as_u64() {
+                let value = i64::try_from(value).map_err(|_| {
+                    ConfigTaskError::ConfigStructure("TOML integer is too large".into())
+                })?;
+                Ok(toml_edit::Value::from(value))
+            } else if let Some(value) = value.as_f64() {
+                Ok(toml_edit::Value::from(value))
+            } else {
+                Err(ConfigTaskError::ConfigStructure(
+                    "unsupported TOML number".into(),
+                ))
+            }
+        }
+        serde_json::Value::String(value) => Ok(toml_edit::Value::from(value.clone())),
+        serde_json::Value::Array(values) => {
+            let mut array = toml_edit::Array::new();
+            for value in values {
+                array.push_formatted(json_to_toml_value(value)?);
+            }
+            Ok(toml_edit::Value::from(array))
+        }
+        serde_json::Value::Object(values) => {
+            let mut table = toml_edit::InlineTable::new();
+            for (key, value) in values {
+                table.insert(key, json_to_toml_value(value)?);
+            }
+            Ok(toml_edit::Value::from(table))
+        }
+    }
+}
+
+fn toml_placeholder_for_key(key: &Either<String, usize>) -> toml_edit::Value {
+    match key {
+        Either::Left(_) => toml_edit::Value::from(toml_edit::InlineTable::new()),
+        Either::Right(_) => toml_edit::Value::from(toml_edit::Array::new()),
+    }
+}
+
+fn set_toml_item_path(
+    item: &mut toml_edit::Item,
+    key: &[Either<String, usize>],
+    value: toml_edit::Value,
+) -> Result<(), ConfigTaskError> {
+    let Some((head, tail)) = key.split_first() else {
+        *item = toml_edit::Item::Value(value);
+        return Ok(());
+    };
+
+    match head {
+        Either::Left(key) => {
+            let table = item
+                .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+                .as_table_like_mut()
+                .ok_or_else(|| ConfigTaskError::ConfigStructure("expected table".into()))?;
+            let child = table.entry(key).or_insert(toml_edit::Item::None);
+            set_toml_item_path(child, tail, value)
+        }
+        Either::Right(index) => {
+            let array = item
+                .as_array_mut()
+                .ok_or_else(|| ConfigTaskError::ConfigStructure("expected array".into()))?;
+            set_toml_array_path(array, *index, tail, value)
+        }
+    }
+}
+
+fn set_toml_value_path(
+    current: &mut toml_edit::Value,
+    key: &[Either<String, usize>],
+    value: toml_edit::Value,
+) -> Result<(), ConfigTaskError> {
+    let Some((head, tail)) = key.split_first() else {
+        *current = value;
+        return Ok(());
+    };
+
+    match head {
+        Either::Left(key) => {
+            let table = current
+                .as_inline_table_mut()
+                .ok_or_else(|| ConfigTaskError::ConfigStructure("expected inline table".into()))?;
+            if tail.is_empty() {
+                table.insert(key, value);
+                Ok(())
+            } else {
+                let child = table.get_or_insert(key, toml_placeholder_for_key(&tail[0]));
+                set_toml_value_path(child, tail, value)
+            }
+        }
+        Either::Right(index) => {
+            let array = current
+                .as_array_mut()
+                .ok_or_else(|| ConfigTaskError::ConfigStructure("expected array".into()))?;
+            set_toml_array_path(array, *index, tail, value)
+        }
+    }
+}
+
+fn set_toml_array_path(
+    array: &mut toml_edit::Array,
+    index: usize,
+    tail: &[Either<String, usize>],
+    value: toml_edit::Value,
+) -> Result<(), ConfigTaskError> {
+    let len = array.len();
+    if index > len {
+        return Err(ConfigTaskError::ConfigStructure(
+            "cannot access index".into(),
+        ));
+    }
+
+    if tail.is_empty() {
+        if index == len {
+            array.push_formatted(value);
+        } else {
+            *array.get_mut(index).expect("array element should exist") = value;
+        }
+        return Ok(());
+    }
+
+    if index == len {
+        array.push_formatted(toml_placeholder_for_key(&tail[0]));
+    }
+    let child = array.get_mut(index).expect("array element should exist");
+    set_toml_value_path(child, tail, value)
+}
+
+fn apply_toml_config_options(
+    document: &mut toml_edit::DocumentMut,
+    options: &[utils::files::ConfigOption],
+) -> Result<(), ConfigTaskError> {
+    for option in options {
+        set_toml_item_path(
+            document.as_item_mut(),
+            &option.key,
+            json_to_toml_value(&option.value)?,
+        )
+        .map_err(|error| with_config_option_context(option, error))?;
+    }
+    Ok(())
+}
+
+fn apply_properties_config_options(
+    contents: &str,
+    options: &[utils::files::ConfigOption],
+) -> Result<String, ConfigTaskError> {
+    let mut lines = contents
+        .lines()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    for option in options {
+        let [Either::Left(key)] = option.key.as_slice() else {
+            return Err(with_config_option_context(
+                option,
+                ConfigTaskError::ConfigStructure(
+                    "properties config keys must be a single string".into(),
+                ),
+            ));
+        };
+        let value = match &option.value {
+            serde_json::Value::String(value) => value.clone(),
+            serde_json::Value::Bool(value) => value.to_string(),
+            serde_json::Value::Number(value) => value.to_string(),
+            serde_json::Value::Null
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_) => {
+                return Err(with_config_option_context(
+                    option,
+                    ConfigTaskError::ConfigStructure(
+                        "properties config values must be strings, booleans, or numbers".into(),
+                    ),
+                ));
+            }
+        };
+
+        let mut replaced = false;
+        for line in &mut lines {
+            let trimmed = line.trim_start();
+            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') {
+                continue;
+            }
+            let Some(separator) = trimmed.find(['=', ':']) else {
+                continue;
+            };
+            if trimmed[..separator].trim_end() == key {
+                *line = format!("{key}={value}");
+                replaced = true;
+                break;
+            }
+        }
+        if !replaced {
+            lines.push(format!("{key}={value}"));
+        }
+    }
+
+    let mut output = lines.join("\n");
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    Ok(output)
+}
+
 async fn run_config_option_task(task: &ConfigOptionTask) -> Result<(), ConfigTaskError> {
     let contents = if task.path.exists() {
         tokio::fs::read_to_string(&task.path)
@@ -333,7 +624,7 @@ async fn run_config_option_task(task: &ConfigOptionTask) -> Result<(), ConfigTas
             ConfigType::Properties => "".to_string(),
         }
     };
-    // TODO: better errors
+
     let new_contents = match task.config_type {
         ConfigType::Json | ConfigType::Yaml => {
             let mut value: serde_json::Value = match task.config_type {
@@ -341,37 +632,8 @@ async fn run_config_option_task(task: &ConfigOptionTask) -> Result<(), ConfigTas
                 ConfigType::Yaml => serde_saphyr::from_str(&contents)?,
                 _ => unreachable!(),
             };
-            for option in &task.options {
-                let mut current = &mut value;
-                for key in option.key.clone() {
-                    match key {
-                        Either::Left(key) => {
-                            current = current
-                                .as_object_mut()
-                                .ok_or_else(|| {
-                                    ConfigTaskError::ConfigStructure("expected object".into())
-                                })?
-                                .entry(key)
-                                .or_insert(serde_json::Value::Null);
-                        }
-                        Either::Right(index) => {
-                            let array = current.as_array_mut().ok_or_else(|| {
-                                ConfigTaskError::ConfigStructure("expected array".into())
-                            })?;
-                            let len = array.len();
-                            if index == len {
-                                array.push(serde_json::Value::Null);
-                            } else if index > len {
-                                return Err(ConfigTaskError::ConfigStructure(
-                                    "cannot access index".into(),
-                                ));
-                            }
-                            current = array.get_mut(index).expect("array element should exist");
-                        }
-                    }
-                }
-                *current = option.value.clone();
-            }
+            apply_json_config_options(&mut value, &task.options)
+                .map_err(|error| with_config_task_context(task, error))?;
             match task.config_type {
                 ConfigType::Json => serde_json::to_string_pretty(&value)?,
                 ConfigType::Yaml => serde_saphyr::to_string(&value)?,
@@ -379,42 +641,13 @@ async fn run_config_option_task(task: &ConfigOptionTask) -> Result<(), ConfigTas
             }
         }
         ConfigType::Toml => {
-            todo!()
-            // let mut document = contents.parse::<toml_edit::DocumentMut>()?;
-            // for option in &action.options {
-            //     let mut curr = document.as_item_mut();
-            //     for &key in &option.key {
-            //         match key {
-            //             Either::Left(key) => {
-            //                 curr = curr
-            //                     .as_table_like_mut()
-            //                     .ok_or_else(|| ApplyIncludesError::ConfigStructureError("expected table".into()))?
-            //                     .entry(key)
-            //                     .or_insert(toml_edit::Item::None);
-            //             }
-            //             Either::Right(index) => {
-            //                 // If the length is n - 1, insert a new value
-            //                 let array = curr
-            //                     .as_array_mut()
-            //                     .ok_or_else(|| ApplyIncludesError::ConfigStructureError("expected array".into()))?;
-            //                 let len = array.len();
-            //                 curr = array
-            //                     .get_mut(*index)
-            //                     .or_else(|| {
-            //                         if *index == len {
-            //                             array.push(toml_edit::Item::None);
-            //                             array.last_mut()
-            //                         } else {
-            //                             None
-            //                         }
-            //                     })
-            //                     .ok_or_else(|| ApplyIncludesError::ConfigStructureError("cannot access index".into()))?;
-            //             }
-            //         }
-            //     }
-            // }
+            let mut document = contents.parse::<toml_edit::DocumentMut>()?;
+            apply_toml_config_options(&mut document, &task.options)
+                .map_err(|error| with_config_task_context(task, error))?;
+            document.to_string()
         }
-        ConfigType::Properties => todo!(),
+        ConfigType::Properties => apply_properties_config_options(&contents, &task.options)
+            .map_err(|error| with_config_task_context(task, error))?,
     };
     tokio::fs::write(&task.path, new_contents)
         .await
@@ -643,6 +876,8 @@ mod tests {
     use super::*;
     use instance::manifest::InstanceManifest;
     use launcher_bridge::ProgressStage as BridgeProgressStage;
+    use serde_json::json;
+    use utils::files::ConfigOption;
 
     #[test]
     fn maps_worker_progress_to_bridge_stage() {
@@ -707,6 +942,114 @@ mod tests {
             allocate_dir_name(&local_instances, "Vanilla"),
             "Vanilla (2)"
         );
+    }
+
+    fn config_option(key: Vec<Either<String, usize>>, value: serde_json::Value) -> ConfigOption {
+        ConfigOption { key, value }
+    }
+
+    fn key(name: &str) -> Either<String, usize> {
+        Either::Left(name.to_string())
+    }
+
+    fn index(index: usize) -> Either<String, usize> {
+        Either::Right(index)
+    }
+
+    #[tokio::test]
+    async fn config_option_task_updates_json() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        tokio::fs::write(&path, r#"{"mods":[{}]}"#).await.unwrap();
+
+        run_config_option_task(&ConfigOptionTask {
+            path: path.clone(),
+            config_type: ConfigType::Json,
+            options: vec![
+                config_option(vec![key("enabled")], json!(true)),
+                config_option(vec![key("mods"), index(0), key("name")], json!("example")),
+            ],
+        })
+        .await
+        .unwrap();
+
+        let value: serde_json::Value =
+            serde_json::from_str(&tokio::fs::read_to_string(path).await.unwrap()).unwrap();
+        assert_eq!(value["enabled"], json!(true));
+        assert_eq!(value["mods"][0]["name"], json!("example"));
+    }
+
+    #[tokio::test]
+    async fn config_option_task_updates_yaml() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.yaml");
+        tokio::fs::write(&path, "mods:\n  - {}\n").await.unwrap();
+
+        run_config_option_task(&ConfigOptionTask {
+            path: path.clone(),
+            config_type: ConfigType::Yaml,
+            options: vec![config_option(
+                vec![key("mods"), index(0), key("enabled")],
+                json!(true),
+            )],
+        })
+        .await
+        .unwrap();
+
+        let value: serde_json::Value =
+            serde_saphyr::from_str(&tokio::fs::read_to_string(path).await.unwrap()).unwrap();
+        assert_eq!(value["mods"][0]["enabled"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn config_option_task_updates_toml() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.toml");
+        tokio::fs::write(&path, "mods = [{}]\n").await.unwrap();
+
+        run_config_option_task(&ConfigOptionTask {
+            path: path.clone(),
+            config_type: ConfigType::Toml,
+            options: vec![
+                config_option(vec![key("graphics"), key("enabled")], json!(true)),
+                config_option(vec![key("mods"), index(0), key("name")], json!("example")),
+            ],
+        })
+        .await
+        .unwrap();
+
+        let document = tokio::fs::read_to_string(path)
+            .await
+            .unwrap()
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        assert_eq!(document["graphics"]["enabled"].as_bool(), Some(true));
+        assert_eq!(document["mods"][0]["name"].as_str(), Some("example"));
+    }
+
+    #[tokio::test]
+    async fn config_option_task_updates_properties() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.properties");
+        tokio::fs::write(&path, "enabled=false\n# keep comment\n")
+            .await
+            .unwrap();
+
+        run_config_option_task(&ConfigOptionTask {
+            path: path.clone(),
+            config_type: ConfigType::Properties,
+            options: vec![
+                config_option(vec![key("enabled")], json!(true)),
+                config_option(vec![key("max-count")], json!(5)),
+            ],
+        })
+        .await
+        .unwrap();
+
+        let contents = tokio::fs::read_to_string(path).await.unwrap();
+        assert!(contents.contains("enabled=true\n"));
+        assert!(contents.contains("# keep comment\n"));
+        assert!(contents.contains("max-count=5\n"));
     }
 
     #[test]

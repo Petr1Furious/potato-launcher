@@ -151,9 +151,86 @@ pub enum ConfigType {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ConfigOption {
-    // TODO: untagged Either serialization
+    #[serde(with = "config_key_serde")]
     pub key: Vec<Either<String, usize>>,
     pub value: serde_json::Value,
+}
+
+mod config_key_serde {
+    use either::Either;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum KeyPart {
+        Key(String),
+        Index(usize),
+    }
+
+    #[derive(Serialize)]
+    #[serde(untagged)]
+    enum KeyPartRef<'a> {
+        Key(&'a str),
+        Index(usize),
+    }
+
+    pub fn serialize<S>(key: &Vec<Either<String, usize>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        key.iter()
+            .map(|part| match part {
+                Either::Left(key) => KeyPartRef::Key(key.as_str()),
+                Either::Right(index) => KeyPartRef::Index(*index),
+            })
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Either<String, usize>>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Vec::<KeyPart>::deserialize(deserializer).map(|key| {
+            key.into_iter()
+                .map(|part| match part {
+                    KeyPart::Key(key) => Either::Left(key),
+                    KeyPart::Index(index) => Either::Right(index),
+                })
+                .collect()
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn config_option_key_serializes_as_untagged_path_parts() {
+        let option = ConfigOption {
+            key: vec![
+                Either::Left("root".to_string()),
+                Either::Right(0),
+                Either::Left("name".to_string()),
+            ],
+            value: json!("Potato"),
+        };
+
+        let serialized = serde_json::to_value(&option).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "key": ["root", 0, "name"],
+                "value": "Potato",
+            })
+        );
+
+        let deserialized: ConfigOption = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized.key, option.key);
+        assert_eq!(deserialized.value, option.value);
+    }
 }
 
 #[derive(Debug)]
