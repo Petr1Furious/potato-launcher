@@ -152,8 +152,11 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
         .with_data_dir(request.launcher_dir.clone());
     instance_dir.ensure_dir();
 
-    let progress =
-        BackendProgressReporter::new(plan.view_id.clone(), request.frontend.clone(), request.internal);
+    let progress = BackendProgressReporter::new(
+        plan.view_id.clone(),
+        request.frontend.clone(),
+        request.internal,
+    );
 
     let metadata = install_metadata(
         &request.client,
@@ -732,7 +735,8 @@ mod tests {
             }),
         )]);
 
-        let plan = resolve_install_plan(&local.id, std::slice::from_ref(&local), &catalogs).unwrap();
+        let plan =
+            resolve_install_plan(&local.id, std::slice::from_ref(&local), &catalogs).unwrap();
 
         assert_eq!(plan.view_id, local.id);
         assert_eq!(plan.dir_name, "Vanilla");

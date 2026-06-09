@@ -332,16 +332,8 @@ impl<'a> ModSyncPlanner<'a> {
     fn push_check(&mut self, entry: &ModEntry, path: PathBuf) {
         self.tasks.check_tasks.push(CheckTask {
             url: entry.object.url.clone(),
-            remote_sha1: if self.mirror_fast() {
-                None
-            } else {
-                Some(entry.object.sha1.clone())
-            },
-            remote_size: if self.mirror_fast() {
-                entry.object.size
-            } else {
-                None
-            },
+            remote_size: Some(entry.object.size),
+            remote_sha1: (!self.mirror_fast()).then(|| entry.object.sha1.clone()),
             path,
         });
     }

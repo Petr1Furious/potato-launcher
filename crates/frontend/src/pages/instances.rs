@@ -370,11 +370,12 @@ impl Render for InstancesPage {
             .when(self.show_create_local_modal, |this| {
                 this.child(self.create_local_modal(window, cx))
             });
-        let side_panel = if let Some(selected) = self
-            .selected_instance
-            .as_ref()
-            .and_then(|id| instances.iter().find(|instance| &instance.id == id).cloned())
-        {
+        let side_panel = if let Some(selected) = self.selected_instance.as_ref().and_then(|id| {
+            instances
+                .iter()
+                .find(|instance| &instance.id == id)
+                .cloned()
+        }) {
             Some(
                 self.settings_panel(selected, accounts.clone(), cx)
                     .into_any_element(),

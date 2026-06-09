@@ -125,8 +125,11 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
         .with_data_dir(data_dir.clone());
     instance_dir.ensure_dir();
 
-    let progress =
-        BackendProgressReporter::new(request.id.clone(), request.frontend.clone(), request.internal);
+    let progress = BackendProgressReporter::new(
+        request.id.clone(),
+        request.frontend.clone(),
+        request.internal,
+    );
 
     let generate_progress = progress.handle(
         ProgressStage::Metadata,

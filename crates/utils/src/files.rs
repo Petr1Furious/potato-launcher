@@ -132,10 +132,10 @@ pub async fn remove_file_or_dir(path: &Path) -> io::Result<()> {
 #[derive(Debug)]
 pub struct CheckTask {
     pub url: Url,
+    /// If set, the file size will be checked before hashing and the file will be redownloaded on mismatches
+    pub remote_size: Option<u64>,
     /// If set, the file hash will be checked and the file will be redownloaded on mismatches
     pub remote_sha1: Option<String>,
-    /// If set, the file size will be checked and the file will be redownloaded on mismatches
-    pub remote_size: Option<u64>,
     /// Full path to the file to check/download
     pub path: PathBuf,
 }
@@ -234,7 +234,7 @@ pub enum GetDownloadTasksError {
 pub async fn get_download_task(
     check_task: &CheckTask,
 ) -> Result<Option<DownloadTask>, GetDownloadTasksError> {
-    match fs::metadata(&check_task.path).await {
+    let metadata = match fs::metadata(&check_task.path).await {
         Ok(metadata) => {
             if !metadata.is_file() {
                 return Ok(Some(DownloadTask {
@@ -242,6 +242,7 @@ pub async fn get_download_task(
                     path: check_task.path.clone(),
                 }));
             }
+            metadata
         }
         Err(err) if err.kind() == ErrorKind::NotFound => {
             return Ok(Some(DownloadTask {
@@ -250,15 +251,25 @@ pub async fn get_download_task(
             }));
         }
         Err(err) => return Err(err.into()),
-    }
+    };
 
-    if let Some(remote_sha1) = &check_task.remote_sha1
-        && &hash_file(&check_task.path).await? != remote_sha1
-    {
+    let size_matches = check_task
+        .remote_size
+        .is_none_or(|remote_size| metadata.len() == remote_size);
+    if !size_matches {
         return Ok(Some(DownloadTask {
             url: check_task.url.clone(),
             path: check_task.path.clone(),
         }));
+    }
+
+    if let Some(remote_sha1) = &check_task.remote_sha1 {
+        if remote_sha1.is_empty() || &hash_file(&check_task.path).await? != remote_sha1 {
+            return Ok(Some(DownloadTask {
+                url: check_task.url.clone(),
+                path: check_task.path.clone(),
+            }));
+        }
     }
 
     Ok(None)
@@ -272,19 +283,44 @@ pub async fn get_download_tasks(
         return Ok(Vec::new());
     }
 
-    let mut to_hash = Vec::new();
+    enum LocalFileState {
+        File { size: u64 },
+        NeedsDownload,
+    }
+
+    let mut local_files = HashMap::new();
     for task in &check_tasks {
-        if task.remote_sha1.is_some() {
-            // TODO: don't do 2 metadata calls per file
-            match fs::metadata(&task.path).await {
-                Ok(metadata) => {
-                    if metadata.is_file() {
-                        to_hash.push(task.path.clone());
-                    }
-                }
-                Err(err) if err.kind() == ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
+        if local_files.contains_key(&task.path) {
+            continue;
+        }
+
+        let state = match fs::metadata(&task.path).await {
+            Ok(metadata) if metadata.is_file() => LocalFileState::File {
+                size: metadata.len(),
+            },
+            Ok(_) => LocalFileState::NeedsDownload,
+            Err(err) if err.kind() == ErrorKind::NotFound => LocalFileState::NeedsDownload,
+            Err(err) => return Err(err.into()),
+        };
+        local_files.insert(task.path.clone(), state);
+    }
+
+    let mut to_hash = Vec::new();
+    let mut seen_hash_paths = HashSet::new();
+    for task in &check_tasks {
+        let Some(remote_sha1) = &task.remote_sha1 else {
+            continue;
+        };
+        let Some(LocalFileState::File { size }) = local_files.get(&task.path) else {
+            continue;
+        };
+        if !remote_sha1.is_empty()
+            && task
+                .remote_size
+                .is_none_or(|remote_size| *size == remote_size)
+            && seen_hash_paths.insert(task.path.clone())
+        {
+            to_hash.push(task.path.clone());
         }
     }
 
@@ -294,25 +330,25 @@ pub async fn get_download_tasks(
     let mut download_tasks = HashMap::new();
     for task in check_tasks {
         let path = task.path;
-        let mut need_download = false;
-        match fs::metadata(&path).await {
-            Ok(metadata) => {
-                if !metadata.is_file() {
-                    need_download = true;
-                } else if let Some(remote_sha1) = &task.remote_sha1
-                    && remote_sha1
-                        != hashes.get(&path).expect(
-                            "hash should exist for files with remote_sha1 that exist locally",
-                        )
-                {
-                    need_download = true;
-                }
+        let local_state = local_files
+            .get(&path)
+            .expect("local file state should exist for every check task");
+        let need_download = match local_state {
+            LocalFileState::NeedsDownload => true,
+            LocalFileState::File { size } => {
+                let size_matches = task
+                    .remote_size
+                    .is_none_or(|remote_size| *size == remote_size);
+                !size_matches
+                    || task.remote_sha1.as_ref().is_some_and(|remote_sha1| {
+                        remote_sha1.is_empty()
+                            || remote_sha1
+                                != hashes.get(&path).expect(
+                                    "hash should exist for hash-checked files with matching size",
+                                )
+                    })
             }
-            Err(err) if err.kind() == ErrorKind::NotFound => {
-                need_download = true;
-            }
-            Err(err) => return Err(err.into()),
-        }
+        };
 
         if need_download {
             download_tasks.insert(path, task.url);

@@ -32,7 +32,7 @@ fn mod_entry(mod_id: &str, filename: &str, sha1: &str) -> ModEntry {
         object: Object {
             path: RelativePathBuf::from(format!("mods/{filename}")),
             sha1: sha1.to_string(),
-            size: Some(123),
+            size: 123,
             url: Url::parse(&format!("https://example.com/{filename}")).unwrap(),
         },
     }
@@ -374,6 +374,6 @@ fn mirror_fast_uses_size_checks() {
         &dirs.install_params(InstallCause::Run),
     );
 
-    assert_eq!(result.tasks.check_tasks[0].remote_sha1, None);
     assert_eq!(result.tasks.check_tasks[0].remote_size, Some(123));
+    assert_eq!(result.tasks.check_tasks[0].remote_sha1, None);
 }

@@ -64,12 +64,14 @@ mod tests {
                     artifact: Some(Download {
                         sha1: "abc".to_string(),
                         url: Url::parse("https://example.invalid/log4j-api.jar").unwrap(),
+                        size: 100,
                     }),
                     classifiers: None,
                 }),
                 rules: None,
                 url: None,
                 sha1: None,
+                size: None,
                 natives: None,
             }],
             main_class: "net.minecraft.client.main.Main".to_string(),
@@ -223,6 +225,7 @@ pub struct Download {
         serialize_with = "serialize_download_url"
     )]
     pub url: Url,
+    pub size: u64,
 }
 
 /// Workaround for metadata that has `"url": ""` on locally-built artifacts (e.g. Forge).
@@ -255,8 +258,8 @@ impl Download {
     pub fn get_check_task(&self, path: &Path) -> CheckTask {
         CheckTask {
             url: self.url.clone(),
+            remote_size: Some(self.size),
             remote_sha1: (!self.sha1.is_empty()).then(|| self.sha1.clone()),
-            remote_size: None,
             path: path.to_path_buf(),
         }
     }
@@ -344,6 +347,9 @@ pub struct Library {
     // fabric doesn't have sha1 for some libraries (why)
     sha1: Option<String>,
 
+    // size in bytes, should be present if sha1 is present
+    size: Option<u64>,
+
     pub(crate) natives: Option<HashMap<String, String>>,
 }
 
@@ -355,20 +361,22 @@ impl Library {
             rules: None,
             url: None,
             sha1: None,
+            size: None,
             natives: None,
         }
     }
 
-    pub fn from_download(name: String, url: Url, sha1: String) -> Self {
+    pub fn from_download(name: String, url: Url, sha1: String, size: u64) -> Self {
         Library {
             name,
             downloads: Some(LibraryDownloads {
-                artifact: Some(Download { url, sha1 }),
+                artifact: Some(Download { url, sha1, size }),
                 classifiers: None,
             }),
             rules: None,
             url: None,
             sha1: None,
+            size: None,
             natives: None,
         }
     }
@@ -504,8 +512,8 @@ impl Library {
                     .get_url()?
                     .join(self.get_rel_path()?.as_str())
                     .map_err(|source| self.map_url_error(source))?,
+                remote_size: self.size.clone(),
                 remote_sha1: self.sha1.clone(),
-                remote_size: None,
                 path: self.get_path(data_dir)?,
             }))
         }
@@ -774,26 +782,38 @@ impl VersionMetadata {
 
         for library in &self.libraries {
             let mut artifact_sha1 = None;
+            let mut artifact_size = None;
             if let Some(downloads) = &library.downloads {
                 if let Some(artifact) = &downloads.artifact {
                     artifact_sha1 = Some(artifact.sha1.clone());
+                    artifact_size = Some(artifact.size);
                 }
             } else if library.url.is_some() {
+                let path = library.get_path(data_dir)?;
+                artifact_size = Some(match library.size {
+                    Some(size) => size,
+                    None => path
+                        .metadata()
+                        .map_err(VersionMetadataError::HashFileIo)?
+                        .len(),
+                });
                 artifact_sha1 = Some(if let Some(sha1) = &library.sha1 {
                     sha1.clone()
                 } else {
-                    files::hash_file(&library.get_path(data_dir)?)
+                    files::hash_file(&path)
                         .await
                         .map_err(VersionMetadataError::HashFileIo)?
                 });
             }
             let library_artifact = artifact_sha1
-                .map(|sha1| {
+                .zip(artifact_size)
+                .map(|(sha1, size)| {
                     Ok::<Download, VersionMetadataError>(Download {
                         url: LibrariesDir::root()
                             .library_path(&library.get_rel_path()?)
                             .to_url(download_server_base),
                         sha1,
+                        size,
                     })
                 })
                 .transpose()?;
@@ -810,6 +830,7 @@ impl VersionMetadata {
                         Download {
                             url: native_path.to_url(download_server_base),
                             sha1: download.sha1.clone(),
+                            size: download.size,
                         },
                     );
                 }
@@ -825,6 +846,7 @@ impl VersionMetadata {
                 rules: library.rules.clone(),
                 url: None,
                 sha1: None,
+                size: None,
                 natives: library.natives.clone(),
             });
         }

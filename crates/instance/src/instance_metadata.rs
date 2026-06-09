@@ -36,8 +36,7 @@ const COMPLETION_MARKER_FILE: &str = ".download_complete";
 pub struct Object {
     pub path: RelativePathBuf,
     pub sha1: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
+    pub size: u64,
     pub url: Url,
 }
 
@@ -456,8 +455,8 @@ impl InstanceMetadata {
             if overwrite || !path.exists() {
                 tasks.check_tasks.push(CheckTask {
                     url: object.url.clone(),
+                    remote_size: Some(object.size),
                     remote_sha1: Some(object.sha1.clone()),
-                    remote_size: None,
                     path,
                 });
             }
@@ -652,6 +651,7 @@ mod tests {
                     client: Some(crate::version_metadata::Download {
                         sha1: "abc".to_string(),
                         url: Url::parse("https://example.invalid/client.jar").unwrap(),
+                        size: 100,
                     }),
                 }),
                 id: "1.21.11".to_string(),

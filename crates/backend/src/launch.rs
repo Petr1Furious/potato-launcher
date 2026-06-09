@@ -5,7 +5,11 @@ use std::{
 };
 
 use async_trait::async_trait;
-use instance::{instance_metadata::InstanceMetadata, os, storage::{InstanceId, LocalInstance}};
+use instance::{
+    instance_metadata::InstanceMetadata,
+    os,
+    storage::{InstanceId, LocalInstance},
+};
 use launcher_auth::{
     AccountData,
     flow::{AuthMessage, AuthMessageProvider, perform_auth},

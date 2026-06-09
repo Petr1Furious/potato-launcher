@@ -24,8 +24,8 @@ impl AssetIndex {
     pub fn get_check_task(&self, data_dir: &DataDir) -> CheckTask {
         CheckTask {
             url: self.url.clone(),
-            remote_sha1: Some(self.sha1.clone()),
             remote_size: None,
+            remote_sha1: Some(self.sha1.clone()),
             path: get_asset_index_path(data_dir, &self.id),
         }
     }
@@ -97,12 +97,12 @@ impl AssetsMetadata {
                         .map(|url| CheckTask {
                             url,
                             path: rel_path.to_fs(data_dir),
+                            remote_size: None,
                             remote_sha1: if check_hashes {
                                 Some(object.hash.clone())
                             } else {
                                 None
                             },
-                            remote_size: None,
                         })
                 })
                 .collect::<Result<Vec<_>, url::ParseError>>()?,

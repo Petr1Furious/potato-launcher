@@ -60,23 +60,16 @@ async fn get_file_object(
     }
     // TODO: other non-file cases?
 
-    let hash = files::hash_files(
-        std::slice::from_ref(&full_path),
-        progress::no_progress_bar(),
-    )
-    .await?
-    .into_iter()
-    .next()
-    .expect("hash_files should return one hash");
+    let metadata = full_path.metadata()?;
+    let hash = files::hash_file(&full_path).await?;
     let object_url = instance_dir
         .minecraft_dir()
         .instance_object_path(path)
         .to_url(base_url);
     Ok(Object {
         path: path.into(),
-        sha1: hash.clone(),
-        // size is not used for includes
-        size: None,
+        sha1: hash,
+        size: metadata.len(),
         url: object_url,
     })
 }
@@ -102,8 +95,7 @@ async fn get_directory_objects(
         objects.push(Object {
             path: object_path.clone(),
             sha1: hash.clone(),
-            // size is not used for includes
-            size: None,
+            size: path.metadata()?.len(),
             url: object_url,
         });
     }
@@ -250,6 +242,8 @@ pub enum GetObjectsError {
 pub enum GetExtraForgeLibsError {
     #[error("failed to parse extra forge library paths: {0}")]
     ExtraForgeLibs(#[from] ExtraForgeLibsError),
+    #[error("failed to read extra forge library metadata: {0}")]
+    Io(#[from] std::io::Error),
     #[error("failed to hash extra forge libraries: {0}")]
     HashFiles(#[from] files::HashFilesError),
 }
@@ -358,9 +352,10 @@ async fn get_extra_forge_libs(
             let url = LibrariesDir::root()
                 .library_path(RelativePath::new(&lib.rel_path))
                 .to_url(download_server_base);
-            Library::from_download(lib.gav, url, sha1)
+            let size = lib.source_path.metadata()?.len();
+            Ok(Library::from_download(lib.gav, url, sha1, size))
         })
-        .collect())
+        .collect::<Result<Vec<_>, GetExtraForgeLibsError>>()?)
 }
 
 fn vanilla() -> Loader {

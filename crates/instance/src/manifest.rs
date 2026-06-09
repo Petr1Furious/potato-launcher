@@ -19,7 +19,7 @@ pub enum ManifestError {
     ReadFileJson(#[from] files::ReadFileParsedError),
 }
 
-/// A single entry in the vanilla version manifest
+/// A single entry in the vanilla version manifest:
 /// https://piston-meta.mojang.com/mc/game/version_manifest_v2.json
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -40,8 +40,8 @@ impl VanillaManifestEntry {
         let path = VersionsDir::root().metadata_path(&self.id).to_fs(data_dir);
         CheckTask {
             url: self.url.clone(),
-            remote_sha1: Some(self.sha1.clone()),
             remote_size: None,
+            remote_sha1: Some(self.sha1.clone()),
             path,
         }
     }
@@ -111,8 +111,8 @@ impl VersionMetadataInfo {
     pub fn to_check_task(&self, data_dir: &DataDir) -> CheckTask {
         CheckTask {
             url: self.url.clone(),
-            remote_sha1: Some(self.sha1.clone()),
             remote_size: None,
+            remote_sha1: Some(self.sha1.clone()),
             path: VersionsDir::root().metadata_path(&self.id).to_fs(data_dir),
         }
     }
@@ -137,8 +137,8 @@ impl InstanceManifestEntry {
     pub fn to_check_task(&self, instance_dir: &InstanceDirFS) -> CheckTask {
         CheckTask {
             url: self.url.clone(),
-            remote_sha1: Some(self.sha1.clone()),
             remote_size: None,
+            remote_sha1: Some(self.sha1.clone()),
             path: instance_dir.meta_path(),
         }
     }

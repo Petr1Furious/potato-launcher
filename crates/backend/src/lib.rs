@@ -610,7 +610,8 @@ impl BackendState {
 
         let id = InstanceId::local_new();
         self.install_errors.remove(&id);
-        self.creating_local.insert(id.clone(), Arc::from(dir_name.clone()));
+        self.creating_local
+            .insert(id.clone(), Arc::from(dir_name.clone()));
         self.creating_local_params.insert(
             id.clone(),
             local::CreateLocalParams {
@@ -709,7 +710,8 @@ impl BackendState {
             },
         );
 
-        let request = self.prepare_install(id.clone(), false, force_overwrite, tx, internal.clone());
+        let request =
+            self.prepare_install(id.clone(), false, force_overwrite, tx, internal.clone());
         let task_id = id.clone();
         let handle = tokio::spawn(async move {
             let result = install::install_instance(request)
@@ -1484,7 +1486,11 @@ impl BackendState {
             .and_then(|v| v.required_java_version.as_deref().map(str::to_owned))
     }
 
-    fn resolve_java_path(&self, instance: InstanceId, internal: mpsc::UnboundedSender<BackendEvent>) {
+    fn resolve_java_path(
+        &self,
+        instance: InstanceId,
+        internal: mpsc::UnboundedSender<BackendEvent>,
+    ) {
         if self.is_local_install_in_progress(&instance) {
             return;
         }
@@ -1564,7 +1570,8 @@ impl BackendState {
         self.emit_snapshot(&tx);
 
         let java_path = settings.java_path.clone();
-        let install_request = self.prepare_install(id.clone(), true, false, tx.clone(), internal.clone());
+        let install_request =
+            self.prepare_install(id.clone(), true, false, tx.clone(), internal.clone());
         let xmx_mb = settings.xmx_mb;
         let jvm_flags = settings.jvm_flags.clone();
         let use_native_glfw = settings.use_native_glfw;
@@ -1585,7 +1592,9 @@ impl BackendState {
             });
             if let Err(err) = install_result {
                 log::error!("Failed to update instance {task_id} on launch: {err}");
-                let _ = internal.send(BackendEvent::LaunchPrepFinished { id: task_id.clone() });
+                let _ = internal.send(BackendEvent::LaunchPrepFinished {
+                    id: task_id.clone(),
+                });
                 let _ = internal.send(BackendEvent::LaunchFinished {
                     id: task_id,
                     exit: launcher_bridge::ExitOutcome::Error(err),
@@ -1608,14 +1617,12 @@ impl BackendState {
                     frontend.clone(),
                     internal.clone(),
                 );
-                let java = install::resolve_java(
-                    &metadata,
-                    &data_dir,
-                    java_path.as_deref(),
-                    &progress,
-                )
-                .await?;
-                let _ = internal.send(BackendEvent::LaunchPrepFinished { id: launch_id.clone() });
+                let java =
+                    install::resolve_java(&metadata, &data_dir, java_path.as_deref(), &progress)
+                        .await?;
+                let _ = internal.send(BackendEvent::LaunchPrepFinished {
+                    id: launch_id.clone(),
+                });
                 launch::launch_instance(launch::LaunchRequest {
                     id: launch_id.clone(),
                     account,
@@ -1639,7 +1646,9 @@ impl BackendState {
                         let _ =
                             internal.send(BackendEvent::LaunchAccountUpdated { provider, account });
                     }
-                    let _ = internal.send(BackendEvent::LaunchStarted { id: launch_id.clone() });
+                    let _ = internal.send(BackendEvent::LaunchStarted {
+                        id: launch_id.clone(),
+                    });
                     let mut child = start.child;
                     let exit = tokio::select! {
                         status = child.wait() => exit_outcome(status),
@@ -1649,11 +1658,16 @@ impl BackendState {
                             launcher_bridge::ExitOutcome::Terminated
                         }
                     };
-                    let _ = internal.send(BackendEvent::LaunchFinished { id: launch_id.clone(), exit });
+                    let _ = internal.send(BackendEvent::LaunchFinished {
+                        id: launch_id.clone(),
+                        exit,
+                    });
                 }
                 Err(err) => {
                     log::error!("Failed to launch instance {launch_id}: {err:#}");
-                    let _ = internal.send(BackendEvent::LaunchPrepFinished { id: launch_id.clone() });
+                    let _ = internal.send(BackendEvent::LaunchPrepFinished {
+                        id: launch_id.clone(),
+                    });
                     let _ = internal.send(BackendEvent::LaunchFinished {
                         id: launch_id.clone(),
                         exit: launcher_bridge::ExitOutcome::Error(Arc::<str>::from(format!(

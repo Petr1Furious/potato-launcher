@@ -243,7 +243,9 @@ impl InstanceDirFS {
     }
 
     pub fn local_instance_descriptor_path(&self) -> PathBuf {
-        self.rel.local_instance_descriptor_path().to_fs(&self.data_dir)
+        self.rel
+            .local_instance_descriptor_path()
+            .to_fs(&self.data_dir)
     }
 
     pub fn settings_path(&self) -> PathBuf {

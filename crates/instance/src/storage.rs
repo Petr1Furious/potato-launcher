@@ -234,7 +234,9 @@ impl InstanceStorage {
             if !path.is_dir() {
                 continue;
             }
-            let Some(dir_name) = path.file_name().map(|name| name.to_string_lossy().to_string())
+            let Some(dir_name) = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
             else {
                 continue;
             };
@@ -292,7 +294,9 @@ impl InstanceStorage {
     }
 
     pub fn get_mut(&mut self, id: &InstanceId) -> Option<&mut LocalInstance> {
-        self.instances.iter_mut().find(|instance| &instance.id == id)
+        self.instances
+            .iter_mut()
+            .find(|instance| &instance.id == id)
     }
 
     pub fn allocate_dir_name(&self, base: &str) -> String {
@@ -564,11 +568,8 @@ mod tests {
             name_in_manifest: "Configured".to_string(),
         };
         let id = InstanceId::remote(&source.manifest_url, &source.name_in_manifest);
-        let instance = LocalInstance::new_pending_remote(
-            id.clone(),
-            "Configured".to_string(),
-            source.clone(),
-        );
+        let instance =
+            LocalInstance::new_pending_remote(id.clone(), "Configured".to_string(), source.clone());
         storage.add(&data_dir, instance).await.unwrap();
 
         let settings = InstanceUserSettings {
@@ -578,7 +579,9 @@ mod tests {
         let configured_dir = InstancesDir::root()
             .instance_dir("Configured")
             .with_data_dir(data_dir.clone());
-        save_instance_settings(&configured_dir, &settings).await.unwrap();
+        save_instance_settings(&configured_dir, &settings)
+            .await
+            .unwrap();
 
         let loaded = InstanceStorage::load(&data_dir).await.unwrap();
         let pending = loaded.get(&id).unwrap();
