@@ -613,11 +613,16 @@ impl InstanceGenerator {
                                 source: object.path.to_path(source_dir),
                                 target: object.path.to_path(instance_dir.minecraft_dir()),
                             }));
+                            existing_paths
+                                .get_mut(&overwrite)
+                                .expect("overwrite key initialized")
+                                .extend(
+                                    objects.iter().map(|object| object.path.to_path(source_dir)),
+                                );
                             action.objects = objects;
                         }
                         IncludeAction::ConfigOptions(..) => {}
                     }
-                    // TODO: include all the files for Directory
                     existing_paths
                         .get_mut(&overwrite)
                         .expect("overwrite key initialized")

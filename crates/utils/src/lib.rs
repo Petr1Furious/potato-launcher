@@ -7,6 +7,7 @@ pub mod logging;
 pub mod mod_id;
 pub mod paths;
 pub mod progress;
+pub mod vec_either_untagged;
 
 use std::collections::HashSet;
 
