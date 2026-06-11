@@ -232,7 +232,9 @@ async fn normalize_copied_file_mode(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(unix))]
-async fn normalize_copied_file_mode(_path: &Path) -> io::Result<()> {}
+async fn normalize_copied_file_mode(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum GetDownloadTasksError {
@@ -275,12 +277,13 @@ pub async fn get_download_task(
     }
 
     if let Some(remote_sha1) = &check_task.remote_sha1
-        && (remote_sha1.is_empty() || &hash_file(&check_task.path).await? != remote_sha1) {
-            return Ok(Some(DownloadTask {
-                url: check_task.url.clone(),
-                path: check_task.path.clone(),
-            }));
-        }
+        && (remote_sha1.is_empty() || &hash_file(&check_task.path).await? != remote_sha1)
+    {
+        return Ok(Some(DownloadTask {
+            url: check_task.url.clone(),
+            path: check_task.path.clone(),
+        }));
+    }
 
     Ok(None)
 }

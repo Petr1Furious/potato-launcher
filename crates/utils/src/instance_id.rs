@@ -53,11 +53,10 @@ pub fn slugify_local_dir_name(name: &str) -> String {
                 last_was_sep = false;
                 slug.push(ch.to_ascii_lowercase());
             }
-            ' ' | '_' | '-' | '.'
-                if !slug.is_empty() && !last_was_sep => {
-                    slug.push('-');
-                    last_was_sep = true;
-                }
+            ' ' | '_' | '-' | '.' if !slug.is_empty() && !last_was_sep => {
+                slug.push('-');
+                last_was_sep = true;
+            }
             _ => {}
         }
     }
