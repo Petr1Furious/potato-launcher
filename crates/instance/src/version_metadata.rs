@@ -512,7 +512,7 @@ impl Library {
                     .get_url()?
                     .join(self.get_rel_path()?.as_str())
                     .map_err(|source| self.map_url_error(source))?,
-                remote_size: self.size.clone(),
+                remote_size: self.size,
                 remote_sha1: self.sha1.clone(),
                 path: self.get_path(data_dir)?,
             }))

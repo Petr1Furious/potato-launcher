@@ -274,14 +274,13 @@ pub async fn get_download_task(
         }));
     }
 
-    if let Some(remote_sha1) = &check_task.remote_sha1 {
-        if remote_sha1.is_empty() || &hash_file(&check_task.path).await? != remote_sha1 {
+    if let Some(remote_sha1) = &check_task.remote_sha1
+        && (remote_sha1.is_empty() || &hash_file(&check_task.path).await? != remote_sha1) {
             return Ok(Some(DownloadTask {
                 url: check_task.url.clone(),
                 path: check_task.path.clone(),
             }));
         }
-    }
 
     Ok(None)
 }

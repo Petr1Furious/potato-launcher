@@ -670,7 +670,7 @@ impl BackendState {
     ) -> install::InstallRequest {
         let optional_mod_preferences = self.load_settings_for_id(&handle).optional_mod_sets;
         install::InstallRequest {
-            handle: handle,
+            handle,
             cause: if is_run {
                 InstallCause::Run
             } else {

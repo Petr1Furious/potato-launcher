@@ -346,7 +346,7 @@ async fn get_extra_forge_libs(
         .collect::<Vec<_>>();
     let hashes = files::hash_files(&paths_to_hash, progress::no_progress_bar()).await?;
 
-    Ok(parsed_libs
+    parsed_libs
         .into_iter()
         .zip(hashes)
         .map(|(lib, sha1)| {
@@ -356,7 +356,7 @@ async fn get_extra_forge_libs(
             let size = lib.source_path.metadata()?.len();
             Ok(Library::from_download(lib.gav, url, sha1, size))
         })
-        .collect::<Result<Vec<_>, GetExtraForgeLibsError>>()?)
+        .collect::<Result<Vec<_>, GetExtraForgeLibsError>>()
 }
 
 fn vanilla() -> Loader {
