@@ -22,7 +22,7 @@ impl Processor {
                     .update(cx, |entries, cx| entries.replace(instances, cx));
             }
             MessageToFrontend::InstanceProgress {
-                id,
+                handle,
                 stage,
                 current,
                 total,
@@ -30,7 +30,7 @@ impl Processor {
             } => {
                 self.data.instances.update(cx, |entries, cx| {
                     entries.set_progress(
-                        InstanceProgressUpdate::new(id, stage, current, total, message),
+                        InstanceProgressUpdate::new(handle, stage, current, total, message),
                         cx,
                     );
                 });

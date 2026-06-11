@@ -9,6 +9,8 @@ use utils::{
     paths::{DataDir, InstanceDirFS, VersionsDir},
 };
 
+use crate::localized::LocalizedString;
+
 #[derive(thiserror::Error, Debug)]
 pub enum ManifestError {
     #[error("network request failed while fetching manifest: {0}")]
@@ -122,7 +124,9 @@ impl VersionMetadataInfo {
 /// This is used to get instance metadata.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct InstanceManifestEntry {
-    pub name: String,
+    pub id: String,
+    #[serde(default)]
+    pub display_name: Option<LocalizedString>,
     pub url: Url,
     pub sha1: String,
     /// Must always match `InstanceMetadata.auth_backend` for the entry's metadata.

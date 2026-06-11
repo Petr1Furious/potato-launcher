@@ -8,7 +8,7 @@ use generate::instance::{InstanceGenerator, InstanceSpec, Loader};
 use instance::{
     instance_metadata::{InstallCause, InstallParams, ResourceSyncMode},
     mod_sync::ModSyncSettings,
-    storage::{InstanceId, InstanceStorage, LocalInstance, sanitize_dir_name},
+    storage::{InstanceHandle, InstanceStorage, LocalInstance, allocate_local_dir_name},
     version_metadata::OsArch,
 };
 use launcher_bridge::LocalLoader;
@@ -35,7 +35,7 @@ pub(crate) struct CreateLocalParams {
 }
 
 pub(crate) struct CreateLocalRequest {
-    pub id: InstanceId,
+    pub handle: InstanceHandle,
     pub dir_name: String,
     pub minecraft_version: String,
     pub loader: LocalLoader,
@@ -60,29 +60,19 @@ pub(crate) fn validate_create_local(
         ));
     }
 
-    let sanitized = sanitize_dir_name(name);
-    let taken = storage
+    let mut taken = storage
         .iter()
         .map(|instance| instance.dir_name.as_str())
         .collect::<HashSet<_>>();
-    if taken.contains(sanitized.as_str()) {
-        return Err(Arc::from(
-            launcher_i18n::notifications::local_instance_name_exists(name.to_string()),
-        ));
-    }
-
     for state in catalogs.values() {
         let Some(manifest) = state.manifest() else {
             continue;
         };
         for entry in &manifest.instances {
-            if entry.name == name || entry.name == sanitized {
-                return Err(Arc::from(
-                    launcher_i18n::notifications::local_instance_name_exists(name.to_string()),
-                ));
-            }
+            taken.insert(entry.id.as_str());
         }
     }
+    let dir_name = allocate_local_dir_name(&taken, name);
 
     match loader {
         LocalLoader::Vanilla | LocalLoader::Fabric => {}
@@ -98,7 +88,7 @@ pub(crate) fn validate_create_local(
         }
     }
 
-    Ok(sanitized)
+    Ok(dir_name)
 }
 
 fn map_loader(loader: LocalLoader) -> Loader {
@@ -126,7 +116,7 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     instance_dir.ensure_dir();
 
     let progress = BackendProgressReporter::new(
-        request.id.clone(),
+        request.handle.clone(),
         request.frontend.clone(),
         request.internal,
     );
@@ -141,7 +131,8 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     let result = InstanceGenerator {
         client: request.client.clone(),
         spec: InstanceSpec {
-            name: request.dir_name.clone(),
+            id: request.dir_name.clone(),
+            display_name: None,
             minecraft_version: request.minecraft_version.trim().to_string(),
             mod_loader: map_loader(request.loader),
             loader_version: request
@@ -205,7 +196,7 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
 
     resolve_java(&metadata, &data_dir, None, &progress).await?;
 
-    let instance = LocalInstance::new_local_with_id(request.id, request.dir_name);
+    let instance = LocalInstance::new_local_with_handle(request.handle, request.dir_name);
 
     Ok(InstallOutput { instance })
 }

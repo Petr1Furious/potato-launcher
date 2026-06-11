@@ -13,7 +13,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (event: 'select', name: string): void;
+  (event: 'select', id: string): void;
   (event: 'new'): void;
   (event: 'show-settings'): void;
   (event: 'logout'): void;
@@ -45,9 +45,9 @@ const emit = defineEmits<{
           <p>Existing Instances</p>
           <p v-if="props.instances.length === 0">No instances yet</p>
           <div v-else class="space-y-2">
-            <Button v-for="instance in props.instances" :key="instance.name" class="w-full justify-between"
-              @click="emit('select', instance.name)">
-              <span>{{ instance.name }}</span>
+            <Button v-for="instance in props.instances" :key="instance.id" class="w-full justify-between"
+              @click="emit('select', instance.id)">
+              <span>{{ instance.id }}</span>
               <span>{{ instance.minecraft_version }}</span>
             </Button>
           </div>

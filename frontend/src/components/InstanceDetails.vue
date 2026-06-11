@@ -3,21 +3,21 @@ import { computed, ref, watch } from 'vue';
 import { Pencil, Trash2 } from 'lucide-vue-next';
 import DeleteConfirmModal from './DeleteConfirmModal.vue';
 import { apiService, formatError } from '@/services/api';
-import type { AuthBackend, InstanceBase, InstanceResponse } from '@/types/api';
+import type { AuthBackend, InstanceBase, InstanceResponse, LocalizedString } from '@/types/api';
 import { AuthType, ContentRuleType, LoaderType } from '@/types/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { contentRulesToPayload, useInstanceForm } from '@/composables/useInstanceForm';
 import InstanceFormFields from '@/components/InstanceFormFields.vue';
 import { useNotification } from '@/composables/useNotification';
-
+import { validateInstanceId, validateOptionalModSetIds } from '@/utils/instanceId';
 const props = defineProps<{
   instance: InstanceResponse;
 }>();
 
 const emit = defineEmits<{
-  (event: 'updated', payload: { name: string; data: Partial<InstanceResponse> }): void;
-  (event: 'deleted', name: string): void;
+  (event: 'updated', payload: { id: string; data: Partial<InstanceResponse> }): void;
+  (event: 'deleted', id: string): void;
 }>();
 
 const { showError } = useNotification();
@@ -25,7 +25,8 @@ const { showError } = useNotification();
 type EditableFields = InstanceBase;
 
 const toEditableFields = (instance: InstanceResponse): EditableFields => ({
-  name: instance.name,
+  id: instance.id,
+  display_name: instance.display_name,
   minecraft_version: instance.minecraft_version,
   mod_loader: instance.mod_loader,
   loader_version: instance.loader_version,
@@ -86,7 +87,7 @@ const setEditDataFromProps = () => {
 };
 
 watch(
-  () => props.instance.name,
+  () => props.instance.id,
   () => {
     isEditing.value = false;
     showDeleteConfirm.value = false;
@@ -113,7 +114,8 @@ const handleCancel = () => {
 
 const buildPayload = (): InstanceBase => {
   const payload: InstanceBase = {
-    name: editData.name,
+    id: editData.id,
+    display_name: editData.display_name,
     minecraft_version: editData.minecraft_version,
     mod_loader: editData.mod_loader,
     loader_version: editData.loader_version,
@@ -140,11 +142,19 @@ const buildPayload = (): InstanceBase => {
 };
 
 const handleUpdate = async () => {
+  const idError = validateInstanceId(editData.id);
+  const optionalSetErrors = validateOptionalModSetIds(editData.mod_sync.optional_sets);
+  if (idError || Object.keys(optionalSetErrors).length > 0) {
+    const message = idError ?? Object.values(optionalSetErrors)[0];
+    showError(message ?? 'Invalid instance configuration');
+    return;
+  }
+
   updating.value = true;
   try {
     const payload = buildPayload();
-    const updated = await apiService.updateInstance(props.instance.name, payload);
-    emit('updated', { name: props.instance.name, data: updated });
+    const updated = await apiService.updateInstance(props.instance.id, payload);
+    emit('updated', { id: props.instance.id, data: updated });
     handleCancel();
   } catch (err) {
     const message = formatError(err, 'Failed to update instance');
@@ -156,11 +166,14 @@ const handleUpdate = async () => {
 };
 
 const handleDelete = () => {
-  emit('deleted', props.instance.name);
+  emit('deleted', props.instance.id);
   showDeleteConfirm.value = false;
 };
 
-const updateField = (field: keyof EditableFields, value: string | LoaderType | EditableFields['resource_sync']) => {
+const updateField = (
+  field: keyof EditableFields,
+  value: string | LoaderType | EditableFields['resource_sync'] | LocalizedString | undefined,
+) => {
   setFieldValue(field, value);
 };
 
@@ -170,7 +183,7 @@ const updateAuthField = (field: keyof AuthBackend, value: string | AuthType) => 
 
 const authTypeLabel = computed(() => editData.auth_backend.type);
 
-const filebrowserUrl = computed(() => `/filebrowser/files/${props.instance.name}`);
+const filebrowserUrl = computed(() => `/filebrowser/files/${props.instance.id}`);
 
 const formatRuleFlags = (rule: NonNullable<InstanceResponse['content_rules']>[number]) => {
   const flags: string[] = [];
@@ -199,7 +212,7 @@ const formatRuleFlags = (rule: NonNullable<InstanceResponse['content_rules']>[nu
       <CardHeader>
         <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <CardTitle>{{ isEditing ? 'Edit Instance' : props.instance.name }}</CardTitle>
+            <CardTitle>{{ isEditing ? 'Edit Instance' : props.instance.id }}</CardTitle>
             <CardDescription>
               {{
                 isEditing
@@ -217,7 +230,8 @@ const formatRuleFlags = (rule: NonNullable<InstanceResponse['content_rules']>[nu
               :available-loaders="availableLoaders" :loader-versions="loaderVersions"
               :loading-minecraft-versions="loadingMinecraftVersions" :loading-loaders="loadingLoaders"
               :loading-loader-versions="loadingLoaderVersions" :disabled="updating"
-              :mod-id-list-to-string="modIdListToString" @update-field="updateField"
+              :mod-id-list-to-string="modIdListToString"
+              @update-field="updateField"
               @update-auth-field="updateAuthField" @update-mod-sync-mode="handleModSyncModeChange"
               @update-mod-id-list="updateModIdList" @add-content-rule="addContentRule"
               @remove-content-rule="removeContentRule" @update-content-rule="updateContentRule"
@@ -246,6 +260,20 @@ const formatRuleFlags = (rule: NonNullable<InstanceResponse['content_rules']>[nu
             <div>
               <dt class="text-sm">Minecraft Version</dt>
               <dd class="text-sm font-medium">{{ props.instance.minecraft_version }}</dd>
+            </div>
+            <div v-if="props.instance.display_name" class="sm:col-span-2">
+              <dt class="text-sm">Display Name</dt>
+              <dd v-if="typeof props.instance.display_name === 'string'" class="text-sm font-medium wrap-break-word">
+                {{ props.instance.display_name }}
+              </dd>
+              <dd v-else class="text-sm font-medium">
+                <ul class="space-y-1">
+                  <li v-for="(text, language) in props.instance.display_name" :key="language">
+                    <span class="font-mono text-xs text-muted-foreground">{{ language }}</span>
+                    <span class="ml-2">{{ text }}</span>
+                  </li>
+                </ul>
+              </dd>
             </div>
             <div>
               <dt class="text-sm">Mod Loader</dt>
@@ -313,7 +341,17 @@ const formatRuleFlags = (rule: NonNullable<InstanceResponse['content_rules']>[nu
               <dd class="text-sm font-medium">
                 <div class="border rounded-md divide-y">
                   <div v-for="set in props.instance.mod_sync.optional_sets" :key="set.id" class="p-3">
-                    <div class="font-medium">{{ set.display_name || set.id }}</div>
+                    <div class="font-medium">
+                      <template v-if="typeof set.display_name === 'string'">
+                        {{ set.display_name || set.id }}
+                      </template>
+                      <ul v-else class="space-y-0.5">
+                        <li v-for="(text, language) in set.display_name" :key="language">
+                          <span class="font-mono text-xs text-muted-foreground">{{ language }}</span>
+                          <span class="ml-2">{{ text }}</span>
+                        </li>
+                      </ul>
+                    </div>
                     <div class="text-xs text-muted-foreground">{{ set.mod_ids.join(', ') }}</div>
                   </div>
                 </div>
@@ -339,7 +377,7 @@ const formatRuleFlags = (rule: NonNullable<InstanceResponse['content_rules']>[nu
         </template>
       </CardContent>
     </Card>
-    <DeleteConfirmModal :is-open="showDeleteConfirm" :instance-name="props.instance.name" @confirm="handleDelete"
+    <DeleteConfirmModal :is-open="showDeleteConfirm" :instance-name="props.instance.id" @confirm="handleDelete"
       @cancel="showDeleteConfirm = false" />
   </div>
 </template>

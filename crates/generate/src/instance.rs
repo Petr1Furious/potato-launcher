@@ -3,6 +3,7 @@ use instance::{
     instance_metadata::{
         ContentRule, InstanceMetadata, ModEntry, Object, ResourceSyncMode, RuleKind,
     },
+    localized::LocalizedString,
     manifest::VanillaVersionManifest,
     mod_sync::ModSyncSettings,
     overrides::with_overrides,
@@ -364,7 +365,8 @@ fn vanilla() -> Loader {
 
 #[derive(Deserialize, Clone)]
 pub struct InstanceSpec {
-    pub name: String,
+    pub id: String,
+    pub display_name: Option<LocalizedString>,
     pub minecraft_version: String,
     #[serde(default = "vanilla")]
     pub mod_loader: Loader,
@@ -683,7 +685,8 @@ impl InstanceGenerator {
 
         Ok(GeneratorResult {
             metadata: InstanceMetadata {
-                name: self.spec.name,
+                id: self.spec.id,
+                display_name: self.spec.display_name,
                 auth_backend: self.spec.auth_backend,
                 content_rules,
                 mod_entries,

@@ -97,9 +97,8 @@ fn sanitize_json_control_chars(content: &str) -> String {
 }
 
 fn parse_json_lenient(content: &str) -> Result<Value, serde_json::Error> {
-    serde_json::from_str(content).or_else(|_| {
-        serde_json::from_str(&sanitize_json_control_chars(content))
-    })
+    serde_json::from_str(content)
+        .or_else(|_| serde_json::from_str(&sanitize_json_control_chars(content)))
 }
 
 fn read_fabric_mod_id<R: Read + std::io::Seek>(

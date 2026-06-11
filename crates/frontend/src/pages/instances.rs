@@ -19,7 +19,7 @@ use gpui_component::{
     skeleton::Skeleton,
     v_flex,
 };
-use instance::storage::{InstanceId, sanitize_dir_name};
+use instance::storage::{InstanceHandle, allocate_local_dir_name};
 use launcher_auth::providers::{
     AuthProviderConfig, ElyByAuthProvider, MicrosoftAuthProvider, TGAuthProvider,
 };
@@ -46,15 +46,15 @@ use crate::entity::{
 
 pub struct InstancesPage {
     data: DataEntities,
-    selected_instance: Option<InstanceId>,
+    selected_instance: Option<InstanceHandle>,
     show_global_settings: bool,
     show_backend_settings: bool,
     show_accounts_panel: bool,
     show_create_local_modal: bool,
     create_local_loader: LocalLoader,
     preferred_add_provider: Option<AuthProviderConfig>,
-    pending_delete: Option<InstanceId>,
-    hidden_launches: HashSet<InstanceId>,
+    pending_delete: Option<InstanceHandle>,
+    hidden_launches: HashSet<InstanceHandle>,
     backend_url_input: gpui::Entity<InputState>,
     offline_nickname_input: gpui::Entity<InputState>,
     telegram_base_url_input: gpui::Entity<InputState>,
@@ -70,7 +70,7 @@ pub struct InstancesPage {
     create_local_sync_mc_dropdown: bool,
     create_local_sync_loader_dropdown: bool,
     java_path_input: gpui::Entity<InputState>,
-    java_path_last_instance: Option<InstanceId>,
+    java_path_last_instance: Option<InstanceHandle>,
     java_path_last_stored: Option<Arc<str>>,
     _instances_subscription: gpui::Subscription,
     _backends_subscription: gpui::Subscription,
@@ -122,13 +122,13 @@ impl InstancesPage {
             window,
             move |page, _, _: &InstancesUpdatedEvent, window, cx| {
                 let current = page.selected_instance.clone();
-                let stored = current.as_ref().and_then(|id| {
+                let stored = current.as_ref().and_then(|handle| {
                     page.data
                         .instances
                         .read(cx)
                         .entries
                         .iter()
-                        .find(|v| &v.id == id)
+                        .find(|v| &v.handle == handle)
                         .and_then(|v| v.java_path.clone())
                 });
                 if current != page.java_path_last_instance || stored != page.java_path_last_stored {
@@ -262,16 +262,16 @@ impl Render for InstancesPage {
             && let Some(instance) = instances
                 .iter()
                 .find(|instance| matches!(instance.status, InstanceLiveStatus::Launching))
-            && self.hidden_launches.insert(instance.id.clone())
+            && self.hidden_launches.insert(instance.handle.clone())
         {
             window.minimize_window();
         }
-        let finished_hidden: Vec<InstanceId> = self
+        let finished_hidden: Vec<InstanceHandle> = self
             .hidden_launches
             .iter()
-            .filter(|id| {
+            .filter(|handle| {
                 !instances.iter().any(|instance| {
-                    &instance.id == *id
+                    &instance.handle == *handle
                         && matches!(
                             instance.status,
                             InstanceLiveStatus::Launching | InstanceLiveStatus::Running
@@ -280,9 +280,9 @@ impl Render for InstancesPage {
             })
             .cloned()
             .collect();
-        self.hidden_launches.retain(|id| {
+        self.hidden_launches.retain(|handle| {
             instances.iter().any(|instance| {
-                &instance.id == id
+                &instance.handle == handle
                     && matches!(
                         instance.status,
                         InstanceLiveStatus::Launching | InstanceLiveStatus::Running
@@ -297,7 +297,7 @@ impl Render for InstancesPage {
         if self
             .selected_instance
             .as_ref()
-            .is_some_and(|id| !instances.iter().any(|instance| &instance.id == id))
+            .is_some_and(|handle| !instances.iter().any(|instance| &instance.handle == handle))
         {
             self.selected_instance = None;
         }
@@ -370,12 +370,13 @@ impl Render for InstancesPage {
             .when(self.show_create_local_modal, |this| {
                 this.child(self.create_local_modal(window, cx))
             });
-        let side_panel = if let Some(selected) = self.selected_instance.as_ref().and_then(|id| {
-            instances
-                .iter()
-                .find(|instance| &instance.id == id)
-                .cloned()
-        }) {
+        let side_panel = if let Some(selected) =
+            self.selected_instance.as_ref().and_then(|handle| {
+                instances
+                    .iter()
+                    .find(|instance| &instance.handle == handle)
+                    .cloned()
+            }) {
             Some(
                 self.settings_panel(selected, accounts.clone(), cx)
                     .into_any_element(),
@@ -457,7 +458,7 @@ impl InstancesPage {
             .filter(|(_, version_type)| {
                 self.create_local_show_snapshots || version_type != "snapshot"
             })
-            .map(|(id, _)| SharedString::from(id.as_str()))
+            .map(|(handle, _)| SharedString::from(handle.as_str()))
             .collect()
     }
 
@@ -575,8 +576,23 @@ impl InstancesPage {
         let loader_error = local_create_state.loader_error.clone();
         let show_snapshots = self.create_local_show_snapshots;
         let instances = self.data.instances.read(cx).entries.clone();
-        let form_issue = create_local_form_issue(self, &instances, cx);
+        let form_issue = create_local_form_issue(self, cx);
         let form_valid = form_issue.is_none();
+        let folder_preview = {
+            let name = self
+                .create_local_name_input
+                .read(cx)
+                .value()
+                .trim()
+                .to_string();
+            (!name.is_empty()).then(|| {
+                let taken = instances
+                    .iter()
+                    .map(|instance| instance.dir_name.as_ref())
+                    .collect::<HashSet<_>>();
+                allocate_local_dir_name(&taken, &name)
+            })
+        };
 
         let version_section = if let Some(error) = minecraft_error {
             v_flex()
@@ -674,7 +690,15 @@ impl InstancesPage {
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child(t::local::instance_name()))
-                            .child(Input::new(&name_input)),
+                            .child(Input::new(&name_input))
+                            .when_some(folder_preview.clone(), |this, dir_name| {
+                                this.child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(t::local::folder_name_preview(dir_name)),
+                                )
+                            }),
                     )
                     .child(
                         v_flex()
@@ -741,11 +765,7 @@ impl InstancesPage {
                                     .on_click({
                                         let sender = sender.clone();
                                         cx.listener(move |page, _, _, cx| {
-                                            let instances =
-                                                page.data.instances.read(cx).entries.clone();
-                                            if create_local_form_issue(page, &instances, cx)
-                                                .is_some()
-                                            {
+                                            if create_local_form_issue(page, cx).is_some() {
                                                 return;
                                             }
                                             let display_name =
@@ -789,7 +809,7 @@ impl InstancesPage {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let sender = self.data.backend_sender.clone();
-        let id = instance.id.clone();
+        let handle = instance.handle.clone();
         let log_path = self
             .data
             .launcher_dir
@@ -888,7 +908,7 @@ impl InstancesPage {
                 t::instances::actions(),
                 action_section(
                     instance.clone(),
-                    self.pending_delete.as_ref() == Some(&id),
+                    self.pending_delete.as_ref() == Some(&handle),
                     sender.clone(),
                     cx,
                 ),
@@ -899,7 +919,7 @@ impl InstancesPage {
                 v_flex()
                     .gap_2()
                     .child(
-                        Button::new(format!("open-instance-folder-{id}"))
+                        Button::new(format!("open-instance-folder-{handle}"))
                             .label(t::instances::open_instance_folder())
                             .disabled(matches!(instance.status, InstanceLiveStatus::NotInstalled))
                             .on_click({
@@ -920,7 +940,7 @@ impl InstancesPage {
                             }),
                     )
                     .child(
-                        Button::new(format!("open-logs-{id}"))
+                        Button::new(format!("open-logs-{handle}"))
                             .label(t::instances::open_latest_launch_log())
                             .on_click({
                                 let notifications = self.data.notifications.clone();
@@ -1260,13 +1280,13 @@ fn local_loader_button(
         LocalLoader::Forge => t::local::loader_forge(),
         LocalLoader::Neoforge => t::local::loader_neoforge(),
     };
-    let id = match loader {
+    let handle = match loader {
         LocalLoader::Vanilla => "vanilla",
         LocalLoader::Fabric => "fabric",
         LocalLoader::Forge => "forge",
         LocalLoader::Neoforge => "neoforge",
     };
-    Button::new(format!("create-local-loader-{id}"))
+    Button::new(format!("create-local-loader-{handle}"))
         .label(label)
         .disabled(selected == loader)
         .on_click(cx.listener(move |page, _, _, cx| {
@@ -1372,23 +1392,23 @@ fn instance_card(
     let status = status_label(&instance);
     let progress = progress_ratio(&instance.status);
     let action = action_button(instance.clone(), sender, cx);
-    let details_id = instance.id.clone();
+    let details_handle = instance.handle.clone();
     let show_dir_name = instance.dir_name.as_ref() != instance.display_name.as_ref();
-    let settings = Button::new(format!("settings-{details_id}"))
+    let settings = Button::new(format!("settings-{details_handle}"))
         .label(t::common::settings())
         .on_click(cx.listener(move |page, _, window, cx| {
             page.show_global_settings = false;
             page.show_backend_settings = false;
             page.show_accounts_panel = false;
-            page.selected_instance = (page.selected_instance.as_ref() != Some(&details_id))
-                .then_some(details_id.clone());
-            let stored = page.selected_instance.as_ref().and_then(|id| {
+            page.selected_instance = (page.selected_instance.as_ref() != Some(&details_handle))
+                .then_some(details_handle.clone());
+            let stored = page.selected_instance.as_ref().and_then(|handle| {
                 page.data
                     .instances
                     .read(cx)
                     .entries
                     .iter()
-                    .find(|v| &v.id == id)
+                    .find(|v| &v.handle == handle)
                     .and_then(|v| v.java_path.clone())
             });
             let value = stored.as_deref().unwrap_or_default().to_owned();
@@ -1547,18 +1567,18 @@ fn action_button(
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
 ) -> Button {
-    let id = instance.id.clone();
+    let handle = instance.handle.clone();
     match instance.status {
-        InstanceLiveStatus::Installing { .. } => Button::new(format!("cancel-{id}"))
+        InstanceLiveStatus::Installing { .. } => Button::new(format!("cancel-{handle}"))
             .label(t::common::cancel())
-            .on_click(move |_, _, _| sender.send(MessageToBackend::CancelInstall(id.clone()))),
+            .on_click(move |_, _, _| sender.send(MessageToBackend::CancelInstall(handle.clone()))),
         InstanceLiveStatus::NotInstalled | InstanceLiveStatus::Outdated => {
             if matches!(instance.origin, InstanceOrigin::Local) {
-                Button::new(format!("local-unavailable-{id}"))
+                Button::new(format!("local-unavailable-{handle}"))
                     .label(t::instances::install())
                     .disabled(true)
             } else {
-                Button::new(format!("install-{id}"))
+                Button::new(format!("install-{handle}"))
                     .label(if matches!(instance.status, InstanceLiveStatus::Outdated) {
                         t::instances::update()
                     } else {
@@ -1566,22 +1586,22 @@ fn action_button(
                     })
                     .on_click(move |_, _, _| {
                         sender.send(MessageToBackend::InstallInstance {
-                            id: id.clone(),
+                            handle: handle.clone(),
                             force_overwrite: false,
                         });
                     })
             }
         }
-        InstanceLiveStatus::Launching => Button::new(format!("launching-{id}"))
+        InstanceLiveStatus::Launching => Button::new(format!("launching-{handle}"))
             .label(t::instances::launching())
             .disabled(true),
-        InstanceLiveStatus::Running => Button::new(format!("kill-{id}"))
+        InstanceLiveStatus::Running => Button::new(format!("kill-{handle}"))
             .label(t::instances::kill())
-            .on_click(move |_, _, _| sender.send(MessageToBackend::KillInstance(id.clone()))),
+            .on_click(move |_, _, _| sender.send(MessageToBackend::KillInstance(handle.clone()))),
         InstanceLiveStatus::Installed | InstanceLiveStatus::OrphanedFromBackend => {
             if instance.launch_blocked_reason.is_some() {
                 let provider = instance.auth_provider.clone();
-                return Button::new(format!("add-account-{id}"))
+                return Button::new(format!("add-account-{handle}"))
                     .label(t::accounts::add_account_section())
                     .on_click(cx.listener(move |page, _, _, cx| {
                         if let Some(provider) = provider.clone() {
@@ -1594,34 +1614,34 @@ fn action_button(
                         }
                     }));
             }
-            Button::new(format!("play-{id}"))
+            Button::new(format!("play-{handle}"))
                 .label(t::instances::play())
                 .on_click(move |_, _, _| {
                     sender.send(MessageToBackend::Launch {
-                        instance: id.clone(),
+                        instance: handle.clone(),
                         account: None,
                     });
                 })
         }
         InstanceLiveStatus::InstallFailed(_) => {
             if matches!(instance.origin, InstanceOrigin::Local) {
-                Button::new(format!("retry-failed-local-{id}"))
+                Button::new(format!("retry-failed-local-{handle}"))
                     .label(t::common::retry())
                     .on_click(move |_, _, _| {
-                        sender.send(MessageToBackend::RetryCreateLocal(id.clone()))
+                        sender.send(MessageToBackend::RetryCreateLocal(handle.clone()))
                     })
             } else {
-                Button::new(format!("retry-{id}"))
+                Button::new(format!("retry-{handle}"))
                     .label(t::common::retry())
                     .on_click(move |_, _, _| {
                         sender.send(MessageToBackend::InstallInstance {
-                            id: id.clone(),
+                            handle: handle.clone(),
                             force_overwrite: false,
                         });
                     })
             }
         }
-        InstanceLiveStatus::LaunchFailed(_) => Button::new(format!("play-again-{id}"))
+        InstanceLiveStatus::LaunchFailed(_) => Button::new(format!("play-again-{handle}"))
             .label(if instance.launch_blocked_reason.is_some() {
                 t::instances::add_account()
             } else {
@@ -1642,7 +1662,7 @@ fn action_button(
                         }
                     } else {
                         sender.send(MessageToBackend::Launch {
-                            instance: id.clone(),
+                            instance: handle.clone(),
                             account: None,
                         });
                     }
@@ -1739,7 +1759,7 @@ fn account_detail_sections(
             .when(matching_accounts.is_empty(), |this| {
                 let sender = sender.clone();
                 this.child(
-                    Button::new(format!("add-required-account-{}", instance.id))
+                    Button::new(format!("add-required-account-{}", instance.handle))
                         .label(t::instances::add_account())
                         .on_click(cx.listener(move |page, _, _, cx| {
                             start_add_required_account(
@@ -1804,7 +1824,7 @@ fn account_select_row(
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
     let selected = account_is_selected(instance, &account, override_account);
-    let instance_id = instance.id.clone();
+    let instance_handle = instance.handle.clone();
     let key = account.key.clone();
     h_flex()
         .gap_2()
@@ -1829,12 +1849,12 @@ fn account_select_row(
             .on_click(move |_, _, _| {
                 if override_account {
                     sender.send(MessageToBackend::SetInstanceAccountOverride {
-                        instance: instance_id.clone(),
+                        instance: instance_handle.clone(),
                         account: Some(key.clone()),
                     });
                 } else {
                     sender.send(MessageToBackend::SetInstanceSelectedAccount {
-                        instance: instance_id.clone(),
+                        instance: instance_handle.clone(),
                         account: Some(key.clone()),
                     });
                 }
@@ -1863,7 +1883,7 @@ fn runtime_section(
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
-    let id = instance.id.clone();
+    let handle = instance.handle.clone();
     v_flex()
         .gap_3()
         .child(
@@ -1879,30 +1899,30 @@ fn runtime_section(
                 .gap_2()
                 .child(Input::new(&memory_input))
                 .child(
-                    Button::new(format!("save-memory-{id}"))
+                    Button::new(format!("save-memory-{handle}"))
                         .label(t::instances::set_memory())
                         .on_click({
                             let input = memory_input.clone();
                             let sender = sender.clone();
-                            let id = id.clone();
+                            let handle = handle.clone();
                             move |_, _, cx| {
                                 let value = input.read(cx).value().trim().parse::<u64>().ok();
                                 sender.send(MessageToBackend::SetInstanceMemory {
-                                    instance: id.clone(),
+                                    instance: handle.clone(),
                                     xmx_mb: value,
                                 });
                             }
                         }),
                 )
                 .child(
-                    Button::new(format!("clear-memory-{id}"))
+                    Button::new(format!("clear-memory-{handle}"))
                         .label(t::common::default())
                         .on_click({
                             let sender = sender.clone();
-                            let id = id.clone();
+                            let handle = handle.clone();
                             move |_, _, _| {
                                 sender.send(MessageToBackend::SetInstanceMemory {
-                                    instance: id.clone(),
+                                    instance: handle.clone(),
                                     xmx_mb: None,
                                 });
                             }
@@ -1929,30 +1949,30 @@ fn runtime_section(
                         .gap_2()
                         .child(Input::new(&jvm_flags_input))
                         .child(
-                            Button::new(format!("save-jvm-flags-{id}"))
+                            Button::new(format!("save-jvm-flags-{handle}"))
                                 .label(t::instances::set_flags())
                                 .on_click({
                                     let input = jvm_flags_input.clone();
                                     let sender = sender.clone();
-                                    let id = id.clone();
+                                    let handle = handle.clone();
                                     move |_, _, cx| {
                                         let value = input.read(cx).value().to_string();
                                         sender.send(MessageToBackend::SetInstanceJvmFlags {
-                                            instance: id.clone(),
+                                            instance: handle.clone(),
                                             flags: Some(value),
                                         });
                                     }
                                 }),
                         )
                         .child(
-                            Button::new(format!("clear-jvm-flags-{id}"))
+                            Button::new(format!("clear-jvm-flags-{handle}"))
                                 .label(t::common::default())
                                 .on_click({
                                     let sender = sender.clone();
-                                    let id = id.clone();
+                                    let handle = handle.clone();
                                     move |_, _, _| {
                                         sender.send(MessageToBackend::SetInstanceJvmFlags {
-                                            instance: id.clone(),
+                                            instance: handle.clone(),
                                             flags: None,
                                         });
                                     }
@@ -1976,7 +1996,7 @@ fn java_section(
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
-    let id = instance.id.clone();
+    let handle = instance.handle.clone();
     let local_install_in_progress =
         matches!(instance.origin, InstanceOrigin::Local) && !instance.locally_installed;
 
@@ -1997,7 +2017,7 @@ fn java_section(
             )
         })
         .when(!local_install_in_progress, |this| {
-            let resolve_state = java_resolve.read(cx).state(&id);
+            let resolve_state = java_resolve.read(cx).state(&handle);
             this.when_some(instance.required_java_version.clone(), |this, version| {
                 this.child(
                     div()
@@ -2008,17 +2028,17 @@ fn java_section(
             })
             .child(
                 h_flex().gap_2().child(Input::new(&java_path_input)).child(
-                    Button::new(format!("java-set-{id}"))
+                    Button::new(format!("java-set-{handle}"))
                         .label(t::instances::set_java_path())
                         .on_click({
                             let input = java_path_input.clone();
                             let sender = sender.clone();
-                            let id = id.clone();
+                            let handle = handle.clone();
                             move |_, _, cx| {
                                 let value = input.read(cx).value().trim().to_string();
                                 if !value.is_empty() {
                                     sender.send(MessageToBackend::SetInstanceJavaPath {
-                                        instance: id.clone(),
+                                        instance: handle.clone(),
                                         path: Some(value),
                                     });
                                 }
@@ -2030,44 +2050,44 @@ fn java_section(
                 h_flex()
                     .gap_2()
                     .child(
-                        Button::new(format!("java-find-{id}"))
+                        Button::new(format!("java-find-{handle}"))
                             .label(t::instances::java_find())
                             .on_click({
                                 let sender = sender.clone();
-                                let id = id.clone();
+                                let handle = handle.clone();
                                 cx.listener(move |page, _, _, cx| {
                                     page.data.java_resolve.update(cx, |cache, cx| {
-                                        cache.set_resolving(id.clone(), cx);
+                                        cache.set_resolving(handle.clone(), cx);
                                     });
-                                    sender.send(MessageToBackend::ResolveJavaPath(id.clone()));
+                                    sender.send(MessageToBackend::ResolveJavaPath(handle.clone()));
                                 })
                             }),
                     )
                     .child(
-                        Button::new(format!("java-clear-{id}"))
+                        Button::new(format!("java-clear-{handle}"))
                             .label(t::instances::java_clear())
                             .disabled(instance.java_path.is_none())
                             .on_click({
                                 let sender = sender.clone();
                                 let input = java_path_input.clone();
-                                let id = id.clone();
+                                let handle = handle.clone();
                                 cx.listener(move |_, _, window, cx| {
                                     input.update(cx, |state, cx| {
                                         state.set_value(String::new(), window, cx)
                                     });
                                     sender.send(MessageToBackend::SetInstanceJavaPath {
-                                        instance: id.clone(),
+                                        instance: handle.clone(),
                                         path: None,
                                     });
                                 })
                             }),
                     )
                     .child(
-                        Button::new(format!("java-browse-{id}"))
+                        Button::new(format!("java-browse-{handle}"))
                             .label(t::instances::java_browse())
                             .on_click({
                                 let sender = sender.clone();
-                                let id = id.clone();
+                                let handle = handle.clone();
                                 cx.listener(move |_, _, _window, cx| {
                                     let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
                                         files: true,
@@ -2076,14 +2096,14 @@ fn java_section(
                                         prompt: None,
                                     });
                                     let sender = sender.clone();
-                                    let id = id.clone();
+                                    let handle = handle.clone();
                                     cx.spawn(async move |_, _cx| {
                                         if let Ok(Ok(Some(paths))) = receiver.await
                                             && let Some(path) = paths.into_iter().next()
                                         {
                                             let path_str = path.to_string_lossy().to_string();
                                             sender.send(MessageToBackend::SetInstanceJavaPath {
-                                                instance: id.clone(),
+                                                instance: handle.clone(),
                                                 path: Some(path_str),
                                             });
                                         }
@@ -2122,7 +2142,7 @@ fn optional_mods_section(
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
-    let id = instance.id.clone();
+    let handle = instance.handle.clone();
     let syncing = matches!(instance.status, InstanceLiveStatus::Installing { .. });
     v_flex()
         .gap_2()
@@ -2136,17 +2156,17 @@ fn optional_mods_section(
             let set_id = optional_set.set_id.to_string();
             let display_name = optional_set.display_name.to_string();
             let enabled = optional_set.enabled;
-            let checkbox_id = format!("optional-mod-set-{id}-{set_id}");
+            let checkbox_id = format!("optional-mod-set-{handle}-{set_id}");
             Checkbox::new(checkbox_id)
                 .checked(enabled)
                 .disabled(syncing)
                 .label(display_name)
                 .on_click({
                     let sender = sender.clone();
-                    let id = id.clone();
+                    let handle = handle.clone();
                     move |_, _, _| {
                         sender.send(MessageToBackend::SetOptionalModSetEnabled {
-                            instance: id.clone(),
+                            instance: handle.clone(),
                             set_id: set_id.clone(),
                             enabled: !enabled,
                         });
@@ -2161,7 +2181,7 @@ fn native_glfw_toggle(
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
-    let id = instance.id.clone();
+    let handle = instance.handle.clone();
     let enabled = instance
         .use_native_glfw
         .unwrap_or_else(use_native_glfw_default);
@@ -2186,7 +2206,7 @@ fn native_glfw_toggle(
                 ),
         )
         .child(
-            Button::new(format!("toggle-native-glfw-{id}"))
+            Button::new(format!("toggle-native-glfw-{handle}"))
                 .label(if enabled {
                     t::common::on()
                 } else {
@@ -2194,7 +2214,7 @@ fn native_glfw_toggle(
                 })
                 .on_click(move |_, _, _| {
                     sender.send(MessageToBackend::SetInstanceUseNativeGlfw {
-                        instance: id.clone(),
+                        instance: handle.clone(),
                         enabled: !enabled,
                     });
                 }),
@@ -2662,7 +2682,7 @@ fn action_section(
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
-    let id = instance.id.clone();
+    let handle = instance.handle.clone();
     let can_launch = matches!(
         instance.status,
         InstanceLiveStatus::Installed
@@ -2679,28 +2699,30 @@ fn action_section(
             h_flex()
                 .gap_2()
                 .child(
-                    Button::new(format!("detail-play-{id}"))
+                    Button::new(format!("detail-play-{handle}"))
                         .label(t::instances::play())
                         .disabled(!can_launch || launch_blocked)
                         .on_click({
                             let sender = sender.clone();
-                            let id = id.clone();
+                            let handle = handle.clone();
                             move |_, _, _| {
                                 sender.send(MessageToBackend::Launch {
-                                    instance: id.clone(),
+                                    instance: handle.clone(),
                                     account: None,
                                 });
                             }
                         }),
                 )
                 .child(
-                    Button::new(format!("detail-kill-{id}"))
+                    Button::new(format!("detail-kill-{handle}"))
                         .label(t::instances::kill())
                         .disabled(!matches!(instance.status, InstanceLiveStatus::Running))
                         .on_click({
                             let sender = sender.clone();
-                            let id = id.clone();
-                            move |_, _, _| sender.send(MessageToBackend::KillInstance(id.clone()))
+                            let handle = handle.clone();
+                            move |_, _, _| {
+                                sender.send(MessageToBackend::KillInstance(handle.clone()))
+                            }
                         }),
                 ),
         )
@@ -2709,7 +2731,7 @@ fn action_section(
                 .gap_2()
                 .when(!matches!(instance.origin, InstanceOrigin::Local), |this| {
                     this.child(
-                        Button::new(format!("detail-resync-{id}"))
+                        Button::new(format!("detail-resync-{handle}"))
                             .label(t::instances::resync())
                             .disabled(matches!(
                                 instance.status,
@@ -2717,17 +2739,17 @@ fn action_section(
                             ))
                             .on_click({
                                 let sender = sender.clone();
-                                let id = id.clone();
+                                let handle = handle.clone();
                                 move |_, _, _| {
                                     sender.send(MessageToBackend::InstallInstance {
-                                        id: id.clone(),
+                                        handle: handle.clone(),
                                         force_overwrite: false,
                                     });
                                 }
                             }),
                     )
                     .child(
-                        Button::new(format!("detail-hard-resync-{id}"))
+                        Button::new(format!("detail-hard-resync-{handle}"))
                             .label(t::instances::hard_resync())
                             .disabled(matches!(
                                 instance.status,
@@ -2735,10 +2757,10 @@ fn action_section(
                             ))
                             .on_click({
                                 let sender = sender.clone();
-                                let id = id.clone();
+                                let handle = handle.clone();
                                 move |_, _, _| {
                                     sender.send(MessageToBackend::InstallInstance {
-                                        id: id.clone(),
+                                        handle: handle.clone(),
                                         force_overwrite: true,
                                     });
                                 }
@@ -2747,20 +2769,20 @@ fn action_section(
                 }),
         )
         .child(h_flex().gap_2().child(if show_remove {
-            Button::new(format!("detail-remove-{id}"))
+            Button::new(format!("detail-remove-{handle}"))
                 .label(t::instances::remove())
                 .on_click({
                     let sender = sender.clone();
-                    let id = id.clone();
+                    let handle = handle.clone();
                     cx.listener(move |page, _, _, cx| {
                         page.selected_instance = None;
-                        sender.send(MessageToBackend::CancelInstall(id.clone()));
+                        sender.send(MessageToBackend::CancelInstall(handle.clone()));
                         cx.notify();
                     })
                 })
                 .into_any_element()
         } else {
-            Button::new(format!("detail-delete-{id}"))
+            Button::new(format!("detail-delete-{handle}"))
                 .label(if pending_delete {
                     t::instances::confirm_delete()
                 } else {
@@ -2769,14 +2791,14 @@ fn action_section(
                 .disabled(!instance.locally_installed)
                 .on_click({
                     let sender = sender.clone();
-                    let id = id.clone();
+                    let handle = handle.clone();
                     cx.listener(move |page, _, _, cx| {
-                        if page.pending_delete.as_ref() == Some(&id) {
+                        if page.pending_delete.as_ref() == Some(&handle) {
                             page.pending_delete = None;
                             page.selected_instance = None;
-                            sender.send(MessageToBackend::DeleteInstance(id.clone()));
+                            sender.send(MessageToBackend::DeleteInstance(handle.clone()));
                         } else {
-                            page.pending_delete = Some(id.clone());
+                            page.pending_delete = Some(handle.clone());
                         }
                         cx.notify();
                     })
@@ -2803,13 +2825,13 @@ fn action_section(
             matches!(instance.status, InstanceLiveStatus::Outdated)
                 && !matches!(instance.origin, InstanceOrigin::Local),
             |this| {
-                let id = id.clone();
+                let handle = handle.clone();
                 this.child(
-                    Button::new(format!("detail-update-{id}"))
+                    Button::new(format!("detail-update-{handle}"))
                         .label(t::instances::update())
                         .on_click(move |_, _, _| {
                             sender.send(MessageToBackend::InstallInstance {
-                                id: id.clone(),
+                                handle: handle.clone(),
                                 force_overwrite: false,
                             });
                         }),
@@ -2991,11 +3013,7 @@ fn _url_key(url: &Url) -> String {
     url.as_str().to_string()
 }
 
-fn create_local_form_issue(
-    page: &InstancesPage,
-    instances: &[InstanceView],
-    cx: &App,
-) -> Option<String> {
+fn create_local_form_issue(page: &InstancesPage, cx: &App) -> Option<String> {
     let name = page
         .create_local_name_input
         .read(cx)
@@ -3004,16 +3022,6 @@ fn create_local_form_issue(
         .to_string();
     if name.is_empty() {
         return Some(t::notifications::local_instance_name_empty().to_string());
-    }
-
-    let sanitized = sanitize_dir_name(&name);
-    for instance in instances {
-        if instance.dir_name.as_ref() == sanitized
-            || instance.display_name.as_ref() == name
-            || instance.display_name.as_ref() == sanitized
-        {
-            return Some(t::notifications::local_instance_name_exists(name));
-        }
     }
 
     if page

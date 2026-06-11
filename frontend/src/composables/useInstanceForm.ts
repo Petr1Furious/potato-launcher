@@ -4,6 +4,7 @@ import type {
   AuthBackend,
   ContentRule,
   InstanceBase,
+  LocalizedString,
   ModSyncSettings,
   OptionalModSet,
 } from '@/types/api';
@@ -76,7 +77,8 @@ const buildModSync = (source?: Partial<ModSyncSettings>): ModSyncSettings => ({
 });
 
 const buildFormData = (source?: PartialInstanceBase): InstanceBase & { content_rules: ContentRuleForm[] } => ({
-  name: source?.name ?? '',
+  id: source?.id ?? '',
+  display_name: source?.display_name,
   minecraft_version: source?.minecraft_version ?? '',
   mod_loader: source?.mod_loader ?? LoaderType.VANILLA,
   loader_version: source?.loader_version ?? '',
@@ -140,7 +142,8 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
 
   const resetFormData = (next?: PartialInstanceBase) => {
     const data = buildFormData(next);
-    formData.name = data.name;
+    formData.id = data.id;
+    formData.display_name = data.display_name;
     formData.minecraft_version = data.minecraft_version;
     formData.mod_loader = data.mod_loader;
     formData.loader_version = data.loader_version;
@@ -256,7 +259,14 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
     { immediate: true },
   );
 
-  const handleInputChange = (field: keyof InstanceBase, value: string | LoaderType | ResourceSyncMode) => {
+  const handleInputChange = (
+    field: keyof InstanceBase,
+    value: string | LoaderType | ResourceSyncMode | LocalizedString | undefined,
+  ) => {
+    if (field === 'display_name') {
+      formData.display_name = value as LocalizedString | undefined;
+      return;
+    }
     (formData as Record<string, unknown>)[field] = value;
   };
 

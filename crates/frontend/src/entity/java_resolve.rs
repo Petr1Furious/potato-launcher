@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use gpui::{Context, EventEmitter};
-use instance::storage::InstanceId;
+use instance::storage::InstanceHandle;
 
 #[derive(Clone)]
-pub struct JavaResolvedEvent(pub InstanceId);
+pub struct JavaResolvedEvent(pub InstanceHandle);
 
 pub enum JavaResolveState {
     Resolving,
@@ -15,27 +15,32 @@ pub enum JavaResolveState {
 
 #[derive(Default)]
 pub struct JavaResolveCache {
-    resolving: HashSet<InstanceId>,
-    paths: HashMap<InstanceId, Option<Arc<str>>>,
+    resolving: HashSet<InstanceHandle>,
+    paths: HashMap<InstanceHandle, Option<Arc<str>>>,
 }
 
 impl EventEmitter<JavaResolvedEvent> for JavaResolveCache {}
 
 impl JavaResolveCache {
-    pub fn set_resolving(&mut self, instance: InstanceId, cx: &mut Context<Self>) {
+    pub fn set_resolving(&mut self, instance: InstanceHandle, cx: &mut Context<Self>) {
         self.resolving.insert(instance.clone());
         cx.emit(JavaResolvedEvent(instance));
         cx.notify();
     }
 
-    pub fn set(&mut self, instance: InstanceId, path: Option<Arc<str>>, cx: &mut Context<Self>) {
+    pub fn set(
+        &mut self,
+        instance: InstanceHandle,
+        path: Option<Arc<str>>,
+        cx: &mut Context<Self>,
+    ) {
         self.resolving.remove(&instance);
         self.paths.insert(instance.clone(), path);
         cx.emit(JavaResolvedEvent(instance));
         cx.notify();
     }
 
-    pub fn state(&self, instance: &InstanceId) -> Option<JavaResolveState> {
+    pub fn state(&self, instance: &InstanceHandle) -> Option<JavaResolveState> {
         if self.resolving.contains(instance) {
             return Some(JavaResolveState::Resolving);
         }

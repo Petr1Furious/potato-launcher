@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { apiService } from '@/services/api';
-import type { AuthBackend, InstanceBase } from '@/types/api';
+import type { AuthBackend, InstanceBase, LocalizedString } from '@/types/api';
 import { AuthType, LoaderType } from '@/types/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,6 +9,7 @@ import { contentRulesToPayload, useInstanceForm } from '@/composables/useInstanc
 import InstanceFormFields from '@/components/InstanceFormFields.vue';
 import { formatError } from '@/services/api';
 import { useNotification } from '@/composables/useNotification';
+import { validateInstanceId, validateOptionalModSetIds } from '@/utils/instanceId';
 
 const { showError } = useNotification();
 
@@ -48,7 +49,8 @@ const errors = reactive<Record<string, string>>({});
 
 const validate = () => {
   const newErrors: Record<string, string> = {};
-  if (!formData.name.trim()) newErrors.name = 'Name is required';
+  const idError = validateInstanceId(formData.id);
+  if (idError) newErrors.id = idError;
   if (!formData.minecraft_version) newErrors.minecraft_version = 'Minecraft version is required';
   if (!formData.mod_loader) newErrors.mod_loader = 'Loader is required';
   if (formData.mod_loader !== LoaderType.VANILLA && !formData.loader_version) {
@@ -69,6 +71,8 @@ const validate = () => {
     }
   }
 
+  Object.assign(newErrors, validateOptionalModSetIds(formData.mod_sync.optional_sets));
+
   Object.keys(errors).forEach((key) => delete errors[key]);
   Object.assign(errors, newErrors);
 
@@ -81,7 +85,8 @@ const resetForm = () => {
 
 const buildPayload = (): InstanceBase => {
   const payload: InstanceBase = {
-    name: formData.name,
+    id: formData.id,
+    display_name: formData.display_name,
     minecraft_version: formData.minecraft_version,
     mod_loader: formData.mod_loader,
     loader_version: formData.loader_version,
@@ -128,7 +133,10 @@ const handleSubmit = async () => {
   }
 };
 
-const updateField = (field: keyof InstanceBase, value: string | LoaderType | InstanceBase['resource_sync']) => {
+const updateField = (
+  field: keyof InstanceBase,
+  value: string | LoaderType | InstanceBase['resource_sync'] | LocalizedString | undefined,
+) => {
   handleInputChange(field, value);
   if (errors[field as string]) {
     delete errors[field as string];
@@ -161,7 +169,8 @@ onMounted(() => {
             :minecraft-versions="minecraftVersions" :available-loaders="availableLoaders"
             :loader-versions="loaderVersions" :loading-minecraft-versions="loadingMinecraftVersions"
             :loading-loaders="loadingLoaders" :loading-loader-versions="loadingLoaderVersions"
-            :mod-id-list-to-string="modIdListToString" @update-field="updateField"
+            :mod-id-list-to-string="modIdListToString"
+            @update-field="updateField"
             @update-auth-field="updateAuthField" @update-mod-sync-mode="handleModSyncModeChange"
             @update-mod-id-list="updateModIdList" @add-content-rule="addContentRule"
             @remove-content-rule="removeContentRule" @update-content-rule="updateContentRule"

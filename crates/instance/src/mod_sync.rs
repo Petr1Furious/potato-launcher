@@ -5,6 +5,7 @@ use utils::files::{CheckTask, DeleteTask, GetFilesInDirError};
 
 use crate::install_params::{InstallCause, InstallParams};
 use crate::instance_metadata::{EnableOptionalModTask, ModEntry, TaskSet};
+use crate::localized::LocalizedString;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -21,7 +22,7 @@ pub enum ModSyncMode {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct OptionalModSet {
     pub id: String,
-    pub display_name: String,
+    pub display_name: LocalizedString,
     #[serde(default)]
     pub enabled_by_default: bool,
     pub mod_ids: Vec<String>,

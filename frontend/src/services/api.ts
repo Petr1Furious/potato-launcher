@@ -103,15 +103,15 @@ class ApiService {
     });
   }
 
-  async updateInstance(name: string, instance: Partial<InstanceResponse>): Promise<InstanceResponse> {
-    return this.request(`/instances/${name}`, {
+  async updateInstance(id: string, instance: Partial<InstanceResponse>): Promise<InstanceResponse> {
+    return this.request(`/instances/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(instance),
     });
   }
 
-  async deleteInstance(name: string): Promise<void> {
-    return this.request(`/instances/${name}`, {
+  async deleteInstance(id: string): Promise<void> {
+    return this.request(`/instances/${id}`, {
       method: 'DELETE',
     });
   }

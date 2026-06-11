@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{Context, EventEmitter};
-use instance::storage::InstanceId;
+use instance::storage::InstanceHandle;
 use launcher_bridge::{InstanceLiveStatus, InstanceView, ProgressStage};
 
 #[derive(Clone, Default)]
@@ -14,7 +14,7 @@ pub struct InstancesUpdatedEvent;
 
 #[derive(Clone, Debug)]
 pub struct InstanceProgressUpdate {
-    pub id: InstanceId,
+    pub handle: InstanceHandle,
     pub stage: ProgressStage,
     pub current: u64,
     pub total: u64,
@@ -24,14 +24,14 @@ pub struct InstanceProgressUpdate {
 
 impl InstanceProgressUpdate {
     pub fn new(
-        id: InstanceId,
+        handle: InstanceHandle,
         stage: ProgressStage,
         current: u64,
         total: u64,
         message: Arc<str>,
     ) -> Self {
         Self {
-            id,
+            handle,
             stage,
             current,
             total,
@@ -51,7 +51,11 @@ impl InstanceEntries {
     }
 
     pub fn set_progress(&mut self, update: InstanceProgressUpdate, cx: &mut Context<Self>) {
-        if let Some(instance) = self.entries.iter_mut().find(|entry| entry.id == update.id) {
+        if let Some(instance) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.handle == update.handle)
+        {
             if let InstanceLiveStatus::Installing {
                 stage,
                 current,

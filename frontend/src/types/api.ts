@@ -49,6 +49,8 @@ export interface AuthBackend {
   client_secret?: string;
 }
 
+export type LocalizedString = string | Record<string, string>;
+
 export type ConfigOptionKey = string | (string | number)[];
 
 export interface ConfigOption {
@@ -69,7 +71,7 @@ export interface ContentRule {
 
 export interface OptionalModSet {
   id: string;
-  display_name: string;
+  display_name: LocalizedString;
   enabled_by_default?: boolean;
   mod_ids: string[];
 }
@@ -82,7 +84,8 @@ export interface ModSyncSettings {
 }
 
 export interface InstanceResponse {
-  name: string;
+  id: string;
+  display_name?: LocalizedString;
   minecraft_version: string;
   mod_loader: LoaderType;
   loader_version?: string;
@@ -94,7 +97,8 @@ export interface InstanceResponse {
 }
 
 export interface InstanceBase {
-  name: string;
+  id: string;
+  display_name?: LocalizedString;
   minecraft_version: string;
   mod_loader: LoaderType;
   loader_version?: string;

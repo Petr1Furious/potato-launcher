@@ -29,7 +29,7 @@ const fetching = ref(false);
 const showLogs = ref(false);
 
 const selectedInstanceData = computed(() =>
-    instances.value.find((m) => m.name === selectedInstance.value) ?? null,
+    instances.value.find((m) => m.id === selectedInstance.value) ?? null,
 );
 
 const loadInstances = async () => {
@@ -40,7 +40,7 @@ const loadInstances = async () => {
         error.value = null;
         instances.value = await apiService.getInstances();
         if (selectedInstance.value) {
-            const exists = instances.value.some((m) => m.name === selectedInstance.value);
+            const exists = instances.value.some((m) => m.id === selectedInstance.value);
             if (!exists) {
                 selectedInstance.value = null;
             }
@@ -93,8 +93,8 @@ const handleNewInstance = () => {
     selectedInstance.value = null;
 };
 
-const handleSelectInstance = (name: string) => {
-    selectedInstance.value = name;
+const handleSelectInstance = (id: string) => {
+    selectedInstance.value = id;
     showForm.value = false;
     showSettings.value = false;
 };
@@ -105,17 +105,17 @@ const handleShowSettings = () => {
     selectedInstance.value = null;
 };
 
-const handleInstanceUpdate = (payload: { name: string; data: Partial<InstanceResponse> }) => {
+const handleInstanceUpdate = (payload: { id: string; data: Partial<InstanceResponse> }) => {
     instances.value = instances.value.map((instance) =>
-        instance.name === payload.name ? { ...instance, ...payload.data } : instance,
+        instance.id === payload.id ? { ...instance, ...payload.data } : instance,
     );
 };
 
-const handleInstanceDelete = async (name: string) => {
+const handleInstanceDelete = async (id: string) => {
     try {
-        await apiService.deleteInstance(name);
-        instances.value = instances.value.filter((instance) => instance.name !== name);
-        if (selectedInstance.value === name) {
+        await apiService.deleteInstance(id);
+        instances.value = instances.value.filter((instance) => instance.id !== id);
+        if (selectedInstance.value === id) {
             selectedInstance.value = null;
         }
     } catch (err) {
@@ -172,7 +172,7 @@ const handleBuild = async () => {
             <div v-else>
                 <InstanceForm v-if="showForm" @submitted="handleFormSubmit" />
                 <SettingsForm v-else-if="showSettings" @saved="handleSettingsSave" />
-                <InstanceDetails v-else-if="selectedInstanceData" :key="selectedInstanceData.name"
+                <InstanceDetails v-else-if="selectedInstanceData" :key="selectedInstanceData.id"
                     :instance="selectedInstanceData" @updated="handleInstanceUpdate" @deleted="handleInstanceDelete" />
                 <div v-else class="flex items-center justify-center min-h-[60vh] p-4">
                     <Card class="w-full max-w-xl">

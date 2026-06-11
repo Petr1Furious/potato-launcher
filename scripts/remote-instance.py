@@ -86,21 +86,21 @@ def cfg_container_path(config, name, default):
 
 def parse_instance_mapping(raw):
     if "=" not in raw:
-        die("bad instance mapping '{0}': expected NAME=DIR".format(raw))
-    name, path = raw.split("=", 1)
-    name = name.strip()
+        die("bad instance mapping '{0}': expected ID=DIR".format(raw))
+    instance_id, path = raw.split("=", 1)
+    instance_id = instance_id.strip()
     path = path.strip()
-    if not name:
-        die("bad instance mapping '{0}': empty name".format(raw))
+    if not instance_id:
+        die("bad instance mapping '{0}': empty id".format(raw))
     if not path:
         die("bad instance mapping '{0}': empty path".format(raw))
-    return name, path
+    return instance_id, path
 
 
 def config_instances(config):
     raw = config.get("instances", {})
     if isinstance(raw, dict):
-        return dict((str(name), str(path)) for name, path in raw.items())
+        return dict((str(instance_id), str(path)) for instance_id, path in raw.items())
     if isinstance(raw, list):
         return dict(parse_instance_mapping(str(item)) for item in raw)
     if raw in (None, ""):
@@ -111,8 +111,8 @@ def config_instances(config):
 def merged_instances(args, config):
     result = config_instances(config)
     for raw in args.instance or []:
-        name, path = parse_instance_mapping(raw)
-        result[name] = path
+        instance_id, path = parse_instance_mapping(raw)
+        result[instance_id] = path
     return result
 
 
@@ -209,15 +209,15 @@ def rewrite_spec_source_roots(spec_path, source_root_base):
     for index, instance in enumerate(instances):
         if not isinstance(instance, dict):
             die("spec instance at index {0} must be an object".format(index))
-        name = instance.get("name")
-        if not name:
-            die("spec instance at index {0} is missing name".format(index))
-        intended = "{0}/{1}".format(base, name)
+        instance_id = instance.get("id")
+        if not instance_id:
+            die("spec instance at index {0} is missing id".format(index))
+        intended = "{0}/{1}".format(base, instance_id)
         current = instance.get("source_root")
         if current and current != intended:
             warn(
                 "replacing source_root for '{0}': {1} -> {2}".format(
-                    name, current, intended
+                    instance_id, current, intended
                 )
             )
         instance["source_root"] = intended
@@ -273,16 +273,16 @@ def build_command(args, config):
             except OSError:
                 pass
 
-    for name, local_dir in instances.items():
+    for instance_id, local_dir in instances.items():
         if not os.path.isdir(local_dir):
-            die("instance dir not found for '{0}': {1}".format(name, local_dir))
+            die("instance dir not found for '{0}': {1}".format(instance_id, local_dir))
         remote_instance_host = "{0}/uploaded-instances/{1}/".format(
-            internal_dir.rstrip("/"), name
+            internal_dir.rstrip("/"), instance_id
         )
         local_source = local_dir.rstrip("/") + "/"
         log(
             "Syncing instance '{0}' ({1}) -> {2}:{3}".format(
-                name, local_dir, remote, remote_instance_host
+                instance_id, local_dir, remote, remote_instance_host
             )
         )
         command = rsync_base(args, config, delete=True)
@@ -353,7 +353,7 @@ def fetch_command(args, config):
     spec_out = cfg_value(args, config, "spec_out", "spec_out")
     instances = merged_instances(args, config)
     if not spec_out and not instances:
-        die('nothing to fetch: use --spec-out PATH and/or --instance "NAME=DIR"')
+        die('nothing to fetch: use --spec-out PATH and/or --instance "ID=DIR"')
 
     require_tool("rsync")
     require_tool("ssh")
@@ -368,12 +368,12 @@ def fetch_command(args, config):
         command.extend([remote_path(remote, remote_spec), spec_out])
         run_command(command, dry_run=args.dry_run, execute_dry_run=True)
 
-    for name, local_dir in instances.items():
+    for instance_id, local_dir in instances.items():
         os.makedirs(local_dir, exist_ok=True)
         remote_instance_dir = "{0}/uploaded-instances/{1}/".format(
-            internal_dir.rstrip("/"), name
+            internal_dir.rstrip("/"), instance_id
         )
-        log("Fetching instance '{0}' -> {1}/".format(name, local_dir))
+        log("Fetching instance '{0}' -> {1}/".format(instance_id, local_dir))
         command = rsync_base(args, config, delete=args.delete)
         command.extend([remote_path(remote, remote_instance_dir), local_dir.rstrip("/") + "/"])
         run_command(command, dry_run=args.dry_run, execute_dry_run=True)
@@ -391,7 +391,7 @@ def add_common_options(parser):
     parser.add_argument(
         "--instance",
         action="append",
-        help='Instance mapping NAME=DIR. Repeatable. Overrides same config name.',
+        help='Instance mapping ID=DIR. Repeatable. Overrides same config id.',
     )
     parser.add_argument(
         "--exclude",
@@ -417,14 +417,14 @@ def build_parser():
         epilog="""Examples:
   # Sync spec + modpacks, then build
   python3 scripts/remote-instance.py build --remote user@host --internal-dir /abs/path/to/internal --spec ./spec.json \\
-    --instance "Instance A=./packs/a" \\
-    --instance "Instance B=./packs/b"
+    --instance "minigames=./packs/minigames" \\
+    --instance "skyblock=./packs/skyblock"
 
   # Use JSON config
   python3 scripts/remote-instance.py --config scripts/remote-instance.json build
 
   # Fetch spec + selected uploaded files
-  python3 scripts/remote-instance.py fetch --spec-out ./spec.json --instance "Instance A=./packs/a"
+  python3 scripts/remote-instance.py fetch --spec-out ./spec.json --instance "minigames=./packs/minigames"
 """,
     )
     parser.add_argument(

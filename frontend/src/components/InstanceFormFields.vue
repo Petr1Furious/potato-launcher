@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { Plus, Trash2 } from 'lucide-vue-next';
-import type { AuthBackend, InstanceBase } from '@/types/api';
+import type { AuthBackend, InstanceBase, LocalizedString } from '@/types/api';
 import {
   ApplyOn,
   AuthType,
@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
+import LocalizedStringEditor from '@/components/LocalizedStringEditor.vue';
 
 const props = withDefaults(
     defineProps<{
@@ -43,7 +44,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-    (event: 'update-field', field: keyof InstanceBase, value: string | LoaderType | ResourceSyncMode): void;
+    (event: 'update-field', field: keyof InstanceBase, value: string | LoaderType | ResourceSyncMode | LocalizedString | undefined): void;
     (event: 'update-auth-field', field: keyof AuthBackend, value: string | AuthType): void;
     (event: 'update-mod-sync-mode', value: ModSyncMode): void;
     (event: 'update-mod-id-list', field: 'required' | 'blocked', value: string): void;
@@ -55,7 +56,7 @@ const emit = defineEmits<{
     (event: 'update-config-option', ruleIndex: number, optionIndex: number, field: 'keyPath' | 'value', value: string): void;
     (event: 'add-optional-set'): void;
     (event: 'remove-optional-set', index: number): void;
-    (event: 'update-optional-set', index: number, field: 'id' | 'display_name' | 'enabled_by_default', value: string | boolean): void;
+    (event: 'update-optional-set', index: number, field: 'id' | 'display_name' | 'enabled_by_default', value: string | boolean | LocalizedString): void;
     (event: 'update-optional-set-mod-ids', index: number, value: string): void;
 }>();
 
@@ -67,13 +68,24 @@ const isVanillaLoader = computed(() => props.formData.mod_loader === LoaderType.
         <div class="space-y-5">
             <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-2 sm:col-span-2">
-                    <Label :for="`${props.idPrefix}-name`">Instance Name *</Label>
-                    <Input :id="`${props.idPrefix}-name`" :model-value="props.formData.name" :disabled="props.disabled"
-                        placeholder="Enter instance name"
-                        @update:modelValue="(value) => emit('update-field', 'name', value?.toString() ?? '')" />
-                    <p v-if="props.errors?.name" class="text-sm text-destructive">
-                        {{ props.errors.name }}
+                    <Label :for="`${props.idPrefix}-id`">Instance ID *</Label>
+                    <Input :id="`${props.idPrefix}-id`" :model-value="props.formData.id" :disabled="props.disabled"
+                        placeholder="Enter instance id"
+                        @update:modelValue="(value) => emit('update-field', 'id', value?.toString() ?? '')" />
+                    <p v-if="props.errors?.id" class="text-sm text-destructive">
+                        {{ props.errors.id }}
                     </p>
+                    <p v-else class="text-sm text-muted-foreground">
+                        Lowercase slug: letters, digits, hyphens, and underscores. Must start with a letter.
+                    </p>
+                </div>
+                <div class="sm:col-span-2">
+                    <LocalizedStringEditor
+                        :id-prefix="`${props.idPrefix}-display-name`"
+                        :model-value="props.formData.display_name"
+                        :disabled="props.disabled"
+                        @update:model-value="(value) => emit('update-field', 'display_name', value)"
+                    />
                 </div>
                 <div class="space-y-2">
                     <Label>Minecraft Version *</Label>
@@ -272,11 +284,19 @@ const isVanillaLoader = computed(() => props.formData.mod_loader === LoaderType.
                                 <Label>ID</Label>
                                 <Input :model-value="set.id" :disabled="props.disabled"
                                     @update:modelValue="(value) => emit('update-optional-set', index, 'id', value?.toString() ?? '')" />
+                                <p v-if="props.errors?.[`optional_set_${index}_id`]" class="text-sm text-destructive">
+                                    {{ props.errors[`optional_set_${index}_id`] }}
+                                </p>
                             </div>
-                            <div class="space-y-2">
-                                <Label>Display Name</Label>
-                                <Input :model-value="set.display_name" :disabled="props.disabled"
-                                    @update:modelValue="(value) => emit('update-optional-set', index, 'display_name', value?.toString() ?? '')" />
+                            <div class="space-y-2 sm:col-span-2">
+                                <LocalizedStringEditor
+                                    :id-prefix="`${props.idPrefix}-optional-set-${index}-display-name`"
+                                    :model-value="set.display_name"
+                                    :disabled="props.disabled"
+                                    required
+                                    description="Shown in the launcher for this optional mod set."
+                                    @update:model-value="(value) => emit('update-optional-set', index, 'display_name', value ?? '')"
+                                />
                             </div>
                         </div>
                         <label class="flex items-center gap-2 text-sm cursor-pointer">

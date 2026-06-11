@@ -45,7 +45,7 @@ If you already have the backend deployed and you want to automate uploading file
 
 - Pick the backend **internal directory** on the server, e.g. `/srv/potato-launcher/state/internal`
 - Upload your `spec.json` into `<internal-dir>/spec.json`
-- Upload your raw modpack files into `<internal-dir>/uploaded-instances/<instance-name>/`
+- Upload your raw modpack files into `<internal-dir>/uploaded-instances/<instance-id>/`
 - Run `instance-builder` inside the running backend container (`potato-launcher-backend` by default)
 
 This repository includes a helper script that automates the above:
@@ -55,21 +55,21 @@ python3 scripts/remote-instance.py build --help
 python3 scripts/remote-instance.py fetch --help
 ```
 
-The build command uploads a temporary copy of `spec.json` with `source_root` rewritten to the in-container uploaded instance path (default: `/data/internal/uploaded-instances/<instance-name>`). It does not modify your local spec file. Instance sync skips `.git` and `saves` by default; see `--help` for flags to change that.
+The build command uploads a temporary copy of `spec.json` with `source_root` rewritten to the in-container uploaded instance path (default: `/data/internal/uploaded-instances/<instance-id>`). It does not modify your local spec file. Instance sync skips `.git` and `saves` by default; see `--help` for flags to change that.
 
 You can keep common settings in `scripts/remote-instance.json`:
 
 ```json
 {
-  "remote": "minecraft@example.com",
-  "ssh_port": 22,
-  "internal_dir": "/srv/potato-launcher/state/internal",
-  "container": "potato-launcher-backend",
-  "docker_host": "unix:///run/user/1002/docker.sock",
-  "spec": "./spec.json",
-  "instances": {
-    "Minigames": "/local/path/to/instance/minecraft"
-  }
+    "remote": "minecraft@example.com",
+    "ssh_port": 22,
+    "internal_dir": "/srv/potato-launcher/state/internal",
+    "container": "potato-launcher-backend",
+    "docker_host": "unix:///run/user/1002/docker.sock",
+    "spec": "./spec.json",
+    "instances": {
+        "minigames": "/local/path/to/instance/minecraft"
+    }
 }
 ```
 
@@ -77,51 +77,65 @@ You can keep common settings in `scripts/remote-instance.json`:
 
 ```json
 {
-  "download_server_base": "string",
-  "replace_download_urls": "boolean",
-  "instances": [
-    {
-      "name": "string",
-      "minecraft_version": "string",
-      "mod_loader": "string",
-      "loader_version": "string",
-      "source_root": "string",
-      "content_rules": [
+    "download_server_base": "string",
+    "replace_download_urls": "boolean",
+    "instances": [
         {
-          "path": "string",
-          "apply_on": "update | always",
-          "type": "file",
-          "overwrite": "boolean"
-        },
-        {
-          "path": "string",
-          "apply_on": "update | always",
-          "type": "directory",
-          "overwrite": "boolean",
-          "delete_extra": "boolean",
-          "skip_if_dir_exists": "boolean"
-        },
-        {
-          "path": "string",
-          "apply_on": "update | always",
-          "type": "config_options",
-          "config_type": "json | yaml | toml | properties",
-          "options": []
+            "id": "string",
+            "display_name": {
+                "en": "Minigames",
+                "ru": "Миниигры"
+            },
+            "minecraft_version": "string",
+            "mod_loader": "string",
+            "loader_version": "string",
+            "source_root": "string",
+            "content_rules": [
+                {
+                    "path": "string",
+                    "apply_on": "update | always",
+                    "type": "file",
+                    "overwrite": "boolean"
+                },
+                {
+                    "path": "string",
+                    "apply_on": "update | always",
+                    "type": "directory",
+                    "overwrite": "boolean",
+                    "delete_extra": "boolean",
+                    "skip_if_dir_exists": "boolean"
+                },
+                {
+                    "path": "string",
+                    "apply_on": "update | always",
+                    "type": "config_options",
+                    "config_type": "json | yaml | toml | properties",
+                    "options": []
+                }
+            ],
+            "mod_sync": {
+                "mode": "delta | mirror | mirror_fast",
+                "required": ["string (mod-id)"],
+                "blocked": ["string (mod-id)"],
+                "optional_sets": [
+                    {
+                        "id": "string",
+                        "display_name": {
+                            "en": "Extras",
+                            "ru": "Дополнительные"
+                        },
+                        "enabled_by_default": "boolean",
+                        "mod_ids": ["string (mod-id)"]
+                    }
+                ]
+            },
+            "resource_sync": "on_update | always | always_fast",
+            "auth_backend": {
+                "type": "string"
+            },
+            "default_xmx": "string"
         }
-      ],
-      "mod_sync": {
-        "mode": "delta | mirror | mirror_fast",
-        "required": ["string (mod-id)"],
-        "blocked": ["string (mod-id)"],
-        "optional_sets": []
-      },
-      "resource_sync": "on_update | always | always_fast",
-      "auth_backend": {
-        "type": "string"
-      },
-      "default_xmx": "string"
-    }
-  ]
+    ]
 }
 ```
 
@@ -133,7 +147,8 @@ You can keep common settings in `scripts/remote-instance.json`:
 
 ## Instance fields
 
-- **name** (required): Instance name.
+- **id** (required): Stable instance ID used in manifests, URLs, uploaded instance directories, and sync state. Must start with a letter, then use only `a-z`, `0-9`, `_`, and `-` (max 64 characters). Example: `minigames`, `skyblock-2`.
+- **display_name**: Name shown in the launcher. Use a plain string (`"Minigames"`) or a language map object (`{ "en": "Minigames", "ru": "Миниигры" }`). Falls back to `id`.
 - **minecraft_version** (required): Minecraft version.
 - **mod_loader**: `vanilla`, `fabric`, `forge`, or `neoforge`. Default: `vanilla`.
 - **loader_version**: Mod loader version. Optional; if omitted, Fabric/Forge/NeoForge generators pick a default (latest / recommended / latest).
@@ -191,11 +206,11 @@ Example:
 
 ```json
 {
-  "path": "config/zoomify.json",
-  "apply_on": "update",
-  "type": "config_options",
-  "config_type": "json",
-  "options": [{ "key": ["initialZoom"], "value": 4 }]
+    "path": "config/zoomify.json",
+    "apply_on": "update",
+    "type": "config_options",
+    "config_type": "json",
+    "options": [{ "key": ["initialZoom"], "value": 4 }]
 }
 ```
 
@@ -204,7 +219,7 @@ Example:
 - **mode**: `delta` (preserve user-added/removed mods), `mirror` (exact match), `mirror_fast` (mirror with size-only checks).
 - **required**: Mod IDs that must stay installed; removed locally they are restored.
 - **blocked**: Mod IDs that must not appear in the pack.
-- **optional_sets**: Toggleable optional mod groups users can enable/disable in the launcher.
+- **optional_sets**: Toggleable optional mod groups users can enable/disable in the launcher. Each set's `display_name` supports the same string-or-language-map format as instance `display_name`.
 
 Mods are managed separately from `content_rules`; do not add a `mods` directory content rule.
 

@@ -734,7 +734,8 @@ impl VersionMetadata {
     /// Convert vanilla version metadata into instance metadata
     pub fn to_instance_metadata(self) -> InstanceMetadata {
         InstanceMetadata {
-            name: self.id.clone(),
+            id: self.id.clone(),
+            display_name: None,
             auth_backend: None,
             content_rules: vec![],
             mod_entries: vec![],

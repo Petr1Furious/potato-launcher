@@ -14,6 +14,7 @@ use utils::adaptive_download;
 use utils::{
     files::{self, CheckTask, CopyTask},
     get_unique_name,
+    instance_id::validate_instance_id,
     paths::{BaseUrl, DataDir, InstancesDir},
     progress::ProgressStage,
 };
@@ -51,11 +52,23 @@ impl Spec {
         let mut all_metadata = vec![];
 
         for instance in self.instances {
-            let unique_name = get_unique_name(&existing_instance_names, &instance.name);
-            if unique_name != instance.name {
+            validate_instance_id(&instance.id)
+                .map_err(|err| anyhow::anyhow!("invalid instance id '{}': {err}", instance.id))?;
+            for set in &instance.mod_sync.optional_sets {
+                validate_instance_id(&set.id).map_err(|err| {
+                    anyhow::anyhow!(
+                        "invalid optional mod set id '{}' for instance '{}': {err}",
+                        set.id,
+                        instance.id
+                    )
+                })?;
+            }
+
+            let unique_name = get_unique_name(&existing_instance_names, &instance.id);
+            if unique_name != instance.id {
                 warn!(
                     "Duplicate instance name \"{}\"; using \"{}\"",
-                    instance.name, unique_name
+                    instance.id, unique_name
                 );
             }
             existing_instance_names.insert(unique_name.clone());
@@ -139,7 +152,7 @@ impl Spec {
                 metadata.authlib_injector = authlib_injector_library.clone();
             }
             let instance_dir = InstancesDir::root()
-                .instance_dir(metadata.get_name())
+                .instance_dir(metadata.get_id())
                 .with_data_dir(data_dir.clone());
             metadata.save(&instance_dir).await?;
         }
@@ -148,7 +161,7 @@ impl Spec {
             instances: all_metadata
                 .iter()
                 .map(|metadata| {
-                    metadata.to_manifest_entry(metadata.get_name(), &download_server_base)
+                    metadata.to_manifest_entry(metadata.get_id(), &download_server_base)
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         };
@@ -177,13 +190,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rejects_invalid_instance_ids() {
+        assert!(validate_instance_id("Bad ID").is_err());
+        assert!(validate_instance_id("1starts-with-digit").is_err());
+    }
+
+    #[test]
     fn spec_example_deserializes() {
         let content = include_str!("../spec.example.json");
-        let spec: Spec = serde_json::from_str(content).expect("spec.example.json should deserialize");
+        let spec: Spec =
+            serde_json::from_str(content).expect("spec.example.json should deserialize");
         assert_eq!(spec.instances.len(), 1);
         let instance = &spec.instances[0];
-        assert_eq!(instance.name, "Monifactory");
-        assert_eq!(instance.content_rules.len(), 2);
-        assert!(instance.source_root.is_some());
+        assert_eq!(instance.id, "minigames");
+        assert_eq!(instance.content_rules.len(), 5);
     }
 }

@@ -4,6 +4,6 @@
     "container": "potato-launcher-backend",
     "spec": "./spec.json",
     "instances": {
-        "Minigames": "/local/path/to/instance/minecraft"
+        "minigames": "/local/path/to/instance/minecraft"
     }
 }

@@ -826,6 +826,10 @@ ru = "Создать локальный инстанс"
 en = "Instance name"
 ru = "Имя инстанса"
 
+[local.folder_name_preview]
+en = "Folder name: ${dir_name: String}"
+ru = "Имя папки: ${dir_name: String}"
+
 [local.minecraft_version]
 en = "Minecraft version"
 ru = "Версия Minecraft"

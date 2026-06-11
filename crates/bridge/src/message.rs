@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use instance::storage::InstanceId;
+use instance::storage::InstanceHandle;
 use launcher_auth::{
     AccountData, flow::AuthMessage, providers::AuthProviderConfig, storage::AccountKey,
 };
@@ -21,53 +21,53 @@ pub enum UpdateStatusView {
 pub enum MessageToBackend {
     Refresh,
     InstallInstance {
-        id: InstanceId,
+        handle: InstanceHandle,
         force_overwrite: bool,
     },
-    CancelInstall(InstanceId),
-    RetryCreateLocal(InstanceId),
-    DeleteInstance(InstanceId),
+    CancelInstall(InstanceHandle),
+    RetryCreateLocal(InstanceHandle),
+    DeleteInstance(InstanceHandle),
     Launch {
-        instance: InstanceId,
+        instance: InstanceHandle,
         account: Option<AccountKey>,
     },
-    KillInstance(InstanceId),
+    KillInstance(InstanceHandle),
     AddBackendUrl(Url),
     RemoveBackendUrl(Url),
     StartAddAccount(AuthProviderConfig),
     SubmitOfflineNickname(String),
     RemoveAccount(AccountKey),
     SetInstanceSelectedAccount {
-        instance: InstanceId,
+        instance: InstanceHandle,
         account: Option<AccountKey>,
     },
     SetInstanceAccountOverride {
-        instance: InstanceId,
+        instance: InstanceHandle,
         account: Option<AccountKey>,
     },
     SetLauncherSettings(LauncherSettingsView),
     SetInstanceMemory {
-        instance: InstanceId,
+        instance: InstanceHandle,
         xmx_mb: Option<u64>,
     },
     SetInstanceJvmFlags {
-        instance: InstanceId,
+        instance: InstanceHandle,
         flags: Option<String>,
     },
     SetInstanceJavaPath {
-        instance: InstanceId,
+        instance: InstanceHandle,
         path: Option<String>,
     },
     SetInstanceUseNativeGlfw {
-        instance: InstanceId,
+        instance: InstanceHandle,
         enabled: bool,
     },
     SetOptionalModSetEnabled {
-        instance: InstanceId,
+        instance: InstanceHandle,
         set_id: String,
         enabled: bool,
     },
-    ResolveJavaPath(InstanceId),
+    ResolveJavaPath(InstanceHandle),
     CreateLocalInstance {
         display_name: String,
         minecraft_version: String,
@@ -95,7 +95,7 @@ pub enum LocalLoader {
 pub enum MessageToFrontend {
     InstancesUpdated(Arc<[InstanceView]>),
     InstanceProgress {
-        id: InstanceId,
+        handle: InstanceHandle,
         stage: ProgressStage,
         current: u64,
         total: u64,
@@ -112,7 +112,7 @@ pub enum MessageToFrontend {
         message: Arc<str>,
     },
     LaunchFinished {
-        instance: InstanceId,
+        instance: InstanceHandle,
         exit: ExitOutcome,
     },
     LocalCreateVersionsUpdated {
@@ -128,7 +128,7 @@ pub enum MessageToFrontend {
     },
     UpdateStatus(UpdateStatusView),
     JavaPathResolved {
-        instance: InstanceId,
+        instance: InstanceHandle,
         path: Option<Arc<str>>,
     },
     Quit,
@@ -136,7 +136,7 @@ pub enum MessageToFrontend {
 
 #[derive(Clone, Debug)]
 pub struct InstanceView {
-    pub id: InstanceId,
+    pub handle: InstanceHandle,
     pub display_name: Arc<str>,
     pub dir_name: Arc<str>,
     pub origin: InstanceOrigin,

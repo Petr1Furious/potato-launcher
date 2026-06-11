@@ -2,6 +2,7 @@ pub mod adaptive_download;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod compat;
 pub mod files;
+pub mod instance_id;
 pub mod java;
 pub mod logging;
 pub mod mod_id;
@@ -16,17 +17,11 @@ use sha1::Digest as _;
 use sha1::Sha1;
 
 pub fn get_unique_name(existing_names: &HashSet<String>, name_base: &str) -> String {
-    if !existing_names.contains(name_base) {
-        return name_base.to_string();
-    }
-    let mut num = 1;
-    loop {
-        let candidate = format!("{name_base} ({num})");
-        if !existing_names.contains(&candidate) {
-            return candidate;
-        }
-        num += 1;
-    }
+    let taken = existing_names
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    instance_id::allocate_unique_name(&taken, name_base)
 }
 
 #[derive(thiserror::Error, Debug)]

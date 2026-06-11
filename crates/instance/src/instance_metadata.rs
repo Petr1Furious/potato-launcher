@@ -19,6 +19,7 @@ use utils::{
 
 use crate::{
     assets::{AssetIndex, AssetsMetadata},
+    localized::LocalizedString,
     mod_sync::{ModSyncError, build_mod_sync_plan},
     os::{get_os_name, get_system_arch},
     overrides::with_overrides,
@@ -135,7 +136,10 @@ pub enum ResourceSyncMode {
 pub struct InstanceMetadata {
     /// instance name
     #[serde(default)]
-    pub name: String,
+    pub id: String,
+
+    #[serde(default)]
+    pub display_name: Option<LocalizedString>,
 
     /// auth backend to use for this instance
     #[serde(default)]
@@ -283,7 +287,8 @@ impl InstanceMetadata {
         base_url: &BaseUrl,
     ) -> Result<InstanceManifestEntry, InstanceMetadataError> {
         Ok(InstanceManifestEntry {
-            name: self.name.clone(),
+            id: self.id.clone(),
+            display_name: self.display_name.clone(),
             url: InstancesDir::root()
                 .instance_dir(unique_name)
                 .meta_path()
@@ -311,8 +316,15 @@ impl InstanceMetadata {
             .unwrap_or_else(|| "8".to_string())
     }
 
-    pub fn get_name(&self) -> &str {
-        &self.name
+    pub fn get_id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn resolve_display_name<'a>(&'a self, language: &str) -> &'a str {
+        self.display_name
+            .as_ref()
+            .and_then(|display_name| display_name.resolve(language))
+            .unwrap_or(&self.id)
     }
 
     pub fn get_client_check_task(
@@ -329,7 +341,7 @@ impl InstanceMetadata {
         {
             Ok(client.get_check_task(
                 &VersionsDir::root()
-                    .client_jar_path(self.get_id()?)
+                    .client_jar_path(self.get_version_id()?)
                     .to_fs(data_dir),
             ))
         } else {
@@ -416,7 +428,7 @@ impl InstanceMetadata {
             }
         }
         let effective_client_path = VersionsDir::root()
-            .client_jar_path(self.get_id()?)
+            .client_jar_path(self.get_version_id()?)
             .to_fs(data_dir);
         paths.push(effective_client_path);
         Ok(paths)
@@ -572,7 +584,7 @@ impl InstanceMetadata {
             .collect()
     }
 
-    pub fn get_id(&self) -> Result<&str, InstanceMetadataError> {
+    pub fn get_version_id(&self) -> Result<&str, InstanceMetadataError> {
         Ok(&self
             .versions
             .last()
@@ -580,7 +592,7 @@ impl InstanceMetadata {
             .id)
     }
 
-    pub fn get_parent_id(&self) -> Result<&str, InstanceMetadataError> {
+    pub fn get_parent_version_id(&self) -> Result<&str, InstanceMetadataError> {
         Ok(&self
             .versions
             .first()
@@ -652,7 +664,8 @@ mod tests {
         mod_entries: Vec<ModEntry>,
     ) -> InstanceMetadata {
         InstanceMetadata {
-            name: "Test".to_string(),
+            id: "Test".to_string(),
+            display_name: None,
             auth_backend: None,
             content_rules,
             mod_entries,

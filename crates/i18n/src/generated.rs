@@ -861,6 +861,12 @@ pub mod local {
             _ => "Create local instance",
         }
     }
+    pub fn folder_name_preview(dir_name: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Имя папки: {dir_name}"),
+            _ => format!("Folder name: {dir_name}"),
+        }
+    }
     pub fn instance_name() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Имя инстанса",

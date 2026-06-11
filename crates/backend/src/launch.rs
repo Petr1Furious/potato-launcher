@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use instance::{
     instance_metadata::InstanceMetadata,
     os,
-    storage::{InstanceId, LocalInstance},
+    storage::{InstanceHandle, LocalInstance},
 };
 use launcher_auth::{
     AccountData,
@@ -53,7 +53,7 @@ const JAVA_21_GC_OPTIONS: &[&str] = &[
 
 #[derive(Clone)]
 pub(crate) struct LaunchRequest {
-    pub(crate) id: InstanceId,
+    pub(crate) handle: InstanceHandle,
     pub(crate) account: Option<AccountKey>,
     pub(crate) bypass_required_provider: bool,
     pub(crate) xmx_mb: Option<u64>,
@@ -74,7 +74,7 @@ pub(crate) struct LaunchStart {
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum LaunchError {
     #[error("installed instance {0} was not found")]
-    InstanceNotFound(InstanceId),
+    InstanceNotFound(InstanceHandle),
     #[error("account {0:?} was not found")]
     AccountNotFound(AccountKey),
     #[error("account {account:?} is not compatible with required auth provider {required:?}")]
@@ -133,8 +133,8 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
     let local = request
         .local_instances
         .iter()
-        .find(|instance| instance.id == request.id)
-        .ok_or_else(|| LaunchError::InstanceNotFound(request.id.clone()))?;
+        .find(|instance| instance.handle == request.handle)
+        .ok_or_else(|| LaunchError::InstanceNotFound(request.handle.clone()))?;
     let instance_dir = InstancesDir::root()
         .instance_dir(&local.dir_name)
         .with_data_dir(data_dir.clone());
@@ -186,7 +186,7 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
 
     log::info!(
         "Launching {} with Java at {}",
-        metadata.get_name(),
+        metadata.get_id(),
         java.path.display()
     );
     log::debug!("Java arguments: {:?}", args.java);
@@ -248,7 +248,7 @@ fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArgument
     } = ctx;
     let classpath = classpath(metadata, data_dir)?;
     let libraries_dir = LibrariesDir::root().to_fs(data_dir);
-    let natives_dir = NativesDir::for_id(metadata.get_parent_id()?).to_fs(data_dir);
+    let natives_dir = NativesDir::for_id(metadata.get_parent_version_id()?).to_fs(data_dir);
     let assets_dir = AssetsDir::root().to_fs(data_dir);
     let asset_index = metadata.get_asset_index()?;
     let variables = HashMap::from([
@@ -268,7 +268,10 @@ fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArgument
             "auth_player_name".to_string(),
             account.user_info.username.clone(),
         ),
-        ("version_name".to_string(), metadata.get_id()?.to_string()),
+        (
+            "version_name".to_string(),
+            metadata.get_version_id()?.to_string(),
+        ),
         ("game_directory".to_string(), path_string(game_directory)),
         ("assets_root".to_string(), path_string(&assets_dir)),
         ("assets_index_name".to_string(), asset_index.id.clone()),

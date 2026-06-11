@@ -1,12 +1,14 @@
 package api
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Petr1Furious/potato-launcher/backend/internal/config"
 	"github.com/Petr1Furious/potato-launcher/backend/internal/models"
+	"github.com/Petr1Furious/potato-launcher/backend/internal/validation"
 )
 
 func toAPISettings(spec *models.BuilderSpec) APISettings {
@@ -21,7 +23,8 @@ func applySettingsToSpec(spec *models.BuilderSpec, settings APISettings) {
 
 func toAPIInstance(v models.BuilderInstance) APIInstance {
 	return APIInstance{
-		Name:             v.Name,
+		ID:               v.ID,
+		DisplayName:      v.DisplayName,
 		MinecraftVersion: v.MinecraftVersion,
 		ModLoader:        v.ModLoader,
 		LoaderVersion:    v.LoaderVersion,
@@ -38,7 +41,7 @@ func getInstanceDir(cfg *config.Config, instanceName string) string {
 }
 
 func ensureSourceRoot(cfg *config.Config, instance *models.BuilderInstance) {
-	instance.SourceRoot = filepath.ToSlash(getInstanceDir(cfg, instance.Name))
+	instance.SourceRoot = filepath.ToSlash(getInstanceDir(cfg, instance.ID))
 }
 
 func ensureInstanceDir(cfg *config.Config, instanceName string) error {
@@ -65,9 +68,19 @@ func ensureResourceSyncDefault(instance *models.BuilderInstance) {
 }
 
 func normalizeInstance(cfg *config.Config, instance *models.BuilderInstance) error {
-	instance.Name = strings.TrimSpace(instance.Name)
-	if instance.Name == "" {
-		return NewValidationError("name", "name is required")
+	instance.ID = strings.TrimSpace(instance.ID)
+	if err := validation.ValidateInstanceID(instance.ID); err != nil {
+		return NewValidationError("id", err.Error())
+	}
+	for i, set := range instance.ModSync.OptionalSets {
+		set.ID = strings.TrimSpace(set.ID)
+		if err := validation.ValidateInstanceID(set.ID); err != nil {
+			return NewValidationError(
+				fmt.Sprintf("mod_sync.optional_sets[%d].id", i),
+				err.Error(),
+			)
+		}
+		instance.ModSync.OptionalSets[i] = set
 	}
 	instance.MinecraftVersion = strings.TrimSpace(instance.MinecraftVersion)
 	if instance.MinecraftVersion == "" {
@@ -89,7 +102,8 @@ func normalizeInstance(cfg *config.Config, instance *models.BuilderInstance) err
 
 func toBuilderInstance(cfg *config.Config, m APIInstance) (*models.BuilderInstance, error) {
 	instance := models.BuilderInstance{
-		Name:             m.Name,
+		ID:               m.ID,
+		DisplayName:      m.DisplayName,
 		MinecraftVersion: m.MinecraftVersion,
 		ModLoader:        m.ModLoader,
 		LoaderVersion:    m.LoaderVersion,

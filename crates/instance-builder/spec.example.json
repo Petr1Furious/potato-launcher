@@ -3,49 +3,63 @@
     "replace_download_urls": true,
     "instances": [
         {
-            "name": "Monifactory",
-            "minecraft_version": "1.20.1",
-            "mod_loader": "forge",
-            "loader_version": "47.3.7",
-            "source_root": "/data/internal/uploaded-instances/Monifactory",
+            "id": "minigames",
+            "display_name": {
+                "en": "Minigames",
+                "ru": "Миниигры"
+            },
+            "minecraft_version": "26.1.2",
+            "mod_loader": "fabric",
             "content_rules": [
                 {
+                    "type": "file",
+                    "path": "config/fabric_loader_dependencies.json",
+                    "apply_on": "update",
+                    "overwrite": true
+                },
+                {
+                    "type": "directory",
                     "path": "config",
                     "apply_on": "update",
                     "overwrite": false,
-                    "type": "directory",
-                    "delete_extra": false,
-                    "skip_if_dir_exists": true
+                    "delete_extra": true,
+                    "skip_if_dir_exists": false
                 },
                 {
-                    "path": "defaultoptions/options.txt",
+                    "type": "file",
+                    "path": "options.txt",
                     "apply_on": "update",
+                    "overwrite": false
+                },
+                {
+                    "type": "file",
+                    "path": "servers.dat",
+                    "apply_on": "update",
+                    "overwrite": false
+                },
+                {
                     "type": "config_options",
-                    "config_type": "properties",
+                    "path": "config/some_config.json",
+                    "apply_on": "update",
+                    "config_type": "json",
                     "options": [
                         {
-                            "key": "difficulty",
-                            "value": "2"
+                            "key": "some_option",
+                            "value": "some_value"
                         }
                     ]
                 }
             ],
             "mod_sync": {
                 "mode": "delta",
-                "required": [
-                    "some-required-mod"
-                ],
-                "blocked": [
-                    "some-blocked-mod"
-                ],
+                "required": ["some-required-mod"],
+                "blocked": ["some-blocked-mod"],
                 "optional_sets": [
                     {
-                        "id": "jei",
-                        "display_name": "Just Enough Items (JEI)",
-                        "enabled_by_default": false,
-                        "mod_ids": [
-                            "jei-1.20.1-forge-15.2.0.27"
-                        ]
+                        "id": "voxy-set",
+                        "display_name": "Voxy",
+                        "enabled_by_default": true,
+                        "mod_ids": ["voxy", "vss"]
                     }
                 ]
             },
@@ -54,7 +68,7 @@
                 "type": "telegram",
                 "auth_base_url": "https://your.auth.domain"
             },
-            "default_xmx": "8G"
+            "default_xmx": "6G"
         }
     ]
 }

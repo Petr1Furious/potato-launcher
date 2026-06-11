@@ -14,10 +14,21 @@ where
     L: Serialize,
     R: Serialize,
 {
+    if let [Either::Left(left)] = this {
+        return left.serialize(serializer);
+    }
+
     serializer.collect_seq(this.iter().map(|el| match el {
         Either::Left(left) => EitherUntagged::Left(left),
         Either::Right(right) => EitherUntagged::Right(right),
     }))
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum VecOrSingle<L, R> {
+    Vec(Vec<EitherUntagged<L, R>>),
+    Single(L),
 }
 
 pub fn deserialize<'de, L, R, D>(deserializer: D) -> Result<Vec<Either<L, R>>, D::Error>
@@ -26,13 +37,15 @@ where
     L: Deserialize<'de>,
     R: Deserialize<'de>,
 {
-    Vec::<EitherUntagged<L, R>>::deserialize(deserializer).map(|vec| {
-        vec.into_iter()
+    VecOrSingle::<L, R>::deserialize(deserializer).map(|input| match input {
+        VecOrSingle::Vec(vec) => vec
+            .into_iter()
             .map(|el| match el {
                 EitherUntagged::Left(left) => Either::Left(left),
                 EitherUntagged::Right(right) => Either::Right(right),
             })
-            .collect()
+            .collect(),
+        VecOrSingle::Single(left) => vec![Either::Left(left)],
     })
 }
 
@@ -58,6 +71,19 @@ mod tests {
         };
         let serialized = serde_json::to_string(&instance).unwrap();
         assert_eq!(serialized, r#"{"data":["meow",1874,"craft"]}"#);
+        let deserialized = serde_json::from_str::<TestStruct>(&serialized).unwrap();
+        assert_eq!(deserialized, instance);
+    }
+
+    #[test]
+    fn test_single_left_value() {
+        let instance = TestStruct {
+            data: vec![Either::Left("meow".to_string())],
+        };
+
+        let serialized = serde_json::to_string(&instance).unwrap();
+        assert_eq!(serialized, r#"{"data":"meow"}"#);
+
         let deserialized = serde_json::from_str::<TestStruct>(&serialized).unwrap();
         assert_eq!(deserialized, instance);
     }

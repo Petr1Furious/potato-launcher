@@ -7,14 +7,19 @@ use std::{
 use launcher_auth::storage::AccountKey;
 use serde::{Deserialize, Serialize};
 use url::Url;
-use utils::paths::{DataDir, InstanceDirFS, InstancesDir};
+use utils::{
+    instance_id::{allocate_unique_name, slugify_local_dir_name, validate_instance_id},
+    paths::{DataDir, InstanceDirFS, InstancesDir},
+};
+
+pub use utils::instance_id::InstanceIdError;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(transparent)]
-pub struct InstanceId(String);
+pub struct InstanceHandle(String);
 
-impl InstanceId {
+impl InstanceHandle {
     pub fn local_new() -> Self {
         Self(format!("local:{}", Uuid::new_v4()))
     }
@@ -32,19 +37,19 @@ impl InstanceId {
     }
 }
 
-impl fmt::Display for InstanceId {
+impl fmt::Display for InstanceHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-impl From<String> for InstanceId {
+impl From<String> for InstanceHandle {
     fn from(value: String) -> Self {
         Self(value)
     }
 }
 
-impl From<&str> for InstanceId {
+impl From<&str> for InstanceHandle {
     fn from(value: &str) -> Self {
         Self(value.to_string())
     }
@@ -70,7 +75,7 @@ fn encode_component(value: &str) -> String {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteSource {
     pub manifest_url: Url,
-    pub name_in_manifest: String,
+    pub id_in_manifest: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,7 +88,7 @@ pub enum InstanceState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LocalInstance {
-    pub id: InstanceId,
+    pub handle: InstanceHandle,
     #[serde(skip)]
     pub dir_name: String,
     #[serde(default)]
@@ -147,11 +152,11 @@ pub enum InstanceStorageError {
         #[source]
         source: std::io::Error,
     },
-    #[error("local instance id not found: {0}")]
-    MissingInstance(InstanceId),
-    #[error("duplicate local instance id {id} in {first_path:?} and {duplicate_path:?}")]
-    DuplicateInstanceId {
-        id: InstanceId,
+    #[error("local instance handle not found: {0}")]
+    MissingInstanceHandle(InstanceHandle),
+    #[error("duplicate local instance handle {handle} in {first_path:?} and {duplicate_path:?}")]
+    DuplicateInstanceHandle {
+        handle: InstanceHandle,
         first_path: PathBuf,
         duplicate_path: PathBuf,
     },
@@ -165,13 +170,13 @@ pub enum InstanceStorageError {
 
 impl LocalInstance {
     pub fn new_remote(
-        id: InstanceId,
+        handle: InstanceHandle,
         dir_name: String,
         source: RemoteSource,
         last_synced_sha1: Option<String>,
     ) -> Self {
         Self {
-            id,
+            handle,
             dir_name,
             state: InstanceState::Installed,
             source: Some(source),
@@ -179,9 +184,13 @@ impl LocalInstance {
         }
     }
 
-    pub fn new_pending_remote(id: InstanceId, dir_name: String, source: RemoteSource) -> Self {
+    pub fn new_pending_remote(
+        handle: InstanceHandle,
+        dir_name: String,
+        source: RemoteSource,
+    ) -> Self {
         Self {
-            id,
+            handle,
             dir_name,
             state: InstanceState::PendingRemote,
             source: Some(source),
@@ -190,12 +199,12 @@ impl LocalInstance {
     }
 
     pub fn new_local(dir_name: String) -> Self {
-        Self::new_local_with_id(InstanceId::local_new(), dir_name)
+        Self::new_local_with_handle(InstanceHandle::local_new(), dir_name)
     }
 
-    pub fn new_local_with_id(id: InstanceId, dir_name: String) -> Self {
+    pub fn new_local_with_handle(handle: InstanceHandle, dir_name: String) -> Self {
         Self {
-            id,
+            handle,
             dir_name,
             state: InstanceState::Installed,
             source: None,
@@ -223,7 +232,7 @@ impl InstanceStorage {
             .await
             .map_err(InstanceStorageError::ReadInstancesDir)?;
         let mut instances = Vec::new();
-        let mut seen_ids = HashMap::<InstanceId, PathBuf>::new();
+        let mut seen_handles = HashMap::<InstanceHandle, PathBuf>::new();
 
         while let Some(entry) = read_dir
             .next_entry()
@@ -261,9 +270,11 @@ impl InstanceStorage {
                     }
                 })?;
             instance.dir_name = dir_name;
-            if let Some(first_path) = seen_ids.insert(instance.id.clone(), descriptor.clone()) {
-                return Err(InstanceStorageError::DuplicateInstanceId {
-                    id: instance.id.clone(),
+            if let Some(first_path) =
+                seen_handles.insert(instance.handle.clone(), descriptor.clone())
+            {
+                return Err(InstanceStorageError::DuplicateInstanceHandle {
+                    handle: instance.handle.clone(),
                     first_path,
                     duplicate_path: descriptor,
                 });
@@ -289,17 +300,19 @@ impl InstanceStorage {
         &self.instances
     }
 
-    pub fn get(&self, id: &InstanceId) -> Option<&LocalInstance> {
-        self.instances.iter().find(|instance| &instance.id == id)
+    pub fn get(&self, handle: &InstanceHandle) -> Option<&LocalInstance> {
+        self.instances
+            .iter()
+            .find(|instance| &instance.handle == handle)
     }
 
-    pub fn get_mut(&mut self, id: &InstanceId) -> Option<&mut LocalInstance> {
+    pub fn get_mut(&mut self, handle: &InstanceHandle) -> Option<&mut LocalInstance> {
         self.instances
             .iter_mut()
-            .find(|instance| &instance.id == id)
+            .find(|instance| &instance.handle == handle)
     }
 
-    pub fn allocate_dir_name(&self, base: &str) -> String {
+    pub fn allocate_dir_name(&self, base: &str) -> Result<String, InstanceIdError> {
         let taken = self
             .instances
             .iter()
@@ -326,26 +339,26 @@ impl InstanceStorage {
     ) -> Result<(), InstanceStorageError> {
         self.save_instance(data_dir, &instance).await?;
         let existing = self
-            .get_mut(&instance.id)
-            .ok_or_else(|| InstanceStorageError::MissingInstance(instance.id.clone()))?;
+            .get_mut(&instance.handle)
+            .ok_or_else(|| InstanceStorageError::MissingInstanceHandle(instance.handle.clone()))?;
         *existing = instance;
         Ok(())
     }
 
-    pub fn remove(&mut self, id: &InstanceId) -> Option<LocalInstance> {
+    pub fn remove(&mut self, handle: &InstanceHandle) -> Option<LocalInstance> {
         let index = self
             .instances
             .iter()
-            .position(|instance| &instance.id == id)?;
+            .position(|instance| &instance.handle == handle)?;
         Some(self.instances.remove(index))
     }
 
     pub async fn remove_from_disk(
         &mut self,
         data_dir: &DataDir,
-        id: &InstanceId,
+        handle: &InstanceHandle,
     ) -> Result<Option<LocalInstance>, InstanceStorageError> {
-        let Some(instance) = self.remove(id) else {
+        let Some(instance) = self.remove(handle) else {
             return Ok(None);
         };
         let dir = instances_dir(data_dir).join(&instance.dir_name);
@@ -405,40 +418,14 @@ pub async fn save_instance_settings(
     tokio::fs::write(instance_dir.settings_path(), bytes).await
 }
 
-pub fn allocate_dir_name(taken: &HashSet<&str>, base: &str) -> String {
-    let base = sanitize_dir_name(base);
-    if !taken.contains(base.as_str()) {
-        return base;
-    }
-
-    for i in 1.. {
-        let candidate = format!("{base} ({i})");
-        if !taken.contains(candidate.as_str()) {
-            return candidate;
-        }
-    }
-
-    unreachable!("usize counter should not overflow while allocating an instance directory")
+pub fn allocate_dir_name(taken: &HashSet<&str>, id: &str) -> Result<String, InstanceIdError> {
+    validate_instance_id(id)?;
+    Ok(allocate_unique_name(taken, id))
 }
 
-pub fn sanitize_dir_name(name: &str) -> String {
-    let sanitized = name
-        .chars()
-        .map(|ch| match ch {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            ch if ch.is_control() => '_',
-            ch => ch,
-        })
-        .collect::<String>()
-        .trim()
-        .trim_matches('.')
-        .to_string();
-
-    if sanitized.is_empty() {
-        "Instance".to_string()
-    } else {
-        sanitized
-    }
+pub fn allocate_local_dir_name(taken: &HashSet<&str>, display_name: &str) -> String {
+    let base = slugify_local_dir_name(display_name);
+    allocate_unique_name(taken, &base)
 }
 
 fn instances_dir(data_dir: &DataDir) -> PathBuf {
@@ -456,13 +443,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn allocate_dir_name_sanitizes_and_resolves_conflicts() {
-        let taken = HashSet::from(["Vanilla", "Vanilla (1)", "Bad_Name"]);
+    fn allocate_dir_name_resolves_conflicts_with_numeric_suffixes() {
+        let taken = HashSet::from(["vanilla", "vanilla-2"]);
 
-        assert_eq!(allocate_dir_name(&taken, "Vanilla"), "Vanilla (2)");
-        assert_eq!(allocate_dir_name(&taken, "Bad/Name"), "Bad_Name (1)");
-        assert_eq!(allocate_dir_name(&HashSet::new(), "..."), "Instance");
-        assert_eq!(allocate_dir_name(&HashSet::new(), "  "), "Instance");
+        assert_eq!(allocate_dir_name(&taken, "vanilla").unwrap(), "vanilla-3");
+        assert_eq!(
+            allocate_dir_name(&HashSet::new(), "minigames").unwrap(),
+            "minigames"
+        );
+    }
+
+    #[test]
+    fn allocate_local_dir_name_slugifies_display_names() {
+        let taken = HashSet::from(["my-pack", "my-pack-2"]);
+        assert_eq!(allocate_local_dir_name(&taken, "My Pack"), "my-pack-3");
+        assert_eq!(
+            allocate_local_dir_name(&HashSet::new(), "Мой Пак"),
+            "moi-pak"
+        );
     }
 
     #[tokio::test]
@@ -471,39 +469,39 @@ mod tests {
         let mut storage = InstanceStorage::empty();
         let source = RemoteSource {
             manifest_url: Url::parse("https://backend.example/manifest.json").unwrap(),
-            name_in_manifest: "Vanilla".to_string(),
+            id_in_manifest: "vanilla".to_string(),
         };
 
         let first = LocalInstance::new_remote(
-            InstanceId::remote(&source.manifest_url, "Vanilla"),
-            "Vanilla".to_string(),
+            InstanceHandle::remote(&source.manifest_url, "vanilla"),
+            "vanilla".to_string(),
             source.clone(),
             Some("first-sha1".to_string()),
         );
         let second = LocalInstance::new_remote(
-            InstanceId::remote(&source.manifest_url, "Vanilla Copy"),
-            "Vanilla (1)".to_string(),
+            InstanceHandle::remote(&source.manifest_url, "vanilla-copy"),
+            "vanilla-copy".to_string(),
             source.clone(),
             Some("second-sha1".to_string()),
         );
-        let first_id = first.id.clone();
-        let second_id = second.id.clone();
+        let first_handle = first.handle.clone();
+        let second_handle = second.handle.clone();
 
         storage.add(&data_dir, first).await.unwrap();
         storage.add(&data_dir, second).await.unwrap();
 
         let loaded = InstanceStorage::load(&data_dir).await.unwrap();
-        let first = loaded.get(&first_id).unwrap();
-        let second = loaded.get(&second_id).unwrap();
+        let first = loaded.get(&first_handle).unwrap();
+        let second = loaded.get(&second_handle).unwrap();
 
-        assert_eq!(first.dir_name, "Vanilla");
-        assert_eq!(second.dir_name, "Vanilla (1)");
-        assert_eq!(first.source.as_ref().unwrap().name_in_manifest, "Vanilla");
-        assert_eq!(second.source.as_ref().unwrap().name_in_manifest, "Vanilla");
+        assert_eq!(first.dir_name, "vanilla");
+        assert_eq!(second.dir_name, "vanilla-copy");
+        assert_eq!(first.source.as_ref().unwrap().id_in_manifest, "vanilla");
+        assert_eq!(second.source.as_ref().unwrap().id_in_manifest, "vanilla");
     }
 
     #[tokio::test]
-    async fn duplicate_id_descriptors_fail_explicitly() {
+    async fn duplicate_handle_descriptors_fail_explicitly() {
         let data_dir = temp_data_dir();
         let instances = instances_dir(&data_dir);
         tokio::fs::create_dir_all(instances.join("One"))
@@ -513,16 +511,16 @@ mod tests {
             .await
             .unwrap();
 
-        let id = InstanceId::from("local:duplicate");
+        let handle = InstanceHandle::from("local:duplicate");
         let one = LocalInstance {
-            id: id.clone(),
+            handle: handle.clone(),
             dir_name: "One".to_string(),
             state: InstanceState::Installed,
             source: None,
             last_synced_sha1: None,
         };
         let two = LocalInstance {
-            id: id.clone(),
+            handle: handle.clone(),
             dir_name: "Two".to_string(),
             state: InstanceState::Installed,
             source: None,
@@ -552,10 +550,10 @@ mod tests {
         let err = InstanceStorage::load(&data_dir).await.unwrap_err();
         assert!(matches!(
             err,
-            InstanceStorageError::DuplicateInstanceId {
-                id: duplicate_id,
+            InstanceStorageError::DuplicateInstanceHandle {
+                handle: duplicate_handle,
                 ..
-            } if duplicate_id == id
+            } if duplicate_handle == handle
         ));
     }
 
@@ -565,11 +563,14 @@ mod tests {
         let mut storage = InstanceStorage::empty();
         let source = RemoteSource {
             manifest_url: Url::parse("https://backend.example/manifest.json").unwrap(),
-            name_in_manifest: "Configured".to_string(),
+            id_in_manifest: "Configured".to_string(),
         };
-        let id = InstanceId::remote(&source.manifest_url, &source.name_in_manifest);
-        let instance =
-            LocalInstance::new_pending_remote(id.clone(), "Configured".to_string(), source.clone());
+        let handle = InstanceHandle::remote(&source.manifest_url, &source.id_in_manifest);
+        let instance = LocalInstance::new_pending_remote(
+            handle.clone(),
+            "Configured".to_string(),
+            source.clone(),
+        );
         storage.add(&data_dir, instance).await.unwrap();
 
         let settings = InstanceUserSettings {
@@ -584,7 +585,7 @@ mod tests {
             .unwrap();
 
         let loaded = InstanceStorage::load(&data_dir).await.unwrap();
-        let pending = loaded.get(&id).unwrap();
+        let pending = loaded.get(&handle).unwrap();
         assert!(pending.is_pending_remote());
         assert_eq!(pending.source.as_ref(), Some(&source));
         let loaded_settings = load_instance_settings(&configured_dir).await.unwrap();
@@ -596,13 +597,13 @@ mod tests {
         let data_dir = temp_data_dir();
         let mut storage = InstanceStorage::empty();
         let instance = LocalInstance::new_local("Local".to_string());
-        let id = instance.id.clone();
+        let handle = instance.handle.clone();
 
         storage.add(&data_dir, instance).await.unwrap();
         let dir = instances_dir(&data_dir).join("Local");
         assert!(dir.exists());
 
-        let removed = storage.remove_from_disk(&data_dir, &id).await.unwrap();
+        let removed = storage.remove_from_disk(&data_dir, &handle).await.unwrap();
         assert!(removed.is_some());
         assert!(!dir.exists());
     }

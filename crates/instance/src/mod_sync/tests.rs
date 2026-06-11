@@ -11,6 +11,7 @@ use zip::write::SimpleFileOptions;
 
 use crate::install_params::{InstallCause, InstallParams};
 use crate::instance_metadata::{ModEntry, Object};
+use crate::localized::LocalizedString;
 use crate::mod_sync::{
     ModSyncMode, ModSyncSettings, ModSyncWarning, OptionalModSet, build_mod_sync_plan,
     resolve_optional_set_enabled,
@@ -238,7 +239,7 @@ fn optional_set_downloads_to_cache_and_links_when_enabled() {
     let settings = ModSyncSettings {
         optional_sets: vec![OptionalModSet {
             id: "extras".to_string(),
-            display_name: "Extras".to_string(),
+            display_name: LocalizedString::Plain("Extras".to_string()),
             enabled_by_default: false,
             mod_ids: vec!["jei".to_string()],
         }],
@@ -277,7 +278,7 @@ fn optional_set_disabled_keeps_cache_check_and_removes_link() {
     let settings = ModSyncSettings {
         optional_sets: vec![OptionalModSet {
             id: "extras".to_string(),
-            display_name: "Extras".to_string(),
+            display_name: LocalizedString::Plain("Extras".to_string()),
             enabled_by_default: true,
             mod_ids: vec!["jei".to_string()],
         }],
@@ -309,7 +310,7 @@ fn resolves_optional_set_defaults_and_user_preferences() {
     let settings = ModSyncSettings {
         optional_sets: vec![OptionalModSet {
             id: "extras".to_string(),
-            display_name: "Extras".to_string(),
+            display_name: LocalizedString::Plain("Extras".to_string()),
             enabled_by_default: true,
             mod_ids: vec!["jei".to_string()],
         }],
@@ -380,10 +381,7 @@ fn mirror_fast_uses_size_checks() {
 
 #[test]
 fn extract_mod_id_tolerates_unescaped_newlines_in_fabric_mod_json() {
-    let dir = std::env::temp_dir().join(format!(
-        "potato-mod-id-test-{}",
-        uuid::Uuid::new_v4()
-    ));
+    let dir = std::env::temp_dir().join(format!("potato-mod-id-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("some_mod.jar");
     let file = File::create(&path).unwrap();

@@ -30,6 +30,8 @@ type AuthBackend struct {
 	ClientSecret string   `json:"client_secret,omitempty"`
 }
 
+type LocalizedString = json.RawMessage
+
 type ApplyOn string
 
 const (
@@ -81,10 +83,10 @@ const (
 )
 
 type OptionalModSet struct {
-	ID               string   `json:"id"`
-	DisplayName      string   `json:"display_name"`
-	EnabledByDefault bool     `json:"enabled_by_default,omitempty"`
-	ModIDs           []string `json:"mod_ids"`
+	ID               string          `json:"id"`
+	DisplayName      LocalizedString `json:"display_name"`
+	EnabledByDefault bool            `json:"enabled_by_default,omitempty"`
+	ModIDs           []string        `json:"mod_ids"`
 }
 
 type ModSyncSettings struct {
@@ -103,7 +105,8 @@ const (
 )
 
 type BuilderInstance struct {
-	Name             string           `json:"name"`
+	ID               string           `json:"id"`
+	DisplayName      LocalizedString  `json:"display_name,omitempty"`
 	MinecraftVersion string           `json:"minecraft_version"`
 	ModLoader        LoaderType       `json:"mod_loader"`
 	LoaderVersion    string           `json:"loader_version,omitempty"`

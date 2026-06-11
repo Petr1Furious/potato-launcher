@@ -28,6 +28,7 @@ which = "8.0.2"
 zip.workspace = true
 hex = "0.4.3"
 either.workspace = true
+unidecode.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.186"

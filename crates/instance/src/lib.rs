@@ -2,6 +2,7 @@ pub mod assets;
 pub mod authlib;
 pub mod install_params;
 pub mod instance_metadata;
+pub mod localized;
 pub mod manifest;
 pub mod mod_sync;
 pub mod os;

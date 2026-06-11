@@ -12,7 +12,7 @@ use instance::{
     instance_metadata::{InstallCause, InstallParams, InstanceMetadata, ModSyncWarning},
     manifest::InstanceManifestEntry,
     mod_sync,
-    storage::{self, InstanceId, InstanceState, LocalInstance, RemoteSource},
+    storage::{self, InstanceHandle, InstanceState, LocalInstance, RemoteSource},
 };
 use launcher_bridge::{FrontendSender, MessageToFrontend, NotificationLevel};
 use tokio::sync::mpsc;
@@ -27,11 +27,11 @@ use utils::{
     },
 };
 
-use crate::{BackendEvent, catalog::BackendCatalogEntry, instances::remote_entry_id};
+use crate::{BackendEvent, catalog::BackendCatalogEntry, instances::remote_entry_handle};
 
 #[derive(Clone)]
 pub(crate) struct InstallRequest {
-    pub(crate) id: InstanceId,
+    pub(crate) handle: InstanceHandle,
 
     pub(crate) cause: InstallCause,
     pub(crate) force_overwrite: bool,
@@ -52,7 +52,7 @@ pub(crate) struct InstallOutput {
 
 #[derive(Clone)]
 struct InstallPlan {
-    view_id: InstanceId,
+    view_handle: InstanceHandle,
     dir_name: String,
     source: RemoteSource,
     entry: InstanceManifestEntry,
@@ -61,19 +61,19 @@ struct InstallPlan {
 
 #[derive(Clone)]
 pub(crate) struct BackendProgressReporter {
-    id: InstanceId,
+    handle: InstanceHandle,
     frontend: FrontendSender,
     internal: mpsc::UnboundedSender<BackendEvent>,
 }
 
 impl BackendProgressReporter {
     pub fn new(
-        id: InstanceId,
+        handle: InstanceHandle,
         frontend: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) -> Self {
         Self {
-            id,
+            handle,
             frontend,
             internal,
         }
@@ -103,14 +103,14 @@ impl ProgressReporter for BackendProgressReporter {
         };
 
         self.frontend.send(MessageToFrontend::InstanceProgress {
-            id: self.id.clone(),
+            handle: self.handle.clone(),
             stage,
             current,
             total: event.total,
             message: Arc::<str>::from(message.clone()),
         });
         let _ = self.internal.send(BackendEvent::InstallProgress {
-            id: self.id.clone(),
+            handle: self.handle.clone(),
             stage,
             current,
             total: event.total,
@@ -145,14 +145,14 @@ fn stage_message(stage: &ProgressStage) -> String {
 }
 
 pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<InstallOutput> {
-    let plan = resolve_install_plan(&request.id, &request.local_instances, &request.catalogs)?;
+    let plan = resolve_install_plan(&request.handle, &request.local_instances, &request.catalogs)?;
     let instance_dir = InstancesDir::root()
         .instance_dir(&plan.dir_name)
         .with_data_dir(request.launcher_dir.clone());
     instance_dir.ensure_dir();
 
     let progress = BackendProgressReporter::new(
-        plan.view_id.clone(),
+        plan.view_handle.clone(),
         request.frontend.clone(),
         request.internal,
     );
@@ -218,7 +218,7 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
             ));
         }
         LocalInstance::new_remote(
-            plan.view_id,
+            plan.view_handle,
             plan.dir_name,
             plan.source,
             Some(plan.entry.sha1),
@@ -229,11 +229,14 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
 }
 
 fn resolve_install_plan(
-    id: &InstanceId,
+    handle: &InstanceHandle,
     local_instances: &[LocalInstance],
     catalogs: &HashMap<Url, BackendCatalogEntry>,
 ) -> anyhow::Result<InstallPlan> {
-    if let Some(local) = local_instances.iter().find(|instance| &instance.id == id) {
+    if let Some(local) = local_instances
+        .iter()
+        .find(|instance| &instance.handle == handle)
+    {
         return resolve_local_install_plan(local.clone(), catalogs);
     }
 
@@ -242,14 +245,20 @@ fn resolve_install_plan(
             continue;
         };
         for entry in &manifest.instances {
-            if remote_entry_id(url, &entry.name) == *id {
-                let dir_name = allocate_dir_name(local_instances, &entry.name);
+            if remote_entry_handle(url, &entry.id) == *handle {
+                let dir_name = allocate_dir_name(local_instances, &entry.id).map_err(|err| {
+                    anyhow::anyhow!(
+                        "invalid instance id '{}' in catalog {}: {err}",
+                        entry.id,
+                        url
+                    )
+                })?;
                 return Ok(InstallPlan {
-                    view_id: id.clone(),
+                    view_handle: handle.clone(),
                     dir_name,
                     source: RemoteSource {
                         manifest_url: url.clone(),
-                        name_in_manifest: entry.name.clone(),
+                        id_in_manifest: entry.id.clone(),
                     },
                     entry: entry.clone(),
                     existing: None,
@@ -259,7 +268,7 @@ fn resolve_install_plan(
     }
 
     Err(anyhow::anyhow!(
-        "instance {id} was not found in local storage or fetched catalogs"
+        "instance {handle} was not found in local storage or fetched catalogs"
     ))
 }
 
@@ -280,12 +289,12 @@ fn resolve_local_install_plan(
     let entry = manifest
         .instances
         .iter()
-        .find(|entry| entry.name == source.name_in_manifest)
+        .find(|entry| entry.id == source.id_in_manifest)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("instance is no longer published by its backend"))?;
 
     Ok(InstallPlan {
-        view_id: local.id.clone(),
+        view_handle: local.handle.clone(),
         dir_name: local.dir_name.clone(),
         source,
         entry,
@@ -735,7 +744,7 @@ pub(crate) async fn sync_instance_mods(
     client: &reqwest::Client,
     launcher_dir: DataDir,
     dir_name: &str,
-    view_id: InstanceId,
+    view_handle: InstanceHandle,
     optional_mod_preferences: HashMap<String, bool>,
     frontend: FrontendSender,
     internal: mpsc::UnboundedSender<BackendEvent>,
@@ -746,7 +755,7 @@ pub(crate) async fn sync_instance_mods(
     let metadata = InstanceMetadata::read_local(&instance_dir).await?;
     let optional_sets_enabled =
         mod_sync::resolve_optional_set_enabled(&metadata.mod_sync, &optional_mod_preferences);
-    let progress = BackendProgressReporter::new(view_id, frontend.clone(), internal);
+    let progress = BackendProgressReporter::new(view_handle, frontend.clone(), internal);
     let install_params = InstallParams {
         instance_dir,
         cause: InstallCause::Update,
@@ -826,7 +835,7 @@ async fn extract_natives(
 ) -> anyhow::Result<()> {
     let native_paths = metadata.get_native_library_paths(data_dir)?;
     progress.set_length(native_paths.len() as u64);
-    let natives_dir = NativesDir::for_id(metadata.get_parent_id()?).to_fs(data_dir);
+    let natives_dir = NativesDir::for_id(metadata.get_parent_version_id()?).to_fs(data_dir);
     if natives_dir.exists() {
         tokio::fs::remove_dir_all(&natives_dir).await?;
     }
@@ -869,7 +878,10 @@ fn extract_zip(src: &Path, dest: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn allocate_dir_name(local_instances: &[LocalInstance], base: &str) -> String {
+fn allocate_dir_name(
+    local_instances: &[LocalInstance],
+    base: &str,
+) -> Result<String, storage::InstanceIdError> {
     let taken = local_instances
         .iter()
         .map(|instance| instance.dir_name.as_str())
@@ -915,13 +927,14 @@ mod tests {
     fn resolves_remote_install_plan_from_fetched_catalog() {
         let url = Url::parse("https://example.com/manifest.json").unwrap();
         let entry = InstanceManifestEntry {
-            name: "Vanilla".to_string(),
+            id: "vanilla".to_string(),
+            display_name: None,
             url: Url::parse("https://example.com/vanilla/meta.json").unwrap(),
             sha1: "abc".to_string(),
             auth_backend: None,
             required_java_version: "8".to_string(),
         };
-        let id = remote_entry_id(&url, &entry.name);
+        let id = remote_entry_handle(&url, &entry.id);
         let catalogs = HashMap::from([(
             url.clone(),
             ok_catalog(InstanceManifest {
@@ -931,22 +944,22 @@ mod tests {
 
         let plan = resolve_install_plan(&id, &[], &catalogs).unwrap();
 
-        assert_eq!(plan.view_id, id);
-        assert_eq!(plan.dir_name, "Vanilla");
+        assert_eq!(plan.view_handle, id);
+        assert_eq!(plan.dir_name, "vanilla");
         assert_eq!(plan.source.manifest_url, url);
-        assert_eq!(plan.source.name_in_manifest, "Vanilla");
+        assert_eq!(plan.source.id_in_manifest, "vanilla");
     }
 
     #[test]
     fn allocates_distinct_directory_names_for_duplicate_display_names() {
         let local_instances = vec![
-            LocalInstance::new_local("Vanilla".to_string()),
-            LocalInstance::new_local("Vanilla (1)".to_string()),
+            LocalInstance::new_local("vanilla".to_string()),
+            LocalInstance::new_local("vanilla-2".to_string()),
         ];
 
         assert_eq!(
-            allocate_dir_name(&local_instances, "Vanilla"),
-            "Vanilla (2)"
+            allocate_dir_name(&local_instances, "vanilla").unwrap(),
+            "vanilla-3"
         );
     }
 
@@ -1062,16 +1075,17 @@ mod tests {
     fn resolves_existing_remote_instance_for_update() {
         let url = Url::parse("https://example.com/manifest.json").unwrap();
         let local = LocalInstance::new_remote(
-            remote_entry_id(&url, "Vanilla"),
-            "Vanilla".to_string(),
+            remote_entry_handle(&url, "vanilla"),
+            "vanilla".to_string(),
             RemoteSource {
                 manifest_url: url.clone(),
-                name_in_manifest: "Vanilla".to_string(),
+                id_in_manifest: "vanilla".to_string(),
             },
             Some("old".to_string()),
         );
         let entry = InstanceManifestEntry {
-            name: "Vanilla".to_string(),
+            id: "vanilla".to_string(),
+            display_name: None,
             url: Url::parse("https://example.com/vanilla/meta.json").unwrap(),
             sha1: "new".to_string(),
             auth_backend: None,
@@ -1085,10 +1099,10 @@ mod tests {
         )]);
 
         let plan =
-            resolve_install_plan(&local.id, std::slice::from_ref(&local), &catalogs).unwrap();
+            resolve_install_plan(&local.handle, std::slice::from_ref(&local), &catalogs).unwrap();
 
-        assert_eq!(plan.view_id, local.id);
-        assert_eq!(plan.dir_name, "Vanilla");
+        assert_eq!(plan.view_handle, local.handle);
+        assert_eq!(plan.dir_name, "vanilla");
         assert!(plan.existing.is_some());
     }
 }
