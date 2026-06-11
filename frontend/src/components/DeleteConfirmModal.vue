@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Trash2 } from 'lucide-vue-next';
+import { Trash2 } from "lucide-vue-next";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,7 +9,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from "@/components/ui/alert-dialog";
 
 const props = defineProps<{
   isOpen: boolean;
@@ -17,13 +17,13 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (event: 'confirm'): void;
-  (event: 'cancel'): void;
+  (event: "confirm"): void;
+  (event: "cancel"): void;
 }>();
 
 const handleOpenChange = (next: boolean) => {
   if (!next) {
-    emit('cancel');
+    emit("cancel");
   }
 };
 </script>
@@ -37,17 +37,14 @@ const handleOpenChange = (next: boolean) => {
           Delete Instance
         </AlertDialogTitle>
         <AlertDialogDescription>
-          Are you sure you want to delete <span class="font-medium">{{ props.instanceName }}</span>? This cannot be
-          undone.
+          Are you sure you want to delete
+          <span class="font-medium">{{ props.instanceName }}</span
+          >? This cannot be undone.
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogCancel @click="emit('cancel')">
-          Cancel
-        </AlertDialogCancel>
-        <AlertDialogAction @click="emit('confirm')">
-          Delete
-        </AlertDialogAction>
+        <AlertDialogCancel @click="emit('cancel')"> Cancel </AlertDialogCancel>
+        <AlertDialogAction @click="emit('confirm')"> Delete </AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>

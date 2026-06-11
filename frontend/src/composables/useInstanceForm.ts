@@ -1,5 +1,5 @@
-import { reactive, ref, watch, type Ref } from 'vue';
-import { apiService } from '@/services/api';
+import { reactive, ref, watch, type Ref } from "vue";
+import { apiService } from "@/services/api";
 import type {
   AuthBackend,
   ContentRule,
@@ -7,7 +7,7 @@ import type {
   LocalizedString,
   ModSyncSettings,
   OptionalModSet,
-} from '@/types/api';
+} from "@/types/api";
 import {
   ApplyOn,
   AuthType,
@@ -15,19 +15,20 @@ import {
   LoaderType,
   ModSyncMode,
   ResourceSyncMode,
-} from '@/types/api';
+} from "@/types/api";
 import {
   configOptionsFromForm,
   configOptionsToForm,
   defaultContentRule,
   type ConfigOptionForm,
-} from '@/utils/contentRules';
+  type ContentRuleForm,
+} from "@/utils/contentRules";
 
-export type ContentRuleForm = ContentRule & {
-  optionsForm?: ConfigOptionForm[];
-};
+export type { ContentRuleForm };
 
-type PartialInstanceBase = Partial<Omit<InstanceBase, 'auth_backend' | 'content_rules' | 'mod_sync'>> & {
+type PartialInstanceBase = Partial<
+  Omit<InstanceBase, "auth_backend" | "content_rules" | "mod_sync">
+> & {
   auth_backend?: Partial<AuthBackend>;
   content_rules?: ContentRule[];
   mod_sync?: Partial<ModSyncSettings>;
@@ -36,7 +37,7 @@ type PartialInstanceBase = Partial<Omit<InstanceBase, 'auth_backend' | 'content_
 interface UseInstanceFormOptions {
   initialData?: PartialInstanceBase;
   guard?: Ref<boolean>;
-  mode?: 'create' | 'edit';
+  mode?: "create" | "edit";
 }
 
 const defaultModSync = (): ModSyncSettings => ({
@@ -57,7 +58,9 @@ const toContentRuleForm = (rule: ContentRule): ContentRuleForm => ({
   ...rule,
   apply_on: rule.apply_on ?? ApplyOn.UPDATE,
   overwrite:
-    rule.type === ContentRuleType.CONFIG_OPTIONS ? undefined : (rule.overwrite ?? true),
+    rule.type === ContentRuleType.CONFIG_OPTIONS
+      ? undefined
+      : (rule.overwrite ?? true),
   optionsForm:
     rule.type === ContentRuleType.CONFIG_OPTIONS
       ? configOptionsToForm(rule.options)
@@ -73,23 +76,31 @@ const buildModSync = (source?: Partial<ModSyncSettings>): ModSyncSettings => ({
   mode: source?.mode ?? ModSyncMode.DELTA,
   required: [...(source?.required ?? [])],
   blocked: [...(source?.blocked ?? [])],
-  optional_sets: source?.optional_sets?.map((set) => ({ ...set, mod_ids: [...set.mod_ids] })) ?? [],
+  optional_sets:
+    source?.optional_sets?.map((set) => ({
+      ...set,
+      mod_ids: [...set.mod_ids],
+    })) ?? [],
 });
 
-const buildFormData = (source?: PartialInstanceBase): InstanceBase & { content_rules: ContentRuleForm[] } => ({
-  id: source?.id ?? '',
+const buildFormData = (
+  source?: PartialInstanceBase,
+): InstanceBase & { content_rules: ContentRuleForm[] } => ({
+  id: source?.id ?? "",
   display_name: source?.display_name,
-  minecraft_version: source?.minecraft_version ?? '',
+  minecraft_version: source?.minecraft_version ?? "",
   mod_loader: source?.mod_loader ?? LoaderType.VANILLA,
-  loader_version: source?.loader_version ?? '',
-  default_xmx: source?.default_xmx ?? '',
+  loader_version: source?.loader_version ?? "",
+  default_xmx: source?.default_xmx ?? "",
   auth_backend: buildAuthBackend(source?.auth_backend),
   content_rules: buildContentRules(source?.content_rules),
   mod_sync: buildModSync(source?.mod_sync),
   resource_sync: source?.resource_sync ?? ResourceSyncMode.ON_UPDATE,
 });
 
-export const contentRulesToPayload = (rules: ContentRuleForm[]): ContentRule[] =>
+export const contentRulesToPayload = (
+  rules: ContentRuleForm[],
+): ContentRule[] =>
   rules.map((rule) => {
     const payload: ContentRule = {
       path: rule.path,
@@ -97,7 +108,10 @@ export const contentRulesToPayload = (rules: ContentRuleForm[]): ContentRule[] =
       apply_on: rule.apply_on,
     };
 
-    if (rule.type === ContentRuleType.FILE || rule.type === ContentRuleType.DIRECTORY) {
+    if (
+      rule.type === ContentRuleType.FILE ||
+      rule.type === ContentRuleType.DIRECTORY
+    ) {
       payload.overwrite = rule.overwrite ?? true;
     }
 
@@ -115,7 +129,7 @@ export const contentRulesToPayload = (rules: ContentRuleForm[]): ContentRule[] =
   });
 
 export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
-  const mode = options.mode ?? 'create';
+  const mode = options.mode ?? "create";
   const guardRef = options.guard ?? ref(true);
 
   const formData = reactive(buildFormData(options.initialData));
@@ -132,7 +146,7 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
   };
 
   const resetLoaderVersion = () => {
-    formData.loader_version = '';
+    formData.loader_version = "";
   };
 
   const clearLoaderVersions = () => {
@@ -159,7 +173,7 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
       loadingMinecraftVersions.value = true;
       minecraftVersions.value = await apiService.getMinecraftVersions();
     } catch (err) {
-      console.error('Failed to load Minecraft versions:', err);
+      console.error("Failed to load Minecraft versions:", err);
       minecraftVersions.value = [];
     } finally {
       loadingMinecraftVersions.value = false;
@@ -176,7 +190,7 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
       loadingLoaders.value = true;
       availableLoaders.value = await apiService.getLoadersForVersion(version);
     } catch (err) {
-      console.error('Failed to load loaders:', err);
+      console.error("Failed to load loaders:", err);
       availableLoaders.value = [];
     } finally {
       loadingLoaders.value = false;
@@ -197,9 +211,12 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
 
     try {
       loadingLoaderVersions.value = true;
-      loaderVersions.value = await apiService.getLoaderVersions(version, loader);
+      loaderVersions.value = await apiService.getLoaderVersions(
+        version,
+        loader,
+      );
     } catch (err) {
-      console.error('Failed to load loader versions:', err);
+      console.error("Failed to load loader versions:", err);
       loaderVersions.value = [];
     } finally {
       loadingLoaderVersions.value = false;
@@ -224,7 +241,7 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
       }
 
       loadLoaders(mcVersion).catch((err) => console.error(err));
-      if (mode === 'create') {
+      if (mode === "create") {
         setLoaderDefault();
         resetLoaderVersion();
       }
@@ -233,7 +250,12 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
   );
 
   watch(
-    () => [guardRef.value, formData.minecraft_version, formData.mod_loader] as const,
+    () =>
+      [
+        guardRef.value,
+        formData.minecraft_version,
+        formData.mod_loader,
+      ] as const,
     ([guard, mcVersion, loader]) => {
       if (!guard) {
         loaderVersions.value = [];
@@ -252,7 +274,7 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
       }
 
       loadLoaderVersions(mcVersion, loader).catch((err) => console.error(err));
-      if (mode === 'create') {
+      if (mode === "create") {
         resetLoaderVersion();
       }
     },
@@ -263,23 +285,26 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
     field: keyof InstanceBase,
     value: string | LoaderType | ResourceSyncMode | LocalizedString | undefined,
   ) => {
-    if (field === 'display_name') {
+    if (field === "display_name") {
       formData.display_name = value as LocalizedString | undefined;
       return;
     }
     (formData as Record<string, unknown>)[field] = value;
   };
 
-  const handleAuthBackendChange = (field: keyof AuthBackend, value: string | AuthType) => {
+  const handleAuthBackendChange = (
+    field: keyof AuthBackend,
+    value: string | AuthType,
+  ) => {
     formData.auth_backend = {
       ...formData.auth_backend,
       [field]: value,
-      ...(field === 'type'
+      ...(field === "type"
         ? {
-          auth_base_url: undefined,
-          client_id: undefined,
-          client_secret: undefined,
-        }
+            auth_base_url: undefined,
+            client_id: undefined,
+            client_secret: undefined,
+          }
         : {}),
     };
   };
@@ -288,14 +313,14 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
     formData.mod_sync.mode = modeValue;
   };
 
-  const updateModIdList = (field: 'required' | 'blocked', value: string) => {
+  const updateModIdList = (field: "required" | "blocked", value: string) => {
     formData.mod_sync[field] = value
       .split(/[,\n]/)
       .map((item) => item.trim())
       .filter(Boolean);
   };
 
-  const modIdListToString = (items: string[] = []) => items.join(', ');
+  const modIdListToString = (items: string[] = []) => items.join(", ");
 
   const addContentRule = () => {
     formData.content_rules.push(defaultContentRule());
@@ -305,21 +330,27 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
     formData.content_rules.splice(index, 1);
   };
 
-  const updateContentRule = <K extends keyof ContentRuleForm>(
+  const updateContentRule = (
     index: number,
-    field: K,
-    value: ContentRuleForm[K],
+    field: keyof ContentRuleForm,
+    value: unknown,
   ) => {
     const rule = formData.content_rules[index];
     if (!rule) return;
 
-    (rule as ContentRuleForm)[field] = value;
+    (rule as Record<keyof ContentRuleForm, unknown>)[field] = value;
 
-    if (field === 'type') {
-      if (value === ContentRuleType.CONFIG_OPTIONS && !rule.optionsForm?.length) {
-        rule.optionsForm = [{ keyPath: '', value: '' }];
+    if (field === "type") {
+      if (
+        value === ContentRuleType.CONFIG_OPTIONS &&
+        !rule.optionsForm?.length
+      ) {
+        rule.optionsForm = [{ keyPath: "", value: "" }];
       }
-      if (value === ContentRuleType.FILE || value === ContentRuleType.DIRECTORY) {
+      if (
+        value === ContentRuleType.FILE ||
+        value === ContentRuleType.DIRECTORY
+      ) {
         rule.overwrite = rule.overwrite ?? true;
       }
       if (value === ContentRuleType.DIRECTORY) {
@@ -334,7 +365,7 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
     if (!rule?.optionsForm) {
       rule.optionsForm = [];
     }
-    rule.optionsForm.push({ keyPath: '', value: '' });
+    rule.optionsForm.push({ keyPath: "", value: "" });
   };
 
   const removeConfigOption = (ruleIndex: number, optionIndex: number) => {
@@ -347,7 +378,8 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
     field: keyof ConfigOptionForm,
     value: string,
   ) => {
-    const option = formData.content_rules[ruleIndex]?.optionsForm?.[optionIndex];
+    const option =
+      formData.content_rules[ruleIndex]?.optionsForm?.[optionIndex];
     if (option) {
       option[field] = value;
     }
@@ -356,8 +388,8 @@ export const useInstanceForm = (options: UseInstanceFormOptions = {}) => {
   const addOptionalSet = () => {
     formData.mod_sync.optional_sets = formData.mod_sync.optional_sets ?? [];
     formData.mod_sync.optional_sets.push({
-      id: '',
-      display_name: '',
+      id: "",
+      display_name: "",
       enabled_by_default: false,
       mod_ids: [],
     });

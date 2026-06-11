@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { Terminal } from 'lucide-vue-next';
-import type { InstanceResponse } from '@/types/api';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Terminal } from "lucide-vue-next";
+import type { InstanceResponse } from "@/types/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 
 const props = defineProps<{
   instances: InstanceResponse[];
@@ -13,12 +13,12 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (event: 'select', id: string): void;
-  (event: 'new'): void;
-  (event: 'show-settings'): void;
-  (event: 'logout'): void;
-  (event: 'build'): void;
-  (event: 'show-logs'): void;
+  (event: "select", id: string): void;
+  (event: "new"): void;
+  (event: "show-settings"): void;
+  (event: "logout"): void;
+  (event: "build"): void;
+  (event: "show-logs"): void;
 }>();
 </script>
 
@@ -32,10 +32,20 @@ const emit = defineEmits<{
             New Instance
           </Button>
           <div class="flex gap-2">
-            <Button class="flex-1" size="sm" :disabled="props.building" @click="emit('build')">
-              {{ props.building ? 'Building…' : 'Build' }}
+            <Button
+              class="flex-1"
+              size="sm"
+              :disabled="props.building"
+              @click="emit('build')"
+            >
+              {{ props.building ? "Building…" : "Build" }}
             </Button>
-            <Button size="sm" variant="outline" title="Show Logs" @click="emit('show-logs')">
+            <Button
+              size="sm"
+              variant="outline"
+              title="Show Logs"
+              @click="emit('show-logs')"
+            >
               <Terminal class="h-4 w-4" />
             </Button>
           </div>
@@ -45,8 +55,12 @@ const emit = defineEmits<{
           <p>Existing Instances</p>
           <p v-if="props.instances.length === 0">No instances yet</p>
           <div v-else class="space-y-2">
-            <Button v-for="instance in props.instances" :key="instance.id" class="w-full justify-between"
-              @click="emit('select', instance.id)">
+            <Button
+              v-for="instance in props.instances"
+              :key="instance.id"
+              class="w-full justify-between"
+              @click="emit('select', instance.id)"
+            >
               <span>{{ instance.id }}</span>
               <span>{{ instance.minecraft_version }}</span>
             </Button>
@@ -57,9 +71,7 @@ const emit = defineEmits<{
           <Button class="w-full" @click="emit('show-settings')">
             Settings
           </Button>
-          <Button class="w-full" @click="emit('logout')">
-            Logout
-          </Button>
+          <Button class="w-full" @click="emit('logout')"> Logout </Button>
         </div>
       </CardContent>
     </Card>

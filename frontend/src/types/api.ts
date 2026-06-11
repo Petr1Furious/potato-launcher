@@ -1,45 +1,45 @@
 export enum LoaderType {
-  VANILLA = 'vanilla',
-  FORGE = 'forge',
-  FABRIC = 'fabric',
-  NEOFORGE = 'neoforge',
+  VANILLA = "vanilla",
+  FORGE = "forge",
+  FABRIC = "fabric",
+  NEOFORGE = "neoforge",
 }
 
 export enum AuthType {
-  OFFLINE = 'offline',
-  MOJANG = 'mojang',
-  TELEGRAM = 'telegram',
-  ELY_BY = 'ely.by',
+  OFFLINE = "offline",
+  MOJANG = "mojang",
+  TELEGRAM = "telegram",
+  ELY_BY = "ely.by",
 }
 
 export enum ApplyOn {
-  UPDATE = 'update',
-  ALWAYS = 'always',
+  UPDATE = "update",
+  ALWAYS = "always",
 }
 
 export enum ContentRuleType {
-  FILE = 'file',
-  DIRECTORY = 'directory',
-  CONFIG_OPTIONS = 'config_options',
+  FILE = "file",
+  DIRECTORY = "directory",
+  CONFIG_OPTIONS = "config_options",
 }
 
 export enum ConfigType {
-  JSON = 'json',
-  YAML = 'yaml',
-  TOML = 'toml',
-  PROPERTIES = 'properties',
+  JSON = "json",
+  YAML = "yaml",
+  TOML = "toml",
+  PROPERTIES = "properties",
 }
 
 export enum ModSyncMode {
-  DELTA = 'delta',
-  MIRROR = 'mirror',
-  MIRROR_FAST = 'mirror_fast',
+  DELTA = "delta",
+  MIRROR = "mirror",
+  MIRROR_FAST = "mirror_fast",
 }
 
 export enum ResourceSyncMode {
-  ON_UPDATE = 'on_update',
-  ALWAYS = 'always',
-  ALWAYS_FAST = 'always_fast',
+  ON_UPDATE = "on_update",
+  ALWAYS = "always",
+  ALWAYS_FAST = "always_fast",
 }
 
 export interface AuthBackend {

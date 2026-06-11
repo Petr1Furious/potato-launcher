@@ -1,13 +1,37 @@
-FROM rust:1.96-slim-bookworm AS instance-builder
+FROM rust:1.96-slim-bookworm AS chef
 WORKDIR /src
+RUN cargo install cargo-chef --locked
 
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+RUN sed -i \
+    -e '/crates\/backend/d' \
+    -e '/crates\/bridge/d' \
+    -e '/crates\/build-config/d' \
+    -e '/crates\/frontend/d' \
+    -e '/crates\/i18n/d' \
+    -e '/crates\/launcher/d' \
+    Cargo.toml
+RUN cargo chef prepare --recipe-path recipe.json --bin instance-builder
 
-RUN cargo build --locked --release -p instance-builder
+FROM chef AS instance-builder
+COPY --from=planner /src/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json --bin instance-builder
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN sed -i \
+    -e '/crates\/backend/d' \
+    -e '/crates\/bridge/d' \
+    -e '/crates\/build-config/d' \
+    -e '/crates\/frontend/d' \
+    -e '/crates\/i18n/d' \
+    -e '/crates\/launcher/d' \
+    Cargo.toml
+RUN cargo build --release --bin instance-builder
 
 
-FROM golang:1.25-bookworm AS backend-builder
+FROM golang:1.26-bookworm AS backend-builder
 WORKDIR /src/backend
 
 COPY backend/go.mod backend/go.sum ./

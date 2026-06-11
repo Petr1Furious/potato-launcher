@@ -37,7 +37,7 @@ class WebSocketService {
           const data = JSON.parse(event.data);
           this.handleMessage(data);
         } catch (error) {
-          console.error('Failed to parse WebSocket message:', error);
+          console.error("Failed to parse WebSocket message:", error);
         }
       };
 
@@ -45,12 +45,15 @@ class WebSocketService {
         this.ws = null;
         this.connectionPromise = null;
 
-        if (this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
+        if (
+          this.shouldReconnect &&
+          this.reconnectAttempts < this.maxReconnectAttempts
+        ) {
           this.reconnectAttempts += 1;
           setTimeout(() => {
             if (this.shouldReconnect && token) {
               this.connect(token).catch((err) => {
-                console.error('WebSocket reconnect failed:', err);
+                console.error("WebSocket reconnect failed:", err);
               });
             }
           }, this.reconnectDelay * this.reconnectAttempts);
@@ -58,7 +61,7 @@ class WebSocketService {
       };
 
       this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.error("WebSocket error:", error);
         if (this.connectionPromise) {
           this.connectionPromise = null;
           reject(error);
@@ -80,19 +83,21 @@ class WebSocketService {
 
   private handleMessage(data: any): void {
     switch (data.type) {
-      case 'instance_created':
-      case 'instance_updated':
-      case 'instance_deleted':
-        window.dispatchEvent(new CustomEvent('instance_change', { detail: data }));
+      case "instance_created":
+      case "instance_updated":
+      case "instance_deleted":
+        window.dispatchEvent(
+          new CustomEvent("instance_change", { detail: data }),
+        );
         break;
-      case 'notification':
-        window.dispatchEvent(new CustomEvent('notification', { detail: data }));
+      case "notification":
+        window.dispatchEvent(new CustomEvent("notification", { detail: data }));
         break;
-      case 'build_log':
-        window.dispatchEvent(new CustomEvent('build_log', { detail: data }));
+      case "build_log":
+        window.dispatchEvent(new CustomEvent("build_log", { detail: data }));
         break;
       default:
-        console.log('Unknown message type:', data.type);
+        console.log("Unknown message type:", data.type);
     }
   }
 

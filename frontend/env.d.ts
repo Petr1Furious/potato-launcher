@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-export { };
+export {};
 
 declare global {
   interface ImportMetaEnv {

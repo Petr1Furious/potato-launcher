@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
-import { Plus, Trash2 } from 'lucide-vue-next';
-import type { LocalizedString } from '@/types/api';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Button } from '@/components/ui/button';
+import { ref, watch } from "vue";
+import { Plus, Trash2 } from "lucide-vue-next";
+import type { LocalizedString } from "@/types/api";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import {
   defaultLocalizedEntries,
   entriesToLocalizedMap,
   localizedMapToEntries,
   type LocalizedEntry,
   type LocalizedStringMode,
-} from '@/utils/localizedString';
+} from "@/utils/localizedString";
 
 const props = withDefaults(
   defineProps<{
@@ -24,38 +24,39 @@ const props = withDefaults(
   }>(),
   {
     disabled: false,
-    idPrefix: 'localized-string',
+    idPrefix: "localized-string",
     required: false,
-    label: 'Display Name',
-    description: 'Optional. Shown in the launcher; falls back to the instance id.',
+    label: "Display Name",
+    description:
+      "Optional. Shown in the launcher; falls back to the instance id.",
   },
 );
 
 const emit = defineEmits<{
-  (event: 'update:modelValue', value: LocalizedString | undefined): void;
+  (event: "update:modelValue", value: LocalizedString | undefined): void;
 }>();
 
-const mode = ref<LocalizedStringMode>('plain');
-const plainText = ref('');
+const mode = ref<LocalizedStringMode>("plain");
+const plainText = ref("");
 const entries = ref<LocalizedEntry[]>(defaultLocalizedEntries());
 
 const syncFromModel = (value?: LocalizedString) => {
   if (!value) {
-    mode.value = 'plain';
-    plainText.value = '';
+    mode.value = "plain";
+    plainText.value = "";
     entries.value = defaultLocalizedEntries();
     return;
   }
 
-  if (typeof value === 'string') {
-    mode.value = 'plain';
+  if (typeof value === "string") {
+    mode.value = "plain";
     plainText.value = value;
     entries.value = defaultLocalizedEntries();
     return;
   }
 
-  mode.value = 'localized';
-  plainText.value = '';
+  mode.value = "localized";
+  plainText.value = "";
   const mapped = localizedMapToEntries(value);
   entries.value = mapped.length > 0 ? mapped : defaultLocalizedEntries();
 };
@@ -63,22 +64,22 @@ const syncFromModel = (value?: LocalizedString) => {
 watch(() => props.modelValue, syncFromModel, { immediate: true });
 
 const emitValue = () => {
-  if (mode.value === 'plain') {
+  if (mode.value === "plain") {
     const trimmed = plainText.value.trim();
     if (!trimmed) {
-      emit('update:modelValue', props.required ? '' : undefined);
+      emit("update:modelValue", props.required ? "" : undefined);
       return;
     }
-    emit('update:modelValue', trimmed);
+    emit("update:modelValue", trimmed);
     return;
   }
 
   const map = entriesToLocalizedMap(entries.value);
   if (!map) {
-    emit('update:modelValue', props.required ? '' : undefined);
+    emit("update:modelValue", props.required ? "" : undefined);
     return;
   }
-  emit('update:modelValue', map);
+  emit("update:modelValue", map);
 };
 
 const setMode = (next: LocalizedStringMode) => {
@@ -86,9 +87,10 @@ const setMode = (next: LocalizedStringMode) => {
     return;
   }
 
-  if (next === 'plain') {
+  if (next === "plain") {
     const map = entriesToLocalizedMap(entries.value);
-    plainText.value = map?.en ?? entries.value.find((entry) => entry.text.trim())?.text ?? '';
+    plainText.value =
+      map?.en ?? entries.value.find((entry) => entry.text.trim())?.text ?? "";
   } else {
     const trimmed = plainText.value.trim();
     entries.value = trimmed
@@ -105,7 +107,11 @@ const updatePlainText = (value: string) => {
   emitValue();
 };
 
-const updateEntry = (index: number, field: keyof LocalizedEntry, value: string) => {
+const updateEntry = (
+  index: number,
+  field: keyof LocalizedEntry,
+  value: string,
+) => {
   const entry = entries.value[index];
   if (!entry) {
     return;
@@ -115,7 +121,7 @@ const updateEntry = (index: number, field: keyof LocalizedEntry, value: string) 
 };
 
 const addEntry = () => {
-  entries.value.push({ language: '', text: '' });
+  entries.value.push({ language: "", text: "" });
 };
 
 const removeEntry = (index: number) => {
@@ -177,13 +183,17 @@ const removeEntry = (index: number) => {
           :disabled="props.disabled"
           placeholder="en"
           class="font-mono text-sm"
-          @update:modelValue="(value) => updateEntry(index, 'language', value?.toString() ?? '')"
+          @update:modelValue="
+            (value) => updateEntry(index, 'language', value?.toString() ?? '')
+          "
         />
         <Input
           :model-value="entry.text"
           :disabled="props.disabled"
           placeholder="Display name"
-          @update:modelValue="(value) => updateEntry(index, 'text', value?.toString() ?? '')"
+          @update:modelValue="
+            (value) => updateEntry(index, 'text', value?.toString() ?? '')
+          "
         />
         <Button
           type="button"

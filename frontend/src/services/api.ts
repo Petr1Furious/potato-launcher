@@ -1,5 +1,10 @@
-import type { InstanceBase, InstanceResponse, LoaderType, Settings } from '../types/api';
-import { authService } from './auth';
+import type {
+  InstanceBase,
+  InstanceResponse,
+  LoaderType,
+  Settings,
+} from "../types/api";
+import { authService } from "./auth";
 
 export class ApiError extends Error {
   status: number;
@@ -14,7 +19,7 @@ export class ApiError extends Error {
     errors?: Array<{ message: string; location?: string; value?: unknown }>,
   ) {
     super(detail);
-    this.name = 'ApiError';
+    this.name = "ApiError";
     this.status = status;
     this.detail = detail;
     this.title = title;
@@ -22,16 +27,18 @@ export class ApiError extends Error {
   }
 
   toString(): string {
-    const base = this.detail ? `${this.status} ${this.title} - ${this.detail}` : `${this.status} ${this.title}`;
+    const base = this.detail
+      ? `${this.status} ${this.title} - ${this.detail}`
+      : `${this.status} ${this.title}`;
     if (!this.errors || this.errors.length === 0) return base;
     const parts = this.errors
       .map((e) => (e?.location ? `${e.location}: ${e.message}` : e.message))
       .filter(Boolean);
-    return parts.length ? `${base}; ${parts.join('; ')}` : base;
+    return parts.length ? `${base}; ${parts.join("; ")}` : base;
   }
 }
 
-export function formatError(err: unknown, fallback = 'Request failed'): string {
+export function formatError(err: unknown, fallback = "Request failed"): string {
   if (err instanceof ApiError) return err.toString();
   if (err instanceof Error) return err.message || fallback;
   return fallback;
@@ -44,12 +51,15 @@ class ApiService {
     this.handleUnauthorized = handler;
   }
 
-  private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  private async request<T>(
+    endpoint: string,
+    options?: RequestInit,
+  ): Promise<T> {
     const authHeaders = authService.getAuthHeaders();
 
     const response = await fetch(`/api/v1${endpoint}`, {
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ...authHeaders,
         ...options?.headers,
       },
@@ -60,7 +70,11 @@ class ApiService {
       if (this.handleUnauthorized) {
         this.handleUnauthorized();
       }
-      throw new ApiError(401, 'Unauthorized - please login again', 'Unauthorized');
+      throw new ApiError(
+        401,
+        "Unauthorized - please login again",
+        "Unauthorized",
+      );
     }
 
     if (!response.ok) {
@@ -68,21 +82,23 @@ class ApiService {
       try {
         errorData = await response.json();
       } catch {
-        throw new ApiError(response.status, response.statusText, 'Error');
+        throw new ApiError(response.status, response.statusText, "Error");
       }
 
-      if (errorData && typeof errorData === 'object' && 'detail' in errorData) {
+      if (errorData && typeof errorData === "object" && "detail" in errorData) {
         const errors =
-          'errors' in errorData && Array.isArray((errorData as any).errors) ? (errorData as any).errors : undefined;
+          "errors" in errorData && Array.isArray((errorData as any).errors)
+            ? (errorData as any).errors
+            : undefined;
         throw new ApiError(
           response.status,
           (errorData as any).detail || response.statusText,
-          (errorData as any).title || 'Error',
-          errors
+          (errorData as any).title || "Error",
+          errors,
         );
       }
 
-      throw new ApiError(response.status, response.statusText, 'Error');
+      throw new ApiError(response.status, response.statusText, "Error");
     }
 
     if (response.status === 204) {
@@ -93,48 +109,51 @@ class ApiService {
   }
 
   async getInstances(): Promise<InstanceResponse[]> {
-    return this.request('/instances');
+    return this.request("/instances");
   }
 
   async createInstance(instance: InstanceBase): Promise<InstanceResponse> {
-    return this.request('/instances', {
-      method: 'POST',
+    return this.request("/instances", {
+      method: "POST",
       body: JSON.stringify(instance),
     });
   }
 
-  async updateInstance(id: string, instance: Partial<InstanceResponse>): Promise<InstanceResponse> {
+  async updateInstance(
+    id: string,
+    instance: Partial<InstanceResponse>,
+  ): Promise<InstanceResponse> {
     return this.request(`/instances/${id}`, {
-      method: 'PATCH',
+      method: "PATCH",
       body: JSON.stringify(instance),
     });
   }
 
   async deleteInstance(id: string): Promise<void> {
     return this.request(`/instances/${id}`, {
-      method: 'DELETE',
+      method: "DELETE",
     });
   }
 
   async getSettings(): Promise<Settings> {
-    return this.request('/settings');
+    return this.request("/settings");
   }
 
   async updateSettings(settings: Settings): Promise<Settings> {
-    return this.request('/settings', {
-      method: 'POST',
+    return this.request("/settings", {
+      method: "POST",
       body: JSON.stringify(settings),
     });
   }
 
   async buildInstances(): Promise<void> {
-    return this.request('/instances/build', {
-      method: 'POST',
+    return this.request("/instances/build", {
+      method: "POST",
     });
   }
 
   async getMinecraftVersions(): Promise<string[]> {
-    return this.request('/mc-versions');
+    return this.request("/mc-versions");
   }
 
   async getLoadersForVersion(version: string): Promise<LoaderType[]> {

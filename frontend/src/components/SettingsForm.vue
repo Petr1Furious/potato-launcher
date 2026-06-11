@@ -1,17 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { Save } from 'lucide-vue-next';
-import { apiService, formatError } from '@/services/api';
-import type { Settings } from '@/types/api';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { useNotification } from '@/composables/useNotification';
+import { computed, onMounted, ref } from "vue";
+import { Save } from "lucide-vue-next";
+import { apiService, formatError } from "@/services/api";
+import type { Settings } from "@/types/api";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useNotification } from "@/composables/useNotification";
 
 const emit = defineEmits<{
-  (event: 'saved', payload: Settings): void;
+  (event: "saved", payload: Settings): void;
 }>();
 
 const displaySettings = ref<Settings>({ replace_download_urls: false });
@@ -22,7 +34,9 @@ const error = ref<string | null>(null);
 const { showError } = useNotification();
 
 const hasChanges = computed(
-  () => displaySettings.value.replace_download_urls !== originalSettings.value.replace_download_urls,
+  () =>
+    displaySettings.value.replace_download_urls !==
+    originalSettings.value.replace_download_urls,
 );
 
 const loadSettings = async () => {
@@ -33,7 +47,7 @@ const loadSettings = async () => {
     originalSettings.value = data;
     displaySettings.value = { ...data };
   } catch (err) {
-    error.value = formatError(err, 'Failed to load settings');
+    error.value = formatError(err, "Failed to load settings");
     showError(error.value);
     displaySettings.value = { replace_download_urls: false };
   } finally {
@@ -44,7 +58,8 @@ const loadSettings = async () => {
 const handleReplaceDownloadUrlsChange = (value: any) => {
   displaySettings.value = {
     ...displaySettings.value,
-    replace_download_urls: value === true || value === 'true' || value === 1 || value === '1',
+    replace_download_urls:
+      value === true || value === "true" || value === 1 || value === "1",
   };
 };
 
@@ -57,9 +72,9 @@ const handleSave = async () => {
     });
     originalSettings.value = { ...updated };
     displaySettings.value = { ...updated };
-    emit('saved', updated);
+    emit("saved", updated);
   } catch (err) {
-    error.value = formatError(err, 'Failed to save settings');
+    error.value = formatError(err, "Failed to save settings");
     showError(error.value);
   } finally {
     saving.value = false;
@@ -84,16 +99,16 @@ onMounted(() => {
           <Alert v-if="error" variant="destructive" class="mb-4">
             <AlertDescription class="flex items-center justify-between gap-2">
               <span class="whitespace-pre-wrap">{{ error }}</span>
-              <Button size="sm" @click="loadSettings">
-                Retry
-              </Button>
+              <Button size="sm" @click="loadSettings"> Retry </Button>
             </AlertDescription>
           </Alert>
           <div class="space-y-6">
             <div class="space-y-2">
               <Label>Replace Download URLs</Label>
-              <Select :model-value="displaySettings.replace_download_urls.toString()"
-                @update:modelValue="handleReplaceDownloadUrlsChange">
+              <Select
+                :model-value="displaySettings.replace_download_urls.toString()"
+                @update:modelValue="handleReplaceDownloadUrlsChange"
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -107,9 +122,13 @@ onMounted(() => {
               </p>
             </div>
             <div>
-              <Button class="gap-2" :disabled="!hasChanges || saving" @click="handleSave">
+              <Button
+                class="gap-2"
+                :disabled="!hasChanges || saving"
+                @click="handleSave"
+              >
                 <Save class="h-4 w-4" />
-                {{ saving ? 'Saving...' : 'Save Settings' }}
+                {{ saving ? "Saving..." : "Save Settings" }}
               </Button>
               <p v-if="hasChanges" class="mt-2 text-sm">
                 Changes are local until you save.

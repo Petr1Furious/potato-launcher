@@ -1,7 +1,7 @@
-import { ref } from 'vue';
-import { authService } from '@/services/auth';
-import type { TokenRequest } from '@/types/auth';
-import { formatError } from '@/services/api';
+import { ref } from "vue";
+import { authService } from "@/services/auth";
+import type { TokenRequest } from "@/types/auth";
+import { formatError } from "@/services/api";
 
 const isAuthenticated = ref(authService.isAuthenticated());
 const loading = ref(false);
@@ -15,7 +15,7 @@ export function useAuth() {
       await authService.login(tokenRequest);
       isAuthenticated.value = true;
     } catch (err) {
-      error.value = formatError(err, 'Login failed');
+      error.value = formatError(err, "Login failed");
       isAuthenticated.value = false;
       throw err;
     } finally {

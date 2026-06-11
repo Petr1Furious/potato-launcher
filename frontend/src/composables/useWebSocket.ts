@@ -1,6 +1,6 @@
-import { onUnmounted, ref, unref, watch, type Ref } from 'vue';
-import { authService } from '@/services/auth';
-import { webSocketService } from '@/services/websocket';
+import { onUnmounted, ref, unref, watch, type Ref } from "vue";
+import { authService } from "@/services/auth";
+import { webSocketService } from "@/services/websocket";
 
 interface UseWebSocketOptions {
   enabled?: Ref<boolean> | boolean;
@@ -9,7 +9,12 @@ interface UseWebSocketOptions {
   onBuildLog?: (data: { message: string }) => void;
 }
 
-export function useWebSocket({ enabled = true, onInstanceChange, onNotification, onBuildLog }: UseWebSocketOptions = {}) {
+export function useWebSocket({
+  enabled = true,
+  onInstanceChange,
+  onNotification,
+  onBuildLog,
+}: UseWebSocketOptions = {}) {
   const isConnected = ref(webSocketService.isConnected());
   let listenersAttached = false;
 
@@ -34,13 +39,19 @@ export function useWebSocket({ enabled = true, onInstanceChange, onNotification,
   const attachListeners = () => {
     if (listenersAttached) return;
     if (onInstanceChange) {
-      window.addEventListener('instance_change', handleInstanceChange as EventListener);
+      window.addEventListener(
+        "instance_change",
+        handleInstanceChange as EventListener,
+      );
     }
     if (onNotification) {
-      window.addEventListener('notification', handleNotification as EventListener);
+      window.addEventListener(
+        "notification",
+        handleNotification as EventListener,
+      );
     }
     if (onBuildLog) {
-      window.addEventListener('build_log', handleBuildLog as EventListener);
+      window.addEventListener("build_log", handleBuildLog as EventListener);
     }
     listenersAttached = true;
   };
@@ -48,13 +59,19 @@ export function useWebSocket({ enabled = true, onInstanceChange, onNotification,
   const detachListeners = () => {
     if (!listenersAttached) return;
     if (onInstanceChange) {
-      window.removeEventListener('instance_change', handleInstanceChange as EventListener);
+      window.removeEventListener(
+        "instance_change",
+        handleInstanceChange as EventListener,
+      );
     }
     if (onNotification) {
-      window.removeEventListener('notification', handleNotification as EventListener);
+      window.removeEventListener(
+        "notification",
+        handleNotification as EventListener,
+      );
     }
     if (onBuildLog) {
-      window.removeEventListener('build_log', handleBuildLog as EventListener);
+      window.removeEventListener("build_log", handleBuildLog as EventListener);
     }
     listenersAttached = false;
   };
@@ -70,7 +87,7 @@ export function useWebSocket({ enabled = true, onInstanceChange, onNotification,
       isConnected.value = webSocketService.isConnected();
       attachListeners();
     } catch (err) {
-      console.error('Failed to connect to WebSocket:', err);
+      console.error("Failed to connect to WebSocket:", err);
     }
   };
 
