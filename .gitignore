@@ -6,10 +6,10 @@
 .DS_Store
 
 /*.json
-instance_builder/*.json
-!instance_builder/spec.example.json
-instance_builder/generated/
-instance_builder/workdir/
+crates/instance-builder/*.json
+!crates/instance-builder/spec.example.json
+crates/instance-builder/generated/
+crates/instance-builder/workdir/
 
 .cargo/config.toml
 target/

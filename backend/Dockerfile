@@ -1,12 +1,10 @@
-FROM rust:1.92-slim-bookworm AS instance-builder
+FROM rust:1.96-slim-bookworm AS instance-builder
 WORKDIR /src
 
-COPY shared ./shared
-COPY launcher ./launcher
-COPY instance_builder ./instance_builder
 COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 
-RUN cargo build --locked --release -p instance_builder
+RUN cargo build --locked --release -p instance-builder
 
 
 FROM golang:1.25-bookworm AS backend-builder
@@ -33,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 
 COPY --from=backend-builder /out/server /usr/local/bin/server
-COPY --from=instance-builder /src/target/release/instance_builder /usr/local/bin/instance_builder
+COPY --from=instance-builder /src/target/release/instance-builder /usr/local/bin/instance-builder
 
 RUN mkdir -p /data/internal/uploaded-instances /data/generated /data/workdir
 

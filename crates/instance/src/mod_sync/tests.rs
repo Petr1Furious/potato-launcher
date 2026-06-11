@@ -377,3 +377,34 @@ fn mirror_fast_uses_size_checks() {
     assert_eq!(result.tasks.check_tasks[0].remote_size, Some(123));
     assert_eq!(result.tasks.check_tasks[0].remote_sha1, None);
 }
+
+#[test]
+fn extract_mod_id_tolerates_unescaped_newlines_in_fabric_mod_json() {
+    let dir = std::env::temp_dir().join(format!(
+        "potato-mod-id-test-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("some_mod.jar");
+    let file = File::create(&path).unwrap();
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default();
+    zip.start_file("fabric.mod.json", options).unwrap();
+    zip.write_all(
+        br#"{
+  "schemaVersion": 1,
+  "id": "some_mod",
+  "version": "1.2.3",
+  "description": "line one
+line two"
+}"#,
+    )
+    .unwrap();
+    zip.finish().unwrap();
+
+    assert_eq!(
+        utils::mod_id::extract_mod_id(&path).unwrap(),
+        Some("some_mod".to_string())
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

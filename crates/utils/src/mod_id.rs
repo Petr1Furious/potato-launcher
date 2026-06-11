@@ -89,13 +89,26 @@ fn strip_bom(content: &str) -> &str {
     content.strip_prefix('\u{feff}').unwrap_or(content)
 }
 
+fn sanitize_json_control_chars(content: &str) -> String {
+    content
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+fn parse_json_lenient(content: &str) -> Result<Value, serde_json::Error> {
+    serde_json::from_str(content).or_else(|_| {
+        serde_json::from_str(&sanitize_json_control_chars(content))
+    })
+}
+
 fn read_fabric_mod_id<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<Option<String>, ExtractModIdError> {
     let Some(content) = read_zip_entry(archive, FABRIC_MOD_JSON)? else {
         return Ok(None);
     };
-    let json: Value = serde_json::from_str(&content)?;
+    let json: Value = parse_json_lenient(&content)?;
     Ok(json
         .get("id")
         .and_then(Value::as_str)
@@ -139,7 +152,7 @@ fn read_mcmod_info_mod_id<R: Read + std::io::Seek>(
         content
     };
 
-    let json: Value = serde_json::from_str(&normalized)?;
+    let json: Value = parse_json_lenient(&normalized)?;
     parse_mcmod_info_first_modid(&json)
 }
 

@@ -1,0 +1,9 @@
+{
+    "remote": "minecraft@example.com",
+    "internal_dir": "/srv/potato-launcher/state/internal",
+    "container": "potato-launcher-backend",
+    "spec": "./spec.json",
+    "instances": {
+        "Minigames": "/local/path/to/instance/minecraft"
+    }
+}

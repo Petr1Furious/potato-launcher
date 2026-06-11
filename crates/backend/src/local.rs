@@ -143,14 +143,14 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
         spec: InstanceSpec {
             name: request.dir_name.clone(),
             minecraft_version: request.minecraft_version.trim().to_string(),
-            loader: map_loader(request.loader),
+            mod_loader: map_loader(request.loader),
             loader_version: request
                 .loader_version
                 .as_ref()
                 .map(|version| version.trim().to_string())
                 .filter(|version| !version.is_empty()),
-            source_dir: None,
-            include_rules: vec![],
+            source_root: None,
+            content_rules: vec![],
             mod_sync: ModSyncSettings::default(),
             resource_sync: ResourceSyncMode::default(),
             auth_backend: None,

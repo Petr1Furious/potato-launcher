@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { apiService } from '@/services/api';
-import type { AuthBackend, InstanceBase, IncludeRule } from '@/types/api';
+import type { AuthBackend, InstanceBase } from '@/types/api';
 import { AuthType, LoaderType } from '@/types/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { useInstanceForm } from '@/composables/useInstanceForm';
+import { contentRulesToPayload, useInstanceForm } from '@/composables/useInstanceForm';
 import InstanceFormFields from '@/components/InstanceFormFields.vue';
 import { formatError } from '@/services/api';
 import { useNotification } from '@/composables/useNotification';
@@ -26,9 +26,19 @@ const {
   loadingLoaderVersions,
   handleInputChange,
   handleAuthBackendChange,
-  addIncludeRule,
-  removeIncludeRule,
-  updateIncludeRule,
+  handleModSyncModeChange,
+  updateModIdList,
+  modIdListToString,
+  addContentRule,
+  removeContentRule,
+  updateContentRule,
+  addConfigOption,
+  removeConfigOption,
+  updateConfigOption,
+  addOptionalSet,
+  removeOptionalSet,
+  updateOptionalSet,
+  updateOptionalSetModIds,
   loadMinecraftVersions,
   resetFormData,
 } = useInstanceForm({ mode: 'create' });
@@ -40,8 +50,8 @@ const validate = () => {
   const newErrors: Record<string, string> = {};
   if (!formData.name.trim()) newErrors.name = 'Name is required';
   if (!formData.minecraft_version) newErrors.minecraft_version = 'Minecraft version is required';
-  if (!formData.loader_name) newErrors.loader_name = 'Loader is required';
-  if (formData.loader_name !== LoaderType.VANILLA && !formData.loader_version) {
+  if (!formData.mod_loader) newErrors.mod_loader = 'Loader is required';
+  if (formData.mod_loader !== LoaderType.VANILLA && !formData.loader_version) {
     newErrors.loader_version = 'Loader version is required';
   }
   if (!formData.auth_backend.type) newErrors.auth_type = 'Authentication type is required';
@@ -69,6 +79,34 @@ const resetForm = () => {
   resetFormData();
 };
 
+const buildPayload = (): InstanceBase => {
+  const payload: InstanceBase = {
+    name: formData.name,
+    minecraft_version: formData.minecraft_version,
+    mod_loader: formData.mod_loader,
+    loader_version: formData.loader_version,
+    default_xmx: formData.default_xmx,
+    auth_backend: { ...formData.auth_backend },
+    content_rules: contentRulesToPayload(formData.content_rules),
+    mod_sync: {
+      mode: formData.mod_sync.mode,
+      required: [...(formData.mod_sync.required ?? [])],
+      blocked: [...(formData.mod_sync.blocked ?? [])],
+      optional_sets: formData.mod_sync.optional_sets?.map((set) => ({
+        ...set,
+        mod_ids: [...set.mod_ids],
+      })),
+    },
+    resource_sync: formData.resource_sync,
+  };
+
+  if (payload.mod_loader === LoaderType.VANILLA) {
+    delete payload.loader_version;
+  }
+
+  return payload;
+};
+
 const handleSubmit = async () => {
   if (!validate()) {
     return;
@@ -76,15 +114,7 @@ const handleSubmit = async () => {
 
   try {
     loading.value = true;
-    const payload: InstanceBase = {
-      ...formData,
-      auth_backend: { ...formData.auth_backend },
-      include: formData.include?.map(rule => ({ ...rule })),
-    };
-
-    if (payload.loader_name === LoaderType.VANILLA) {
-      delete payload.loader_version;
-    }
+    const payload = buildPayload();
 
     await apiService.createInstance(payload);
     emit('submitted', payload);
@@ -98,7 +128,7 @@ const handleSubmit = async () => {
   }
 };
 
-const updateField = (field: keyof InstanceBase, value: string | LoaderType) => {
+const updateField = (field: keyof InstanceBase, value: string | LoaderType | InstanceBase['resource_sync']) => {
   handleInputChange(field, value);
   if (errors[field as string]) {
     delete errors[field as string];
@@ -131,8 +161,14 @@ onMounted(() => {
             :minecraft-versions="minecraftVersions" :available-loaders="availableLoaders"
             :loader-versions="loaderVersions" :loading-minecraft-versions="loadingMinecraftVersions"
             :loading-loaders="loadingLoaders" :loading-loader-versions="loadingLoaderVersions"
-            @update-field="updateField" @update-auth-field="updateAuthField" @add-include-rule="addIncludeRule"
-            @remove-include-rule="removeIncludeRule" @update-include-rule="updateIncludeRule" />
+            :mod-id-list-to-string="modIdListToString" @update-field="updateField"
+            @update-auth-field="updateAuthField" @update-mod-sync-mode="handleModSyncModeChange"
+            @update-mod-id-list="updateModIdList" @add-content-rule="addContentRule"
+            @remove-content-rule="removeContentRule" @update-content-rule="updateContentRule"
+            @add-config-option="addConfigOption" @remove-config-option="removeConfigOption"
+            @update-config-option="updateConfigOption" @add-optional-set="addOptionalSet"
+            @remove-optional-set="removeOptionalSet" @update-optional-set="updateOptionalSet"
+            @update-optional-set-mod-ids="updateOptionalSetModIds" />
           <div>
             <Button type="submit" class="w-full" :disabled="loading">
               <span v-if="loading">Creating...</span>

@@ -2,41 +2,42 @@
 
 **Note on terminology:** Potato Launcher calls these **instances**. In most cases instances will be modpacks, but technically you can deploy vanilla versions too.
 
-## Recommended: use the new Web UI
+## Recommended: use the Web UI
 
 If you deployed the full server setup (see [Server setup](/setting-up/server)), you can manage instances from the browser. Typical workflow:
 
 - Login into the admin panel at `https://<your-domain>/admin`
 - Click **New Instance** or select an instance you want to update and click **Update**
-- Fill all necessary fields (**Instance Name**, **Minecraft Version**, **Mod Loader**, **Loader version** (if not vanilla) and **Authentication Type**)
+- Fill all necessary fields (**Instance Name**, **Minecraft Version**, **Mod Loader**, **Loader version** (if not vanilla), **Authentication Type**, **Mod Sync**, and **Resource Sync**)
 - Click **Create Instance**
-- To upload and include files (e.g. mods) select an existing instance, click **Update** and **Manage instance files**. Upload all files you want to include (e.g. `mods` directory with mods in it)
-- **Important:** add include rules and specify **Path** and rule type. This step is necessary because the launcher doesn't know what to do with each uploaded file/directory when it has been changed on the backend. For example, you may want to set **Recursive** on `config`, and both **Overwrite** and **Delete Extra** on `mods`. The detailed description of different rule types is available in the [Instance fields](#instance-fields) section
+- To upload modpack files (e.g. mods, configs), select an existing instance, click **Update** and **Manage instance files**. Upload all files you want the builder to include.
+- **Important:** add **content rules** and choose a **type** for each rule (`file`, `directory`, or `config_options`). The launcher needs these rules to know how to sync each path when the remote pack changes. For example, set **Skip if dir exists** on `config`, and both **Overwrite** and **Delete Extra** on `kubejs`.
 - Click **Build** to generate the `/data/` output served by nginx
 
-The launcher will download metadata from the version manifest at `<DOWNLOAD_SERVER_BASE>/version_manifest.json` (which is usually `https://<your-domain/data/version_manifest.json`)
+The launcher downloads metadata from `<download_server_base>/instance_manifest.json` (usually `https://<your-domain>/data/instance_manifest.json`).
 
 ## Manual
 
-Linux/macOS is recommended for building instances. However, Windows should also work
+Linux/macOS is recommended for building instances. However, Windows should also work.
 
-If you don't have Rust installed, get it from [rustup.rs](https://rustup.rs)
+If you don't have Rust installed, get it from [rustup.rs](https://rustup.rs).
 
-Clone the repository and go to the `instance_builder` directory:
+Clone the repository and build from the workspace root:
+
 ```bash
 git clone <your-repository-url>
-cd <repository-name>/instance_builder
+cd <repository-name>
 ```
 
-Then, you'll need to create a `spec.json` file. It's used to define launcher instances that should be created. The file format is described below. You can also find an example config at [`instance_builder/spec.example.json`](https://github.com/Petr1Furious/potato_launcher/blob/master/instance_builder/spec.example.json)
+Then, you'll need to create a `spec.json` file. It's used to define launcher instances that should be created. The file format is described below. You can also find an example config at [`crates/instance-builder/spec.example.json`](https://github.com/Petr1Furious/potato-launcher/blob/master/crates/instance-builder/spec.example.json)
 
 After defining your instance, you can build it with the following command:
 
 ```bash
-cargo run --release -p instance_builder -- -s <path to spec.json>
+cargo run --release -p instance-builder -- -s <path to spec.json>
 ```
 
-This will create a `generated` directory, which should then be uploaded to your server. If you followed the [Server configuration](/setting-up/server) guide, you should upload the contents of this directory (not the directory itself) to the `data` subdirectory of your launcher dir, e.g. to `/srv/potatosmp/data`. You can use the `exec_after_all` setting to automate this process.
+This will create a `generated` directory, which should then be uploaded to your server. If you followed the [Server configuration](/setting-up/server) guide, you should upload the contents of this directory (not the directory itself) to the `data` subdirectory of your launcher dir, e.g. to `/srv/potatosmp/data`.
 
 ## Manual (remote server build via SSH)
 
@@ -45,103 +46,179 @@ If you already have the backend deployed and you want to automate uploading file
 - Pick the backend **internal directory** on the server, e.g. `/srv/potato-launcher/state/internal`
 - Upload your `spec.json` into `<internal-dir>/spec.json`
 - Upload your raw modpack files into `<internal-dir>/uploaded-instances/<instance-name>/`
-- Run `instance_builder` inside the running backend container (`potato-launcher-backend` by default)
+- Run `instance-builder` inside the running backend container (`potato-launcher-backend` by default)
 
-This repository includes a helper script that automates the above, see `./scripts/remote-instance-build.sh --help` for all options.
+This repository includes a helper script that automates the above:
 
-::: warning
-The helper script **does not** modify `include_from`. If your instances use `include`, you must set `include_from` in `spec.json` to the correct **in-container** path that points at the uploaded files (default is `/data/internal/uploaded-instances/<instance-name>`).
-:::
+```bash
+python3 scripts/remote-instance.py build --help
+python3 scripts/remote-instance.py fetch --help
+```
+
+The build command uploads a temporary copy of `spec.json` with `source_root` rewritten to the in-container uploaded instance path (default: `/data/internal/uploaded-instances/<instance-name>`). It does not modify your local spec file. Instance sync skips `.git` and `saves` by default; see `--help` for flags to change that.
+
+You can keep common settings in `scripts/remote-instance.json`:
+
+```json
+{
+  "remote": "minecraft@example.com",
+  "ssh_port": 22,
+  "internal_dir": "/srv/potato-launcher/state/internal",
+  "container": "potato-launcher-backend",
+  "docker_host": "unix:///run/user/1002/docker.sock",
+  "spec": "./spec.json",
+  "instances": {
+    "Minigames": "/local/path/to/instance/minecraft"
+  }
+}
+```
 
 ## JSON structure
 
 ```json
 {
   "download_server_base": "string",
-  "resources_url_base": "string",
   "replace_download_urls": "boolean",
-  "version_manifest_url": "string",
   "instances": [
     {
       "name": "string",
       "minecraft_version": "string",
-      "loader_name": "string",
+      "mod_loader": "string",
       "loader_version": "string",
-      "include_from": "string",
-      "include": [
+      "source_root": "string",
+      "content_rules": [
         {
           "path": "string",
-          "overwrite": "boolean",
-          "recursive": "boolean",
-          "delete_extra": "boolean"
+          "apply_on": "update | always",
+          "type": "file",
+          "overwrite": "boolean"
         },
-        <...>
+        {
+          "path": "string",
+          "apply_on": "update | always",
+          "type": "directory",
+          "overwrite": "boolean",
+          "delete_extra": "boolean",
+          "skip_if_dir_exists": "boolean"
+        },
+        {
+          "path": "string",
+          "apply_on": "update | always",
+          "type": "config_options",
+          "config_type": "json | yaml | toml | properties",
+          "options": []
+        }
       ],
-      "auth_backend": {
-        "type": "string",
-        "data_field1": "data_value1",
-        "data_field2": "data_value2",
-        <...>
+      "mod_sync": {
+        "mode": "delta | mirror | mirror_fast",
+        "required": ["string (mod-id)"],
+        "blocked": ["string (mod-id)"],
+        "optional_sets": []
       },
-      "recommended_xmx": "string",
-      "exec_before": "string",
-      "exec_after": "string"
+      "resource_sync": "on_update | always | always_fast",
+      "auth_backend": {
+        "type": "string"
+      },
+      "default_xmx": "string"
     }
-  ],
-  "exec_before_all": "string",
-  "exec_after_all": "string"
+  ]
 }
 ```
 
-## Fields
+## Root fields
 
+- **download_server_base** (required): Base URL where generated files are deployed. Files must be reachable at `<download_server_base>/<relative-path>`. Typically `https://your.domain/data`.
+- **replace_download_urls**: If `true`, libraries, assets, and included files are served from your server. If `false`, Mojang/upstream URLs are kept where possible; only metadata, content rules, and Forge patched jars come from your server. Default: `false`.
+- **instances** (required): Array of instance specs (see below).
 
-### Root Fields
+## Instance fields
 
-- **download_server_base** (required): The base URL where the instance will be deployed. All files in the generated folder (`generated` by default) must be accessible by `<download_server_base>/<file_relative_path>` after deployment. For example, the version manifest has to be at `<download_server_base>/version_manifest.json`. You probably want this set to `https://your.domain/data`
-- **resources_url_base**: The base URL for assets. Should be equal to `<download_server_base>/assets/objects` if the generated folder structure is not changed after upload. If omitted, the launcher will download assets from Mojang servers. Unset by default
-- **replace_download_urls**:
-  If set to `true`, all instance files will be downloaded from your server.
-  
-  If set to `false`, the original download URLs will be kept when possible. This means that assets, libraries, modloaders and the Minecraft jar will be downloaded from their original locations and only metadata, files specified in `include`, and (Neo)Forge patched jars will be downloaded from your server.
-  
-  Default: `false`
-- **version_manifest_url**: The URL from which to fetch a remote version manifest. If specified, the instance builder will fetch the existing manifest from this URL and merge the local versions with it, preserving any versions that exist in the remote manifest but not in the local specification.
+- **name** (required): Instance name.
+- **minecraft_version** (required): Minecraft version.
+- **mod_loader**: `vanilla`, `fabric`, `forge`, or `neoforge`. Default: `vanilla`.
+- **loader_version**: Mod loader version. Optional; if omitted, Fabric/Forge/NeoForge generators pick a default (latest / recommended / latest).
+- **source_root**: Directory containing authored pack files. Required when `content_rules` is non-empty. Web UI / backend set this to the uploaded instance directory on build.
+- **content_rules**: Rules for syncing authored files into the client instance directory.
+- **mod_sync**: How local `mods/` is reconciled with the remote mod list.
+- **resource_sync**: When to verify client jar, libraries, and assets.
+- **auth_backend**: Auth provider for this instance. Omit to allow any provider.
+- **default_xmx**: Default JVM `-Xmx` (e.g. `4G`, `8192M`).
 
-  In other words, set this to `<download_server_base>/version_manifest.json` if you want to manage different instances from different devices (for example, when you have multiple server admins responsible for different servers).
-- **instances** (required): An array of instance specification objects (see below for details).
-- **exec_before_all**: A console command to execute before processing all versions.
-- **exec_after_all**: A console command to execute after processing all versions. This is useful for automatically deploying the generated files (for example, by `rsync`'ing them to a server with `nginx`).
+## Content rules
 
-  If you are running Nginx and have it serving `/data` from `/srv/potato_launcher/generated` on your server, you can use something like:
-  `chmod -R +r ./generated && rsync -vza ./generated/ user@server:/srv/potato_launcher/generated/`
+Each rule is a tagged object. Shared fields:
 
-  Note the trailing slashes; they matter in rsync!
+| Field      | Applies to | Default  | Description                                                   |
+| ---------- | ---------- | -------- | ------------------------------------------------------------- |
+| `path`     | all        | —        | Path relative to `source_root`                                |
+| `type`     | all        | —        | `file`, `directory`, or `config_options`                      |
+| `apply_on` | all        | `update` | `update` = only on instance update; `always` = on each launch |
 
-### Instance Fields
+### `type: "file"`
 
-- **name** (required): The name of the instance.
-- **minecraft_version** (required): The Minecraft version for this instance.
-- **loader_name**: The name of the modloader ("vanilla", "fabric", "forge" or "neoforge"). Default: `"vanilla"`
-- **loader_version**: The version of the modloader. Defaults to `"latest"` for Fabric and `"recommended"` for (Neo)Forge
-- **include**: An array of inclusion rules. Each rule is an object with the following fields:
-  - **path** (required): The file or directory (relative to the `include_from` directory) to include.
-  - **overwrite**: A boolean indicating if the included file(s) should always be overwritten. Default: `true`
-  - **delete_extra**: If set to true along with `overwrite: true`, extra files in the target directory will be deleted. Default: `true`
-  - **recursive**:
-    If set to `true`, missing files from this directory will be re-downloaded every time the instance is synchronized. If set to `false`, this directory will be ignored after it's downloaded for the first time. Has no effect on files or with `overwrite: true`. Default: `false`.
-- **include_from**: A directory from which to include files. For example, it can be a path to a PrismLauncher instance with your modpack. Required if `include` contains entries.
-- **auth_backend**: The Minecraft authentication provider required for this instance. If omitted, any provider can be selected by users. See below for the list of providers and their config settings
-  - **type**: The authentication provider name
-  - Any additional fields for the selected authentication provider
-- **recommended_xmx**: The instance's default JVM RAM limit (`-Xmx`). Should be a string with `M` or `G` suffix (for example, "8192M"). If no suffix is given, `M` is assumed. Currently defaults to `4096M` when unset
-- **exec_before**: A command to execute before processing this instance
-- **exec_after**: A command to execute after processing this instance
+Sync a single file. The builder hashes the file and records download metadata.
+
+| Field       | Default | Description                                   |
+| ----------- | ------- | --------------------------------------------- |
+| `overwrite` | `true`  | Re-check/download even if file exists locally |
+
+### `type: "directory"`
+
+Sync a directory tree.
+
+| Field                | Default | Description                                                    |
+| -------------------- | ------- | -------------------------------------------------------------- |
+| `overwrite`          | `true`  | Re-check/download per-file even if it exists locally           |
+| `delete_extra`       | `true`  | Delete local directory files not in the remote manifest        |
+| `skip_if_dir_exists` | `false` | Skip rule if directory exists with `.download_complete` marker |
+
+`overwrite: true` still forces per-file re-check regardless of `skip_if_dir_exists`.
+
+### `type: "config_options"`
+
+Patch config options in an existing file.
+
+| Field         | Description                                     |
+| ------------- | ----------------------------------------------- |
+| `config_type` | `json`, `yaml`, `toml`, or `properties`         |
+| `options`     | Array of `{ "key": ..., "value": ... }` entries |
+
+- `key` may be a string (`"difficulty"`) or path array (`["mods", 0, "enabled"]`) for nested access.
+- `properties` supports flat string keys only.
+- `value` is any JSON value.
+
+Example:
+
+```json
+{
+  "path": "config/zoomify.json",
+  "apply_on": "update",
+  "type": "config_options",
+  "config_type": "json",
+  "options": [{ "key": ["initialZoom"], "value": 4 }]
+}
+```
+
+## Mod sync
+
+- **mode**: `delta` (preserve user-added/removed mods), `mirror` (exact match), `mirror_fast` (mirror with size-only checks).
+- **required**: Mod IDs that must stay installed; removed locally they are restored.
+- **blocked**: Mod IDs that must not appear in the pack.
+- **optional_sets**: Toggleable optional mod groups users can enable/disable in the launcher.
+
+Mods are managed separately from `content_rules`; do not add a `mods` directory content rule.
+
+## Resource sync
+
+Controls verification of client jar, libraries, and assets (separate from mod sync):
+
+- `on_update` — check on instance update only (default)
+- `always` — check on update and launch
+- `always_fast` — like `always`, but size-only checks where possible
 
 ## Authentication providers
 
-Currently, the following authentication backends/providers are supported:
-
-- `"mojang"`: The official authentication server. Requires no parameters
-- `"telegram"`: [tgauth](https://foxlab.dev/minecraft/tgauth-backend). Requires `"auth_base_url"` parameter to be set to the base URL of the tgauth server, e.g. `"https://your.auth.server"`
-- `"ely.by"`: [ely.by](https://ely.by). To use this provider, you need to create a "Web site" application at https://account.ely.by/dev/applications. Parameters: `"client_id"`, `"client_secret"`, `"launcher_name"` (human-readable string shown after successful login)
+- `"mojang"`: Official Mojang auth. No extra fields.
+- `"telegram"`: [tgauth](https://foxlab.dev/minecraft/tgauth-backend). Requires `"auth_base_url"`.
+- `"ely.by"`: [ely.by](https://ely.by). Requires `"client_id"`, `"client_secret"`, and optionally `"launcher_name"`.
+- `"offline"`: Offline mode.

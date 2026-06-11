@@ -736,7 +736,7 @@ impl VersionMetadata {
         InstanceMetadata {
             name: self.id.clone(),
             auth_backend: None,
-            include: vec![],
+            content_rules: vec![],
             mod_entries: vec![],
             mod_sync: ModSyncSettings::default(),
             resource_sync: ResourceSyncMode::default(),

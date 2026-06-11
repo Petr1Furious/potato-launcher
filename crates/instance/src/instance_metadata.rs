@@ -40,49 +40,61 @@ pub struct Object {
     pub url: Url,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyOn {
+    #[default]
     Update,
     Always,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct IncludeActionFile {
-    pub object: Option<Object>,
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct IncludeActionConfigOptions {
+pub struct FileRule {
+    #[serde(default)]
+    pub object: Option<Object>,
+    #[serde(default = "default_true")]
+    pub overwrite: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ConfigOptionsRule {
     pub config_type: ConfigType,
     pub options: Vec<ConfigOption>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct IncludeActionDirectory {
+pub struct DirectoryRule {
+    #[serde(default)]
     pub objects: Vec<Object>,
     /// If true, files in this directory that are not present in the manifest will be deleted
+    #[serde(default = "default_true")]
     pub delete_extra: bool,
-    /// If true, this action will be skipped if the directory already exists and has the completion marker file
+    /// If true, this rule will be skipped if the directory already exists and has the completion marker file
+    #[serde(default)]
     pub skip_if_dir_exists: bool,
+    #[serde(default = "default_true")]
+    pub overwrite: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum IncludeAction {
-    File(IncludeActionFile),
-    ConfigOptions(IncludeActionConfigOptions),
-    Directory(IncludeActionDirectory),
+pub enum RuleKind {
+    File(FileRule),
+    ConfigOptions(ConfigOptionsRule),
+    Directory(DirectoryRule),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct IncludeEntry {
+pub struct ContentRule {
     pub path: RelativePathBuf,
+    #[serde(default)]
     pub apply_on: ApplyOn,
-    /// For directories, passed through to all files in the directory
-    pub overwrite: bool,
     #[serde(flatten)]
-    pub action: IncludeAction,
+    pub kind: RuleKind,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -129,12 +141,10 @@ pub struct InstanceMetadata {
     #[serde(default)]
     pub auth_backend: Option<AuthProviderConfig>,
 
-    /// additional files to include with the instance
-    /// (e.g. configs, server.dat, etc.)
-    /// and rules for what to do when file/directory contents differ from the remote
+    /// Rules for syncing authored pack files (configs, directories, config key overrides)
     // TODO: docs about specificity rules
     #[serde(default)]
-    pub include: Vec<IncludeEntry>,
+    pub content_rules: Vec<ContentRule>,
 
     /// Mod jars declared by the instance manifest
     #[serde(default)]
@@ -168,7 +178,7 @@ pub struct InstanceMetadata {
     #[serde(default)]
     pub versions: Vec<VersionMetadata>,
 
-    // whether the overrides were already applied to the libraries (e.g. on instance_builder build)
+    // whether the overrides were already applied to the libraries (e.g. on instance-builder build)
     // this should be false for mojang's vanilla versions
     pub overrides_applied: bool,
 }
@@ -187,6 +197,8 @@ pub enum InstanceMetadataError {
     Json(#[from] serde_json::Error),
     #[error("failed to download instance metadata JSON: {0}")]
     DownloadFileParsed(#[from] files::DownloadFileParsedError),
+    #[error("failed to fetch instance metadata JSON: {0}")]
+    FetchFileParsed(#[from] files::FetchFileParsedError),
     #[error("failed while processing version metadata: {0}")]
     VersionMetadata(#[from] VersionMetadataError),
     #[error("failed while processing version library metadata: {0}")]
@@ -247,6 +259,19 @@ impl InstanceMetadata {
         let check_task = entry.to_check_task(instance_dir);
         if let Some(download_task) = files::get_download_task(&check_task).await? {
             Ok(files::download_file_parsed(client, &download_task).await?)
+        } else {
+            Self::read_local(instance_dir).await
+        }
+    }
+
+    pub async fn read_or_fetch(
+        client: &reqwest::Client,
+        entry: &InstanceManifestEntry,
+        instance_dir: &InstanceDirFS,
+    ) -> Result<Self, InstanceMetadataError> {
+        let check_task = entry.to_check_task(instance_dir);
+        if let Some(download_task) = files::get_download_task(&check_task).await? {
+            Ok(files::fetch_file_parsed(client, &download_task.url).await?)
         } else {
             Self::read_local(instance_dir).await
         }
@@ -354,8 +379,8 @@ impl InstanceMetadata {
         &self,
         minecraft_dir: &Path,
     ) -> Result<(), InstanceMetadataError> {
-        for rule in &self.include {
-            if !matches!(rule.action, IncludeAction::Directory(_)) {
+        for rule in &self.content_rules {
+            if !matches!(rule.kind, RuleKind::Directory(_)) {
                 continue;
             }
             let rule_path = rule.path.to_path(minecraft_dir);
@@ -465,30 +490,30 @@ impl InstanceMetadata {
         // includes are sorted from the most specific to the less specific by the generator.
         // seen_paths is only used to avoid deleting files included by more specific rules,
         // preventing object intersections is done by the generator
-        for entry in &self.include {
+        for entry in &self.content_rules {
             let entry_path = entry.path.to_path(params.instance_dir.minecraft_dir());
             if entry.apply_on == ApplyOn::Update && params.cause != InstallCause::Update {
                 continue;
             }
-            match &entry.action {
-                IncludeAction::File(action) => {
+            match &entry.kind {
+                RuleKind::File(action) => {
                     let object = action.object.as_ref().ok_or_else(|| {
                         InstanceMetadataError::MissingObject(entry.path.to_string())
                     })?;
                     if entry.path != object.path {
                         return Err(InstanceMetadataError::PathMismatch(entry.path.to_string()));
                     }
-                    include_file(object, entry_path.clone(), entry.overwrite);
+                    include_file(object, entry_path.clone(), action.overwrite);
                     seen_paths.insert(entry_path);
                 }
-                IncludeAction::ConfigOptions(action) => {
+                RuleKind::ConfigOptions(action) => {
                     tasks.config_option_tasks.push(ConfigOptionTask {
                         path: entry_path,
                         config_type: action.config_type,
                         options: action.options.clone(),
                     });
                 }
-                IncludeAction::Directory(action) => {
+                RuleKind::Directory(action) => {
                     if action.skip_if_dir_exists
                         && entry_path.exists()
                         && entry_path.join(COMPLETION_MARKER_FILE).exists()
@@ -497,7 +522,7 @@ impl InstanceMetadata {
                     }
                     for object in action.objects.iter() {
                         let path = object.path.to_path(params.instance_dir.minecraft_dir());
-                        include_file(object, path.clone(), entry.overwrite);
+                        include_file(object, path.clone(), action.overwrite);
                         seen_paths.insert(path);
                     }
                     if action.delete_extra || params.force_overwrite {
@@ -622,11 +647,14 @@ fn current_os_arch() -> OsArch {
 mod tests {
     use super::*;
 
-    fn empty_metadata(include: Vec<IncludeEntry>, mod_entries: Vec<ModEntry>) -> InstanceMetadata {
+    fn empty_metadata(
+        content_rules: Vec<ContentRule>,
+        mod_entries: Vec<ModEntry>,
+    ) -> InstanceMetadata {
         InstanceMetadata {
             name: "Test".to_string(),
             auth_backend: None,
-            include,
+            content_rules,
             mod_entries,
             mod_sync: ModSyncSettings::default(),
             resource_sync: ResourceSyncMode::OnUpdate,

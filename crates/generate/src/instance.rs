@@ -1,7 +1,7 @@
 use instance::{
     authlib::default_authlib_injector_library,
     instance_metadata::{
-        IncludeAction, IncludeEntry, InstanceMetadata, ModEntry, Object, ResourceSyncMode,
+        ContentRule, InstanceMetadata, ModEntry, Object, ResourceSyncMode, RuleKind,
     },
     manifest::VanillaVersionManifest,
     mod_sync::ModSyncSettings,
@@ -224,7 +224,7 @@ pub enum GetObjectsError {
     Io(#[from] std::io::Error),
     #[error("failed to hash include files: {0}")]
     HashFiles(#[from] files::HashFilesError),
-    #[error("include path is outside include_from root: {0}")]
+    #[error("content rule path is outside source_root: {0}")]
     StripPrefix(#[from] std::path::StripPrefixError),
     #[error("failed to convert include path to relative path: {0}")]
     RelativePath(#[from] relative_path::FromPathError),
@@ -367,13 +367,13 @@ pub struct InstanceSpec {
     pub name: String,
     pub minecraft_version: String,
     #[serde(default = "vanilla")]
-    pub loader: Loader,
+    pub mod_loader: Loader,
     /// latest/recommended will be used if not set
     pub loader_version: Option<String>,
 
-    pub source_dir: Option<PathBuf>,
+    pub source_root: Option<PathBuf>,
     #[serde(default)]
-    pub include_rules: Vec<IncludeEntry>,
+    pub content_rules: Vec<ContentRule>,
     #[serde(default)]
     pub mod_sync: ModSyncSettings,
     #[serde(default)]
@@ -392,7 +392,7 @@ pub struct RemoteConfig {
 
 pub struct InstanceGenerator {
     pub client: Client,
-    /// `object`/`objects` fields must be unset for include_rules
+    /// `object`/`objects` fields must be unset for content_rules
     pub spec: InstanceSpec,
     /// If absent, includes won't be processed.
     /// Always present in instance-builder, never present on local instance generation
@@ -474,7 +474,7 @@ impl InstanceGenerator {
 
         let mut extra_forge_libs = vec![];
 
-        match &self.spec.loader {
+        match &self.spec.mod_loader {
             Loader::Vanilla => {
                 if self.spec.loader_version.is_some() {
                     warn!("Ignoring loader version for vanilla version");
@@ -483,7 +483,7 @@ impl InstanceGenerator {
             Loader::Forge | Loader::Neoforge => {
                 let result = ForgeGenerator::new(
                     vanilla_metadata,
-                    if self.spec.loader == Loader::Forge {
+                    if self.spec.mod_loader == Loader::Forge {
                         forge::Loader::Forge
                     } else {
                         forge::Loader::Neoforge
@@ -532,7 +532,7 @@ impl InstanceGenerator {
             metadata.libraries = with_overrides(&metadata.libraries, &metadata.id);
         }
 
-        let mut include = vec![];
+        let mut content_rules = vec![];
         if let Some(remote_config) = &self.remote_config {
             if remote_config.replace_download_urls {
                 for metadata in metadata.iter() {
@@ -558,79 +558,83 @@ impl InstanceGenerator {
                 }
             }
 
-            if let Some(source_dir) = &self.spec.source_dir {
+            if let Some(source_root) = &self.spec.source_root {
                 // Handled separately, because we may want to put default contents for a config file,
                 // but overwrite some config keys. This is not done in builder, where seen_paths is only
                 // used to determine which files have to be deleted
                 let mut existing_paths =
                     HashMap::from([(false, HashSet::new()), (true, HashSet::new())]);
-                let mut sorted_rules = self.spec.include_rules.to_vec();
+                let mut sorted_rules = self.spec.content_rules.to_vec();
                 sorted_rules.sort_by(|a, b| a.path.cmp(&b.path).reverse());
                 for mut rule in sorted_rules {
                     if rule.path.components().count() == 1 && rule.path.as_str() == ModsDir::name()
                     {
                         warn!(
-                            "Skipping mods directory include rule, mods are now managed separately"
+                            "Skipping mods directory content rule, mods are now managed separately"
                         );
                         continue;
                     }
-                    let overwrite = rule.overwrite;
                     let rule_path = rule.path.clone();
-                    match &mut rule.action {
-                        IncludeAction::File(action) => {
+                    let overwrite_bucket = match &mut rule.kind {
+                        RuleKind::File(action) => {
                             if action.object.is_some() {
                                 return Err(GenerateError::IncludeObjectsSet);
                             }
                             let object = get_file_object(
-                                source_dir,
+                                source_root,
                                 &rule.path,
                                 &remote_config.download_server_base,
                                 instance_dir.rel(),
                             )
                             .await?;
                             copy_tasks.push(CopyTask {
-                                source: object.path.to_path(source_dir),
+                                source: object.path.to_path(source_root),
                                 target: object.path.to_path(instance_dir.minecraft_dir()),
                             });
                             action.object = Some(object);
+                            action.overwrite
                         }
-                        IncludeAction::Directory(action) => {
+                        RuleKind::Directory(action) => {
                             if !action.objects.is_empty() {
                                 return Err(GenerateError::IncludeObjectsSet);
                             }
+                            let overwrite = action.overwrite;
                             let objects = get_directory_objects(
-                                source_dir,
+                                source_root,
                                 &rule.path,
                                 &remote_config.download_server_base,
                                 instance_dir.rel(),
-                                &existing_paths[&rule.overwrite],
+                                &existing_paths[&overwrite],
                             )
                             .await?;
                             if objects.is_empty() {
                                 warn!("No objects found for rule: {}", rule.path);
                             }
                             copy_tasks.extend(objects.iter().map(|object| CopyTask {
-                                source: object.path.to_path(source_dir),
+                                source: object.path.to_path(source_root),
                                 target: object.path.to_path(instance_dir.minecraft_dir()),
                             }));
                             existing_paths
                                 .get_mut(&overwrite)
                                 .expect("overwrite key initialized")
                                 .extend(
-                                    objects.iter().map(|object| object.path.to_path(source_dir)),
+                                    objects
+                                        .iter()
+                                        .map(|object| object.path.to_path(source_root)),
                                 );
                             action.objects = objects;
+                            overwrite
                         }
-                        IncludeAction::ConfigOptions(..) => {}
-                    }
+                        RuleKind::ConfigOptions(..) => true,
+                    };
                     existing_paths
-                        .get_mut(&overwrite)
+                        .get_mut(&overwrite_bucket)
                         .expect("overwrite key initialized")
-                        .insert(rule_path.to_path(source_dir));
-                    include.push(rule);
+                        .insert(rule_path.to_path(source_root));
+                    content_rules.push(rule);
                 }
             } else {
-                warn!("Ignoring include rules, source_dir is not set");
+                warn!("Ignoring content rules, source_root is not set");
             }
 
             if remote_config.replace_download_urls {
@@ -654,16 +658,21 @@ impl InstanceGenerator {
                 .to_resources_url_base(&include_config.download_server_base);
         }
 
-        let mod_entries = if let (Some(source_dir), Some(remote_config)) =
-            (&self.spec.source_dir, &self.remote_config)
+        let mod_entries = if let (Some(source_root), Some(remote_config)) =
+            (&self.spec.source_root, &self.remote_config)
         {
-            collect_mod_entries(
-                source_dir,
+            let entries = collect_mod_entries(
+                source_root,
                 &remote_config.download_server_base,
                 instance_dir.rel(),
                 &self.spec.mod_sync,
             )
-            .await?
+            .await?;
+            copy_tasks.extend(entries.iter().map(|entry| CopyTask {
+                source: entry.object.path.to_path(source_root),
+                target: entry.object.path.to_path(instance_dir.minecraft_dir()),
+            }));
+            entries
         } else {
             Vec::new()
         };
@@ -676,7 +685,7 @@ impl InstanceGenerator {
             metadata: InstanceMetadata {
                 name: self.spec.name,
                 auth_backend: self.spec.auth_backend,
-                include,
+                content_rules,
                 mod_entries,
                 mod_sync: self.spec.mod_sync.clone(),
                 resource_sync: self.spec.resource_sync,

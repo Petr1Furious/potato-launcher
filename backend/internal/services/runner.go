@@ -142,8 +142,6 @@ func (r *RunnerService) prepareSpecFile() error {
 		DownloadServerBase:  r.cfg.DownloadServerBase,
 		ResourcesURLBase:    r.cfg.ResourcesURLBase,
 		ReplaceDownloadURLs: spec.ReplaceDownloadURLs,
-		ExecBeforeAll:       r.cfg.ExecBeforeAll,
-		ExecAfterAll:        r.cfg.ExecAfterAll,
 		Instances:           spec.Instances,
 	}
 	raw, err := json.MarshalIndent(builderSpec, "", "    ")

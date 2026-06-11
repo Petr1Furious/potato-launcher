@@ -193,6 +193,10 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     )
     .await?;
 
+    // it is important to save metadata after install_game_files
+    // because mod_sync looks at the delta between old and new metadata
+    metadata.save(&instance_dir).await?;
+
     if request.cause == InstallCause::Update {
         resolve_java(&metadata, &request.launcher_dir, None, &progress).await?;
     }
@@ -296,7 +300,9 @@ async fn install_metadata(
     progress: ProgressHandle<BackendProgressReporter>,
 ) -> anyhow::Result<InstanceMetadata> {
     progress.set_length(1);
-    let metadata = InstanceMetadata::read_or_download(client, entry, instance_dir).await?;
+    // do not save metadata to disk yet
+    // save only after install_game_files
+    let metadata = InstanceMetadata::read_or_fetch(client, entry, instance_dir).await?;
     progress.inc(1);
     Ok(metadata)
 }

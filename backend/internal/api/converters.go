@@ -23,10 +23,12 @@ func toAPIInstance(v models.BuilderInstance) APIInstance {
 	return APIInstance{
 		Name:             v.Name,
 		MinecraftVersion: v.MinecraftVersion,
-		LoaderName:       v.LoaderName,
+		ModLoader:        v.ModLoader,
 		LoaderVersion:    v.LoaderVersion,
-		RecommendedXmx:   v.RecommendedXmx,
-		Include:          v.Include,
+		DefaultXmx:       v.DefaultXmx,
+		ContentRules:     v.ContentRules,
+		ModSync:          v.ModSync,
+		ResourceSync:     v.ResourceSync,
 		AuthBackend:      v.AuthBackend,
 	}
 }
@@ -35,8 +37,8 @@ func getInstanceDir(cfg *config.Config, instanceName string) string {
 	return filepath.Join(cfg.UploadedInstancesDir, instanceName)
 }
 
-func ensureIncludeFrom(cfg *config.Config, instance *models.BuilderInstance) {
-	instance.IncludeFrom = filepath.ToSlash(getInstanceDir(cfg, instance.Name))
+func ensureSourceRoot(cfg *config.Config, instance *models.BuilderInstance) {
+	instance.SourceRoot = filepath.ToSlash(getInstanceDir(cfg, instance.Name))
 }
 
 func ensureInstanceDir(cfg *config.Config, instanceName string) error {
@@ -50,6 +52,18 @@ func ensureAuthBackend(instance *models.BuilderInstance) {
 	}
 }
 
+func ensureModSyncDefaults(instance *models.BuilderInstance) {
+	if instance.ModSync.Mode == "" {
+		instance.ModSync.Mode = models.ModSyncDelta
+	}
+}
+
+func ensureResourceSyncDefault(instance *models.BuilderInstance) {
+	if instance.ResourceSync == "" {
+		instance.ResourceSync = models.ResourceSyncOnUpdate
+	}
+}
+
 func normalizeInstance(cfg *config.Config, instance *models.BuilderInstance) error {
 	instance.Name = strings.TrimSpace(instance.Name)
 	if instance.Name == "" {
@@ -59,15 +73,17 @@ func normalizeInstance(cfg *config.Config, instance *models.BuilderInstance) err
 	if instance.MinecraftVersion == "" {
 		return NewValidationError("minecraft_version", "minecraft_version is required")
 	}
-	if instance.LoaderName == "" {
-		instance.LoaderName = models.LoaderVanilla
+	if instance.ModLoader == "" {
+		instance.ModLoader = models.LoaderVanilla
 	}
-	if instance.LoaderName != models.LoaderVanilla && strings.TrimSpace(instance.LoaderVersion) == "" {
+	if instance.ModLoader != models.LoaderVanilla && strings.TrimSpace(instance.LoaderVersion) == "" {
 		return NewValidationError("loader_version", "loader_version is required")
 	}
 
-	ensureIncludeFrom(cfg, instance)
+	ensureSourceRoot(cfg, instance)
 	ensureAuthBackend(instance)
+	ensureModSyncDefaults(instance)
+	ensureResourceSyncDefault(instance)
 	return nil
 }
 
@@ -75,10 +91,12 @@ func toBuilderInstance(cfg *config.Config, m APIInstance) (*models.BuilderInstan
 	instance := models.BuilderInstance{
 		Name:             m.Name,
 		MinecraftVersion: m.MinecraftVersion,
-		LoaderName:       m.LoaderName,
+		ModLoader:        m.ModLoader,
 		LoaderVersion:    m.LoaderVersion,
-		RecommendedXmx:   m.RecommendedXmx,
-		Include:          m.Include,
+		DefaultXmx:       m.DefaultXmx,
+		ContentRules:     m.ContentRules,
+		ModSync:          m.ModSync,
+		ResourceSync:     m.ResourceSync,
 		AuthBackend:      m.AuthBackend,
 	}
 	if err := normalizeInstance(cfg, &instance); err != nil {

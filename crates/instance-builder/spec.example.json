@@ -1,21 +1,35 @@
 {
-    "download_server_base": "https://your.domain/<some path>",
-    "resources_url_base": "https://your.domain/<some path>/assets/objects",
+    "download_server_base": "https://your.domain/data",
     "replace_download_urls": true,
-    "version_manifest_url": "https://your.domain/<some path>/version_manifest.json",
     "instances": [
         {
             "name": "Monifactory",
             "minecraft_version": "1.20.1",
-            "loader_name": "forge",
+            "mod_loader": "forge",
             "loader_version": "47.3.7",
-            "include": [
+            "source_root": "/data/internal/uploaded-instances/Monifactory",
+            "content_rules": [
                 {
                     "path": "config",
-                    "overwrite": false
+                    "apply_on": "update",
+                    "overwrite": false,
+                    "type": "directory",
+                    "delete_extra": false,
+                    "skip_if_dir_exists": true
+                },
+                {
+                    "path": "defaultoptions/options.txt",
+                    "apply_on": "update",
+                    "type": "config_options",
+                    "config_type": "properties",
+                    "options": [
+                        {
+                            "key": "difficulty",
+                            "value": "2"
+                        }
+                    ]
                 }
             ],
-            "include_from": "<...>/PrismLauncher/instances/Monifactory/minecraft",
             "mod_sync": {
                 "mode": "delta",
                 "required": [
@@ -40,8 +54,7 @@
                 "type": "telegram",
                 "auth_base_url": "https://your.auth.domain"
             },
-            "recommended_xmx": "8G"
+            "default_xmx": "8G"
         }
-    ],
-    "exec_after_all": "chmod -R +r ./generated && rsync -za --info=progress2 ./generated/ user@server:/path/to/your/dir/"
+    ]
 }

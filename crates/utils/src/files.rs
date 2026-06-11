@@ -223,6 +223,17 @@ async fn atomic_replace_file(tmp_path: &Path, target_path: &Path) -> io::Result<
     fs::rename(tmp_path, target_path).await
 }
 
+#[cfg(unix)]
+async fn normalize_copied_file_mode(path: &Path) -> io::Result<()> {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, Permissions::from_mode(0o644)).await
+}
+
+#[cfg(not(unix))]
+async fn normalize_copied_file_mode(_path: &Path) -> io::Result<()> {}
+
 #[derive(thiserror::Error, Debug)]
 pub enum GetDownloadTasksError {
     #[error("failed while reading local files for download checks: {0}")]
@@ -407,6 +418,26 @@ pub enum DownloadFileParsedError {
     Json(#[from] serde_json::Error),
     #[error("file I/O failed while saving downloaded JSON file: {0}")]
     Io(#[from] io::Error),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum FetchFileParsedError {
+    #[error("network request failed while fetching JSON file: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("failed to parse downloaded JSON: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+pub async fn fetch_file_parsed<T>(
+    client: &reqwest::Client,
+    url: &Url,
+) -> Result<T, FetchFileParsedError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let response = client.get(url.as_str()).send().await?.error_for_status()?;
+    let bytes = response.bytes().await?;
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
 pub async fn download_file_parsed<T>(
@@ -595,6 +626,7 @@ pub async fn copy_file_if_different(source: &Path, target: &Path) -> Result<bool
     }
     let tmp_path = temp_path_for(target);
     fs::copy(source, &tmp_path).await?;
+    normalize_copied_file_mode(&tmp_path).await?;
     atomic_replace_file(&tmp_path, target).await?;
     Ok(true)
 }

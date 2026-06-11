@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type LoaderType string
 
@@ -27,32 +30,95 @@ type AuthBackend struct {
 	ClientSecret string   `json:"client_secret,omitempty"`
 }
 
-type IncludeRule struct {
-	Path        string `json:"path"`
-	Overwrite   *bool  `json:"overwrite,omitempty"`
-	Recursive   *bool  `json:"recursive,omitempty"`
-	DeleteExtra *bool  `json:"delete_extra,omitempty"`
+type ApplyOn string
+
+const (
+	ApplyOnUpdate ApplyOn = "update"
+	ApplyOnAlways ApplyOn = "always"
+)
+
+type ContentRuleType string
+
+const (
+	ContentRuleFile          ContentRuleType = "file"
+	ContentRuleDirectory     ContentRuleType = "directory"
+	ContentRuleConfigOptions ContentRuleType = "config_options"
+)
+
+type ConfigType string
+
+const (
+	ConfigTypeJson       ConfigType = "json"
+	ConfigTypeYaml       ConfigType = "yaml"
+	ConfigTypeToml       ConfigType = "toml"
+	ConfigTypeProperties ConfigType = "properties"
+)
+
+type ConfigOption struct {
+	Key   json.RawMessage `json:"key"`
+	Value json.RawMessage `json:"value"`
 }
 
+type ContentRule struct {
+	Path      string          `json:"path"`
+	ApplyOn   ApplyOn         `json:"apply_on,omitempty"`
+	Overwrite *bool           `json:"overwrite,omitempty"`
+	Type      ContentRuleType `json:"type"`
+
+	DeleteExtra     *bool `json:"delete_extra,omitempty"`
+	SkipIfDirExists *bool `json:"skip_if_dir_exists,omitempty"`
+
+	ConfigType *ConfigType    `json:"config_type,omitempty"`
+	Options    []ConfigOption `json:"options,omitempty"`
+}
+
+type ModSyncMode string
+
+const (
+	ModSyncDelta      ModSyncMode = "delta"
+	ModSyncMirror     ModSyncMode = "mirror"
+	ModSyncMirrorFast ModSyncMode = "mirror_fast"
+)
+
+type OptionalModSet struct {
+	ID               string   `json:"id"`
+	DisplayName      string   `json:"display_name"`
+	EnabledByDefault bool     `json:"enabled_by_default,omitempty"`
+	ModIDs           []string `json:"mod_ids"`
+}
+
+type ModSyncSettings struct {
+	Mode         ModSyncMode      `json:"mode"`
+	Required     []string         `json:"required,omitempty"`
+	Blocked      []string         `json:"blocked,omitempty"`
+	OptionalSets []OptionalModSet `json:"optional_sets,omitempty"`
+}
+
+type ResourceSyncMode string
+
+const (
+	ResourceSyncOnUpdate   ResourceSyncMode = "on_update"
+	ResourceSyncAlways     ResourceSyncMode = "always"
+	ResourceSyncAlwaysFast ResourceSyncMode = "always_fast"
+)
+
 type BuilderInstance struct {
-	Name             string        `json:"name"`
-	MinecraftVersion string        `json:"minecraft_version"`
-	LoaderName       LoaderType    `json:"loader_name"`
-	LoaderVersion    string        `json:"loader_version,omitempty"`
-	IncludeFrom      string        `json:"include_from,omitempty"`
-	Include          []IncludeRule `json:"include,omitempty"`
-	AuthBackend      *AuthBackend  `json:"auth_backend,omitempty"`
-	RecommendedXmx   string        `json:"recommended_xmx,omitempty"`
-	ExecBefore       string        `json:"exec_before,omitempty"`
-	ExecAfter        string        `json:"exec_after,omitempty"`
+	Name             string           `json:"name"`
+	MinecraftVersion string           `json:"minecraft_version"`
+	ModLoader        LoaderType       `json:"mod_loader"`
+	LoaderVersion    string           `json:"loader_version,omitempty"`
+	SourceRoot       string           `json:"source_root,omitempty"`
+	ContentRules     []ContentRule    `json:"content_rules,omitempty"`
+	ModSync          ModSyncSettings  `json:"mod_sync"`
+	ResourceSync     ResourceSyncMode `json:"resource_sync"`
+	AuthBackend      *AuthBackend     `json:"auth_backend,omitempty"`
+	DefaultXmx       string           `json:"default_xmx,omitempty"`
 }
 
 type BuilderSpec struct {
 	DownloadServerBase  string            `json:"download_server_base"`
 	ResourcesURLBase    *string           `json:"resources_url_base,omitempty"`
 	ReplaceDownloadURLs bool              `json:"replace_download_urls"`
-	ExecBeforeAll       string            `json:"exec_before_all,omitempty"`
-	ExecAfterAll        string            `json:"exec_after_all,omitempty"`
 	Instances           []BuilderInstance `json:"instances"`
 }
 

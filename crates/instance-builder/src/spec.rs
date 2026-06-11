@@ -66,10 +66,10 @@ impl Spec {
             };
 
             if !self.replace_download_urls
-                && instance.source_dir.is_some()
-                && instance.include_rules.is_empty()
+                && instance.source_root.is_some()
+                && instance.content_rules.is_empty()
             {
-                warn!("source_dir set but include rules are empty");
+                warn!("source_root set but content rules are empty");
             }
 
             let instance_rel = InstancesDir::root().instance_dir(&unique_name);
@@ -169,5 +169,21 @@ impl Spec {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spec_example_deserializes() {
+        let content = include_str!("../spec.example.json");
+        let spec: Spec = serde_json::from_str(content).expect("spec.example.json should deserialize");
+        assert_eq!(spec.instances.len(), 1);
+        let instance = &spec.instances[0];
+        assert_eq!(instance.name, "Monifactory");
+        assert_eq!(instance.content_rules.len(), 2);
+        assert!(instance.source_root.is_some());
     }
 }
