@@ -1,4 +1,5 @@
 pub mod account;
+pub mod auth;
 pub mod backend;
 pub mod instance;
 pub mod java_resolve;
@@ -8,6 +9,7 @@ pub mod settings;
 pub mod update;
 
 use account::AccountEntries;
+use auth::AuthSession;
 use backend::BackendList;
 use gpui::Entity;
 use instance::InstanceEntries;
@@ -24,6 +26,7 @@ pub struct DataEntities {
     pub instances: Entity<InstanceEntries>,
     pub backends: Entity<BackendList>,
     pub accounts: Entity<AccountEntries>,
+    pub auth: Entity<AuthSession>,
     pub notifications: Entity<NotificationEntries>,
     pub settings: Entity<LauncherSettingsEntries>,
     pub local_create: Entity<LocalCreateEntries>,

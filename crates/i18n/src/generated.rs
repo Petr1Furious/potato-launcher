@@ -20,11 +20,9 @@ pub mod accounts {
             "add_elyby" => Some(add_elyby()),
             "add_microsoft" => Some(add_microsoft()),
             "add_offline" => Some(add_offline()),
-            "add_suggested_account" => Some(add_suggested_account()),
             "add_telegram" => Some(add_telegram()),
             "no_accounts_yet" => Some(no_accounts_yet()),
             "section" => Some(section()),
-            "suggested_account" => Some(suggested_account()),
             "title" => Some(title()),
             _ => None,
         }
@@ -65,12 +63,6 @@ pub mod accounts {
             _ => "Add Offline",
         }
     }
-    pub fn add_suggested_account() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Добавить рекомендуемый аккаунт",
-            _ => "Add Suggested Account",
-        }
-    }
     pub fn add_telegram() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Добавить Telegram",
@@ -95,18 +87,6 @@ pub mod accounts {
             _ => "Accounts",
         }
     }
-    pub fn suggested_account() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Рекомендуемый аккаунт",
-            _ => "Suggested Account",
-        }
-    }
-    pub fn suggested_account_needs(provider: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Для этого инстанса нужен {provider}"),
-            _ => format!("This instance needs {provider}"),
-        }
-    }
     pub fn title() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Аккаунты",
@@ -117,8 +97,16 @@ pub mod accounts {
 pub mod auth {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
+            "authorization" => Some(authorization()),
             "default_launcher_name" => Some(default_launcher_name()),
+            "open_link" => Some(open_link()),
             _ => None,
+        }
+    }
+    pub fn authorization() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Авторизация",
+            _ => "Authorization",
         }
     }
     pub fn continue_in_browser(url: String) -> String {
@@ -137,6 +125,24 @@ pub mod auth {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Potato Launcher",
             _ => "Potato Launcher",
+        }
+    }
+    pub fn device_code(code: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Введите этот код: {code}"),
+            _ => format!("Enter this code: {code}"),
+        }
+    }
+    pub fn launch_context(instance: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Вход для запуска {instance}"),
+            _ => format!("Signing in to launch {instance}"),
+        }
+    }
+    pub fn open_link() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Открыть ссылку",
+            _ => "Open link",
         }
     }
 }
@@ -977,7 +983,9 @@ pub mod notifications {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
             "account_removed" => Some(account_removed()),
+            "add_account_already_running" => Some(add_account_already_running()),
             "already_launching_or_running" => Some(already_launching_or_running()),
+            "authentication_cancelled" => Some(authentication_cancelled()),
             "cancel_install_before_delete" => Some(cancel_install_before_delete()),
             "enter_offline_nickname" => Some(enter_offline_nickname()),
             "install_already_running" => Some(install_already_running()),
@@ -1011,6 +1019,12 @@ pub mod notifications {
             _ => "Account removed",
         }
     }
+    pub fn add_account_already_running() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Вход в аккаунт уже выполняется",
+            _ => "Account login is already in progress",
+        }
+    }
     pub fn added_account(username: String) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Добавлен аккаунт {username}"),
@@ -1027,6 +1041,12 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Инстанс уже запускается или работает",
             _ => "Instance is already launching or running",
+        }
+    }
+    pub fn authentication_cancelled() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Авторизация отменена",
+            _ => "Authentication cancelled",
         }
     }
     pub fn authentication_failed(error: String) -> String {

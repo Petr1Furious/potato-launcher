@@ -32,8 +32,8 @@ use launcher_auth::{
     storage::{AccountKey, AuthStorage},
 };
 use launcher_bridge::{
-    AccountView, BackendReceiver, BackendStatus, FrontendSender, LauncherSettingsView,
-    MessageToBackend, MessageToFrontend, NotificationLevel, ProgressStage,
+    AccountView, AuthPromptContext, BackendReceiver, BackendStatus, FrontendSender,
+    LauncherSettingsView, MessageToBackend, MessageToFrontend, NotificationLevel, ProgressStage,
 };
 use launcher_build_config::default_instance_manifest_urls;
 use launcher_i18n::{detect_system_language_code, resolve_language_code, set_lang};
@@ -42,6 +42,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 use url::Url;
 use utils::paths::{DataDir, InstanceDirFS, InstancesDir};
 
@@ -122,6 +123,9 @@ pub struct BackendState {
     running: HashSet<InstanceHandle>,
     launch_tasks: HashMap<InstanceHandle, LaunchHandle>,
     launch_errors: HashMap<InstanceHandle, Arc<str>>,
+    add_account_cancel: Option<CancellationToken>,
+    add_account_task: Option<JoinHandle<()>>,
+    auth_launch_instance: Option<InstanceHandle>,
 }
 
 struct LaunchHandle {
@@ -168,6 +172,10 @@ enum BackendEvent {
     AddAccountFinished {
         result: Result<(AuthProviderConfig, AccountData), Arc<str>>,
     },
+    AddAccountCancelled,
+    AuthLaunchPrompt {
+        instance: Option<InstanceHandle>,
+    },
     JavaResolved {
         instance: InstanceHandle,
         path: Option<Arc<str>>,
@@ -196,7 +204,10 @@ impl AuthMessageProvider for AuthPromptReporter {
         if let Ok(mut stored) = self.message.lock() {
             *stored = Some(message.clone());
         }
-        self.frontend.send(MessageToFrontend::AuthPrompt(message));
+        self.frontend.send(MessageToFrontend::AuthPrompt {
+            context: AuthPromptContext::AddAccount,
+            message,
+        });
     }
 
     async fn get_message(&self) -> Option<AuthMessage> {
@@ -207,6 +218,7 @@ impl AuthMessageProvider for AuthPromptReporter {
         if let Ok(mut message) = self.message.lock() {
             *message = None;
         }
+        self.frontend.send(MessageToFrontend::AuthPromptCleared);
     }
 
     async fn request_offline_nickname(&self) -> String {
@@ -275,6 +287,9 @@ impl BackendState {
             running: HashSet::new(),
             launch_tasks: HashMap::new(),
             launch_errors: HashMap::new(),
+            add_account_cancel: None,
+            add_account_task: None,
+            auth_launch_instance: None,
         })
     }
 
@@ -975,14 +990,72 @@ impl BackendState {
             return;
         }
 
+        if self.add_account_task.is_some() {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Info,
+                message: Arc::from(launcher_i18n::notifications::add_account_already_running()),
+            });
+            return;
+        }
+
+        let cancel = CancellationToken::new();
+        let cancel_token = cancel.clone();
+        self.add_account_cancel = Some(cancel);
         let auth_prompt = Arc::new(AuthPromptReporter::new(tx));
-        tokio::spawn(async move {
-            let result = perform_auth(None, provider.clone(), auth_prompt)
-                .await
-                .map(|account| (provider, account))
-                .map_err(|err| Arc::<str>::from(format!("{err:#}")));
-            let _ = internal.send(BackendEvent::AddAccountFinished { result });
+        let task = tokio::spawn(async move {
+            let result = tokio::select! {
+                result = perform_auth(None, provider.clone(), auth_prompt) => {
+                    Some(
+                        result
+                            .map(|account| (provider, account))
+                            .map_err(|err| Arc::<str>::from(format!("{err:#}"))),
+                    )
+                }
+                () = cancel_token.cancelled() => None,
+            };
+            let event = match result {
+                Some(result) => BackendEvent::AddAccountFinished { result },
+                None => BackendEvent::AddAccountCancelled,
+            };
+            let _ = internal.send(event);
         });
+        self.add_account_task = Some(task);
+    }
+
+    fn cancel_auth(&mut self, tx: &FrontendSender) {
+        if let Some(cancel) = self.add_account_cancel.take() {
+            cancel.cancel();
+            return;
+        }
+        if let Some(instance) = self.auth_launch_instance.take() {
+            self.cancel_launch_auth(instance, tx);
+        }
+    }
+
+    fn cancel_launch_auth(&mut self, instance: InstanceHandle, tx: &FrontendSender) {
+        tx.send(MessageToFrontend::AuthPromptCleared);
+        if self.running.contains(&instance) {
+            return;
+        }
+        if let Some(mut launch) = self.launch_tasks.remove(&instance) {
+            launch.kill.take();
+            launch.task.abort();
+        }
+        self.java_prep_tasks.remove(&instance);
+        self.installing.remove(&instance);
+        self.launching.remove(&instance);
+        let error = Arc::<str>::from(launcher_i18n::notifications::authentication_cancelled());
+        self.launch_errors.insert(instance.clone(), error.clone());
+        tx.send(MessageToFrontend::LaunchFinished {
+            instance: instance.clone(),
+            exit: launcher_bridge::ExitOutcome::Error(error),
+        });
+        self.emit_snapshot(tx);
+    }
+
+    fn clear_add_account_task(&mut self) {
+        self.add_account_task.take();
+        self.add_account_cancel.take();
     }
 
     fn submit_offline_nickname(&mut self, nickname: String, tx: &FrontendSender) {
@@ -1018,9 +1091,35 @@ impl BackendState {
         self.emit_snapshot(tx);
     }
 
-    fn remove_account(&mut self, key: AccountKey, tx: &FrontendSender) {
+    async fn clear_account_references(&self, key: &AccountKey) -> anyhow::Result<()> {
+        let data_dir = DataDir::new(self.launcher_dir.clone());
+        for local in self.instance_storage.all() {
+            let instance_dir = InstancesDir::root()
+                .instance_dir(&local.dir_name)
+                .with_data_dir(data_dir.clone());
+            let mut settings = load_instance_settings(&instance_dir).await?;
+            let mut changed = false;
+            if settings.selected_account.as_ref() == Some(key) {
+                settings.selected_account = None;
+                changed = true;
+            }
+            if settings.account_override.as_ref() == Some(key) {
+                settings.account_override = None;
+                changed = true;
+            }
+            if changed {
+                save_instance_settings(&instance_dir, &settings).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn remove_account(&mut self, key: AccountKey, tx: &FrontendSender) {
         match self.auth_storage.delete_account(key.0, &key.1) {
             Ok(()) => {
+                if let Err(err) = self.clear_account_references(&key).await {
+                    log::warn!("Failed to clear instance account references for {key:?}: {err:#}");
+                }
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Success,
                     message: Arc::from(launcher_i18n::notifications::account_removed()),
@@ -1117,6 +1216,8 @@ impl BackendState {
         result: Result<(AuthProviderConfig, AccountData), Arc<str>>,
         tx: &FrontendSender,
     ) {
+        self.clear_add_account_task();
+        tx.send(MessageToFrontend::AuthPromptCleared);
         match result {
             Ok((provider, account)) => match self.auth_storage.insert_account(&provider, account) {
                 Ok((_, username)) => {
@@ -1146,6 +1247,15 @@ impl BackendState {
             }
         }
         self.emit_snapshot(tx);
+    }
+
+    fn handle_add_account_cancelled(&mut self, tx: &FrontendSender) {
+        self.clear_add_account_task();
+        tx.send(MessageToFrontend::AuthPromptCleared);
+    }
+
+    fn handle_auth_launch_prompt(&mut self, instance: Option<InstanceHandle>) {
+        self.auth_launch_instance = instance;
     }
 
     async fn set_instance_account_override(
@@ -1558,8 +1668,13 @@ impl BackendState {
         let settings = self.load_settings_for_id(&handle);
         let configured_override = settings.account_override.clone();
         let selected_account = settings.selected_account.clone();
-        let bypass_required_provider = account.is_none() && configured_override.is_some();
-        let account = account.or(configured_override).or(selected_account);
+        let launch_accounts = self.launch_accounts();
+        let valid_override =
+            launch::stored_account_if_valid(&configured_override, &launch_accounts);
+        let bypass_required_provider = account.is_none() && valid_override.is_some();
+        let account = account
+            .or(valid_override)
+            .or_else(|| launch::stored_account_if_valid(&selected_account, &launch_accounts));
         if account.is_none()
             && let Some(view) = self
                 .build_instance_views()
@@ -1654,6 +1769,7 @@ impl BackendState {
                     local_instances,
                     account_entries,
                     frontend,
+                    internal: internal.clone(),
                 })
                 .await
             }
@@ -1748,6 +1864,7 @@ impl BackendState {
         exit: launcher_bridge::ExitOutcome,
         tx: &FrontendSender,
     ) {
+        self.auth_launch_instance = None;
         if let Some(mut handle) = self.launch_tasks.remove(&handle) {
             handle.kill.take();
         }
@@ -1908,11 +2025,14 @@ pub async fn run(
                     MessageToBackend::StartAddAccount(provider) => {
                         state.start_add_account(provider, frontend.clone(), internal_sender.clone());
                     }
+                    MessageToBackend::CancelAuth => {
+                        state.cancel_auth(&frontend);
+                    }
                     MessageToBackend::SubmitOfflineNickname(nickname) => {
                         state.submit_offline_nickname(nickname, &frontend);
                     }
                     MessageToBackend::RemoveAccount(account) => {
-                        state.remove_account(account, &frontend);
+                        state.remove_account(account, &frontend).await;
                     }
                     MessageToBackend::SetInstanceSelectedAccount { instance, account } => {
                         state.set_instance_selected_account(instance, account, &frontend).await;
@@ -2034,6 +2154,12 @@ pub async fn run(
                     }
                     Some(BackendEvent::AddAccountFinished { result }) => {
                         state.handle_add_account_finished(result, &frontend);
+                    }
+                    Some(BackendEvent::AddAccountCancelled) => {
+                        state.handle_add_account_cancelled(&frontend);
+                    }
+                    Some(BackendEvent::AuthLaunchPrompt { instance }) => {
+                        state.handle_auth_launch_prompt(instance);
                     }
                     Some(BackendEvent::JavaResolved { instance, path }) => {
                         frontend.send(MessageToFrontend::JavaPathResolved { instance, path });

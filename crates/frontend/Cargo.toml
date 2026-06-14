@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+open.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
 gpui_platform.workspace = true
@@ -15,3 +16,6 @@ log.workspace = true
 url.workspace = true
 launcher-i18n = { path = "../i18n" }
 instance = { path = "../instance" }
+qrcode = "0.14.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+smallvec = "1.15.2"

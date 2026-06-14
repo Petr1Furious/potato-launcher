@@ -338,18 +338,6 @@ ru = "Аккаунты"
 en = "Add Account"
 ru = "Добавить аккаунт"
 
-[accounts.suggested_account]
-en = "Suggested Account"
-ru = "Рекомендуемый аккаунт"
-
-[accounts.suggested_account_needs]
-en = "This instance needs ${provider: String}"
-ru = "Для этого инстанса нужен ${provider: String}"
-
-[accounts.add_suggested_account]
-en = "Add Suggested Account"
-ru = "Добавить рекомендуемый аккаунт"
-
 [accounts.account_section]
 en = "Account"
 ru = "Аккаунт"
@@ -718,6 +706,14 @@ ru = "Не удалось сохранить аккаунт: ${error: String}"
 en = "Authentication failed: ${error: String}"
 ru = "Ошибка авторизации: ${error: String}"
 
+[notifications.authentication_cancelled]
+en = "Authentication cancelled"
+ru = "Авторизация отменена"
+
+[notifications.add_account_already_running]
+en = "Account login is already in progress"
+ru = "Вход в аккаунт уже выполняется"
+
 [notifications.use_account_selection_for_required]
 en = "Use Account selection for accounts from the required provider"
 ru = "Используйте выбор аккаунта для провайдера, требуемого инстансом"
@@ -889,6 +885,22 @@ ru = "Не удалось загрузить версии загрузчика"
 [auth.default_launcher_name]
 en = "Potato Launcher"
 ru = "Potato Launcher"
+
+[auth.authorization]
+en = "Authorization"
+ru = "Авторизация"
+
+[auth.open_link]
+en = "Open link"
+ru = "Открыть ссылку"
+
+[auth.launch_context]
+en = "Signing in to launch ${instance: String}"
+ru = "Вход для запуска ${instance: String}"
+
+[auth.device_code]
+en = "Enter this code: ${code: String}"
+ru = "Введите этот код: ${code: String}"
 
 [auth.continue_in_browser]
 en = "Continue authentication in your browser: ${url: String}"

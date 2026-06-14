@@ -3824,6 +3824,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "toml_edit 0.25.12+spec-1.1.0",
  "url",
  "utils",
@@ -3858,12 +3859,16 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gpui_platform",
+ "image",
  "instance",
  "launcher-auth",
  "launcher-bridge",
  "launcher-build-config",
  "launcher-i18n",
  "log",
+ "open",
+ "qrcode",
+ "smallvec",
  "url",
 ]
 
@@ -5418,6 +5423,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+dependencies = [
+ "image",
+]
+
+[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6696,9 +6710,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.15.1"
+version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "smol"

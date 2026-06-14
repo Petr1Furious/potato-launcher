@@ -1,3 +1,4 @@
+pub mod auth_qr;
 pub mod component;
 pub mod entity;
 pub mod pages;
@@ -8,8 +9,8 @@ pub mod ui;
 use std::path::PathBuf;
 
 use entity::{
-    DataEntities, account::AccountEntries, backend::BackendList, instance::InstanceEntries,
-    java_resolve::JavaResolveCache, local_create::LocalCreateEntries,
+    DataEntities, account::AccountEntries, auth::AuthSession, backend::BackendList,
+    instance::InstanceEntries, java_resolve::JavaResolveCache, local_create::LocalCreateEntries,
     notification::NotificationEntries, settings::LauncherSettingsEntries, update::UpdateEntries,
 };
 use gpui::{
@@ -45,6 +46,7 @@ pub fn start(
         let instances = cx.new(|_| InstanceEntries::default());
         let backends = cx.new(|_| BackendList::default());
         let accounts = cx.new(|_| AccountEntries::default());
+        let auth = cx.new(|_| AuthSession::default());
         let notifications = cx.new(|_| NotificationEntries::default());
         let settings = cx.new(|_| LauncherSettingsEntries::default());
         let local_create = cx.new(|_| LocalCreateEntries::default());
@@ -54,6 +56,7 @@ pub fn start(
             instances,
             backends,
             accounts,
+            auth,
             notifications,
             settings,
             local_create,

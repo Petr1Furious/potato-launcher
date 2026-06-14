@@ -80,6 +80,7 @@ pub enum MessageToBackend {
         loader: LocalLoader,
     },
     ProceedAfterUpdateFailure,
+    CancelAuth,
     Quit,
 }
 
@@ -106,7 +107,11 @@ pub enum MessageToFrontend {
         backends: Arc<[BackendStatus]>,
     },
     SettingsUpdated(LauncherSettingsView),
-    AuthPrompt(AuthMessage),
+    AuthPrompt {
+        context: AuthPromptContext,
+        message: AuthMessage,
+    },
+    AuthPromptCleared,
     Notification {
         level: NotificationLevel,
         message: Arc<str>,
@@ -271,6 +276,12 @@ pub enum BackendFetchState {
     Fetched { instance_count: usize },
     Offline,
     Error(Arc<str>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AuthPromptContext {
+    AddAccount,
+    Launch { instance: InstanceHandle },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

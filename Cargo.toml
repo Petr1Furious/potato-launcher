@@ -28,6 +28,7 @@ tokio = { version = "1.52.3", features = [
     "process",
     "sync",
 ] }
+tokio-util = "0.7.18"
 log = "0.4.32"
 fern = "0.7.1"
 humantime = "2"

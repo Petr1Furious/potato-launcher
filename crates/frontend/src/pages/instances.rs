@@ -6,7 +6,8 @@ use std::{
 };
 
 use gpui::{
-    App, Context, IntoElement, Render, SharedString, Window, div, prelude::*, px, relative, rems,
+    App, Context, ImageSource, IntoElement, ObjectFit, Render, SharedString, Window, div, img,
+    prelude::*, px, relative, rems,
 };
 use gpui_component::{
     ActiveTheme, Disableable, IndexPath, StyledExt,
@@ -17,16 +18,18 @@ use gpui_component::{
     scroll::ScrollableElement,
     select::{Select, SelectDelegate, SelectEvent, SelectItem, SelectState},
     skeleton::Skeleton,
+    text::TextView,
     v_flex,
 };
 use instance::storage::{InstanceHandle, allocate_local_dir_name};
-use launcher_auth::providers::{
-    AuthProviderConfig, ElyByAuthProvider, MicrosoftAuthProvider, TGAuthProvider,
+use launcher_auth::{
+    flow::AuthMessage,
+    providers::{AuthProviderConfig, ElyByAuthProvider, MicrosoftAuthProvider, TGAuthProvider},
 };
 use launcher_bridge::{
-    AccountView, BackendFetchState, BackendSender, BackendStatus, InstanceLiveStatus,
-    InstanceOrigin, InstanceView, LauncherSettingsView, LocalLoader, MessageToBackend,
-    NotificationLevel,
+    AccountView, AuthPromptContext, BackendFetchState, BackendSender, BackendStatus,
+    InstanceLiveStatus, InstanceOrigin, InstanceView, LauncherSettingsView, LocalLoader,
+    MessageToBackend, NotificationLevel,
 };
 #[cfg(target_os = "linux")]
 use launcher_build_config::use_native_glfw_default;
@@ -52,7 +55,6 @@ pub struct InstancesPage {
     show_accounts_panel: bool,
     show_create_local_modal: bool,
     create_local_loader: LocalLoader,
-    preferred_add_provider: Option<AuthProviderConfig>,
     pending_delete: Option<InstanceHandle>,
     hidden_launches: HashSet<InstanceHandle>,
     backend_url_input: gpui::Entity<InputState>,
@@ -193,7 +195,6 @@ impl InstancesPage {
             create_local_show_snapshots: false,
             create_local_sync_mc_dropdown: false,
             create_local_sync_loader_dropdown: false,
-            preferred_add_provider: None,
             pending_delete: None,
             hidden_launches: HashSet::new(),
             backend_url_input,
@@ -227,7 +228,6 @@ impl InstancesPage {
         self.show_global_settings = !should_close;
         self.show_backend_settings = false;
         self.show_accounts_panel = false;
-        self.preferred_add_provider = None;
         cx.notify();
     }
 
@@ -237,7 +237,6 @@ impl InstancesPage {
         self.show_global_settings = false;
         self.show_backend_settings = !should_close;
         self.show_accounts_panel = false;
-        self.preferred_add_provider = None;
         cx.notify();
     }
 
@@ -247,7 +246,6 @@ impl InstancesPage {
         self.show_global_settings = false;
         self.show_backend_settings = false;
         self.show_accounts_panel = !should_close;
-        self.preferred_add_provider = None;
         cx.notify();
     }
 }
@@ -397,7 +395,7 @@ impl Render for InstancesPage {
             None
         };
 
-        if let Some(side_panel) = side_panel {
+        let content = if let Some(side_panel) = side_panel {
             h_flex()
                 .size_full()
                 .child(div().flex_1().min_w_0().size_full().child(list))
@@ -405,7 +403,15 @@ impl Render for InstancesPage {
                 .into_any_element()
         } else {
             list.into_any_element()
-        }
+        };
+
+        let auth_active = self.data.auth.read(cx).is_active();
+        div()
+            .size_full()
+            .relative()
+            .child(content)
+            .when(auth_active, |this| this.child(self.auth_modal(window, cx)))
+            .into_any_element()
     }
 }
 
@@ -802,6 +808,106 @@ impl InstancesPage {
             )
     }
 
+    fn auth_modal(&self, _window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        let auth_session = self.data.auth.read(cx).clone();
+        let Some(message) = auth_session.message.clone() else {
+            return div();
+        };
+        let instances = self.data.instances.read(cx).entries.clone();
+        let sender = self.data.backend_sender.clone();
+        let (url, instruction, device_code) = match &message {
+            AuthMessage::Link { url } => {
+                (url.clone(), t::auth::continue_in_browser(url.clone()), None)
+            }
+            AuthMessage::LinkCode { url, code } => (
+                url.clone(),
+                t::auth::continue_in_browser_with_code(url.clone(), code.clone()),
+                Some(code.clone()),
+            ),
+        };
+        let context_hint = auth_session.context.as_ref().map(|context| match context {
+            AuthPromptContext::AddAccount => t::accounts::add_account_section().to_string(),
+            AuthPromptContext::Launch { instance } => instances
+                .iter()
+                .find(|entry| &entry.handle == instance)
+                .map(|entry| t::auth::launch_context(entry.display_name.to_string()))
+                .unwrap_or_else(|| t::auth::launch_context(instance.to_string())),
+        });
+
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().background.opacity(0.88))
+            .child(
+                v_flex()
+                    .w(px(420.0))
+                    .gap_3()
+                    .p_4()
+                    .rounded(cx.theme().radius_lg)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().popover)
+                    .shadow_lg()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_semibold()
+                            .child(t::auth::authorization()),
+                    )
+                    .when_some(context_hint, |this, hint| {
+                        this.child(TextView::markdown("auth-context", hint).selectable(true))
+                    })
+                    .child(TextView::markdown("auth-instruction", instruction).selectable(true))
+                    .when_some(device_code, |this, code| {
+                        this.child(
+                            TextView::markdown("auth-device-code", t::auth::device_code(code))
+                                .selectable(true),
+                        )
+                    })
+                    .when_some(auth_session.qr_image.clone(), |this, qr_image| {
+                        let qr_size = qr_image.size(0);
+                        let w = px(u32::from(qr_size.width) as f32);
+                        let h = px(u32::from(qr_size.height) as f32);
+                        this.child(
+                            div().flex().justify_center().child(
+                                div()
+                                    .p(px(4.0))
+                                    .bg(gpui::white())
+                                    .rounded(cx.theme().radius)
+                                    .child(
+                                        img(ImageSource::Render(qr_image))
+                                            .object_fit(ObjectFit::Fill)
+                                            .w(w)
+                                            .h(h),
+                                    ),
+                            ),
+                        )
+                    })
+                    .child(
+                        Button::new("auth-open-link")
+                            .label(t::auth::open_link())
+                            .on_click({
+                                let url = url.clone();
+                                move |_, _, _| {
+                                    let _ = open::that(&url);
+                                }
+                            }),
+                    )
+                    .child(
+                        h_flex().justify_end().child(
+                            Button::new("auth-cancel")
+                                .label(t::common::cancel())
+                                .on_click(move |_, _, _| {
+                                    sender.send(MessageToBackend::CancelAuth);
+                                }),
+                        ),
+                    ),
+            )
+    }
+
     fn settings_panel(
         &self,
         instance: InstanceView,
@@ -1030,32 +1136,10 @@ impl InstancesPage {
                             .label(t::common::close())
                             .on_click(cx.listener(|page, _, _, cx| {
                                 page.show_accounts_panel = false;
-                                page.preferred_add_provider = None;
                                 cx.notify();
                             })),
                     ),
             )
-            .when_some(self.preferred_add_provider.as_ref(), |this, provider| {
-                this.child(detail_section(
-                    t::accounts::suggested_account(),
-                    v_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(t::accounts::suggested_account_needs(provider_label(
-                                    provider,
-                                ))),
-                        )
-                        .child(add_provider_button(
-                            provider.clone(),
-                            t::accounts::add_suggested_account(),
-                            sender.clone(),
-                        )),
-                    cx,
-                ))
-            })
             .child(detail_section(
                 t::accounts::section(),
                 accounts_section(accounts, sender.clone(), cx),

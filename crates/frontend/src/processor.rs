@@ -1,5 +1,4 @@
 use gpui::App;
-use launcher_auth::flow::AuthMessage;
 use launcher_bridge::{ExitOutcome, MessageToFrontend, NotificationLevel};
 use launcher_i18n::{self as t, set_lang};
 
@@ -61,10 +60,15 @@ impl Processor {
                     entries.push(level, message.to_string(), cx);
                 });
             }
-            MessageToFrontend::AuthPrompt(prompt) => {
-                log::info!("Auth prompt received: {prompt:?}");
-                self.data.notifications.update(cx, |entries, cx| {
-                    entries.push(NotificationLevel::Info, auth_prompt_message(prompt), cx);
+            MessageToFrontend::AuthPrompt { context, message } => {
+                log::info!("Auth prompt received: {context:?} {message:?}");
+                self.data.auth.update(cx, |session, cx| {
+                    session.set_prompt(context, message, cx);
+                });
+            }
+            MessageToFrontend::AuthPromptCleared => {
+                self.data.auth.update(cx, |session, cx| {
+                    session.clear(cx);
                 });
             }
             MessageToFrontend::LaunchFinished { instance, exit } => {
@@ -135,12 +139,5 @@ impl Processor {
                 cx.quit();
             }
         }
-    }
-}
-
-fn auth_prompt_message(prompt: AuthMessage) -> String {
-    match prompt {
-        AuthMessage::Link { url } => t::auth::continue_in_browser(url),
-        AuthMessage::LinkCode { url, code } => t::auth::continue_in_browser_with_code(url, code),
     }
 }

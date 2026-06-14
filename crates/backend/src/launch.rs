@@ -16,9 +16,10 @@ use launcher_auth::{
     providers::{AuthProviderConfig, OfflineAuthProvider},
     storage::{AccountKey, StorageAccountEntry},
 };
-use launcher_bridge::{FrontendSender, MessageToFrontend};
+use launcher_bridge::{AuthPromptContext, FrontendSender, MessageToFrontend};
 use launcher_build_config::{launcher_name, use_native_glfw_default, version};
 use tokio::process::{Child, Command};
+use tokio::sync::mpsc;
 use utils::{
     java,
     paths::{AssetsDir, DataDir, InstanceDirFS, InstancesDir, LibrariesDir, LogsDir, NativesDir},
@@ -64,6 +65,7 @@ pub(crate) struct LaunchRequest {
     pub(crate) local_instances: Vec<LocalInstance>,
     pub(crate) account_entries: Vec<(AccountKey, AuthProviderConfig, AccountData)>,
     pub(crate) frontend: FrontendSender,
+    pub(crate) internal: mpsc::UnboundedSender<crate::BackendEvent>,
 }
 
 pub(crate) struct LaunchStart {
@@ -153,7 +155,11 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         perform_auth(
             Some(account_data),
             provider.clone(),
-            Arc::new(LaunchAuthMessages::new(request.frontend.clone())),
+            Arc::new(LaunchAuthMessages::new(
+                request.frontend.clone(),
+                request.handle.clone(),
+                request.internal.clone(),
+            )),
         )
         .await?
     } else {
@@ -432,6 +438,18 @@ pub(crate) async fn read_metadata(
     Ok(InstanceMetadata::read_local(instance_dir).await?)
 }
 
+pub(crate) fn stored_account_if_valid(
+    key: &Option<AccountKey>,
+    accounts: &[(AccountKey, AuthProviderConfig, AccountData)],
+) -> Option<AccountKey> {
+    key.as_ref().and_then(|key| {
+        accounts
+            .iter()
+            .find(|(account_key, _, _)| account_key == key)
+            .map(|(account_key, _, _)| account_key.clone())
+    })
+}
+
 fn resolve_account(
     requested: Option<AccountKey>,
     required_provider: Option<&AuthProviderConfig>,
@@ -489,14 +507,22 @@ fn path_string(path: &Path) -> String {
 
 struct LaunchAuthMessages {
     frontend: FrontendSender,
+    instance: InstanceHandle,
+    internal: mpsc::UnboundedSender<crate::BackendEvent>,
     offline_nickname: Mutex<String>,
     message: Mutex<Option<AuthMessage>>,
 }
 
 impl LaunchAuthMessages {
-    fn new(frontend: FrontendSender) -> Self {
+    fn new(
+        frontend: FrontendSender,
+        instance: InstanceHandle,
+        internal: mpsc::UnboundedSender<crate::BackendEvent>,
+    ) -> Self {
         Self {
             frontend,
+            instance,
+            internal,
             offline_nickname: Mutex::new(DEFAULT_OFFLINE_USERNAME.to_string()),
             message: Mutex::new(None),
         }
@@ -509,7 +535,15 @@ impl AuthMessageProvider for LaunchAuthMessages {
         if let Ok(mut stored) = self.message.lock() {
             *stored = Some(message.clone());
         }
-        self.frontend.send(MessageToFrontend::AuthPrompt(message));
+        self.frontend.send(MessageToFrontend::AuthPrompt {
+            context: AuthPromptContext::Launch {
+                instance: self.instance.clone(),
+            },
+            message,
+        });
+        let _ = self.internal.send(crate::BackendEvent::AuthLaunchPrompt {
+            instance: Some(self.instance.clone()),
+        });
     }
 
     async fn get_message(&self) -> Option<AuthMessage> {
@@ -520,6 +554,10 @@ impl AuthMessageProvider for LaunchAuthMessages {
         if let Ok(mut message) = self.message.lock() {
             *message = None;
         }
+        self.frontend.send(MessageToFrontend::AuthPromptCleared);
+        let _ = self
+            .internal
+            .send(crate::BackendEvent::AuthLaunchPrompt { instance: None });
     }
 
     async fn request_offline_nickname(&self) -> String {
@@ -585,5 +623,18 @@ mod tests {
 
         assert_eq!(actual_provider, required);
         assert_eq!(actual_account, account);
+    }
+
+    #[test]
+    fn stored_account_if_valid_ignores_missing_account() {
+        let (key, provider, account) = offline_account("Tester");
+        let accounts = vec![(key.clone(), provider, account)];
+        let stale = (key.0, "DeletedUser".to_string());
+
+        assert_eq!(stored_account_if_valid(&Some(stale), &accounts), None);
+        assert_eq!(
+            stored_account_if_valid(&Some(key.clone()), &accounts),
+            Some(key)
+        );
     }
 }
