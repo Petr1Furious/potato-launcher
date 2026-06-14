@@ -44,7 +44,7 @@ modules:
   - name: potato-launcher-meta
     buildsystem: simple
     build-commands:
-      - install -D launcher/assets/icon.png /app/share/icons/hicolor/512x512/apps/{{ flatpak_id }}.png
+      - install -D crates/launcher/assets/icon.png /app/share/icons/hicolor/512x512/apps/{{ flatpak_id }}.png
       - install -D packaging/flatpak/{{ flatpak_id }}.desktop /app/share/applications/{{ flatpak_id }}.desktop
     sources:
       - type: dir
