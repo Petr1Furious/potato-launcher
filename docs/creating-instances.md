@@ -6,12 +6,13 @@
 
 If you deployed the full server setup (see [Server setup](/setting-up/server)), you can manage instances from the browser. Typical workflow:
 
-- Login into the admin panel at `https://<your-domain>/admin`
+- Log in at `https://<your-domain>/admin`
 - Click **New Instance** or select an instance you want to update and click **Update**
 - Fill all necessary fields (**Instance Name**, **Minecraft Version**, **Mod Loader**, **Loader version** (if not vanilla), **Authentication Type**, **Mod Sync**, and **Resource Sync**)
 - Click **Create Instance**
-- To upload modpack files (e.g. mods, configs), select an existing instance, click **Update** and **Manage instance files**. Upload all files you want the builder to include.
+- To upload modpack files (e.g. mods, configs), select an existing instance, click **Update** and **Manage instance files**. You can also upload files via [Filebrowser](/setting-up/server#what-gets-served-where) at `/filebrowser/`. Upload all files you want the builder to include.
 - **Important:** add **content rules** and choose a **type** for each rule (`file`, `directory`, or `config_options`). The launcher needs these rules to know how to sync each path when the remote pack changes. For example, set **Skip if dir exists** on `config`, and both **Overwrite** and **Delete Extra** on `kubejs`.
+- Optionally open **Settings** to toggle **Replace download URLs** (whether libraries and assets are served from your server). This matches the `REPLACE_DOWNLOAD_URLS` variable from [Server setup](/setting-up/server).
 - Click **Build** to generate the `/data/` output served by nginx
 
 The launcher downloads metadata from `<download_server_base>/instance_manifest.json` (usually `https://<your-domain>/data/instance_manifest.json`).
@@ -37,7 +38,7 @@ After defining your instance, you can build it with the following command:
 cargo run --release -p instance-builder -- -s <path to spec.json>
 ```
 
-This will create a `generated` directory, which should then be uploaded to your server. If you followed the [Server configuration](/setting-up/server) guide, you should upload the contents of this directory (not the directory itself) to the `data` subdirectory of your launcher dir, e.g. to `/srv/potatosmp/data`.
+This will create a `generated` directory (and a `workdir` directory used during the build), which should then be uploaded to your server. If you followed the [Server setup](/setting-up/server) guide, upload the contents of `generated` (not the directory itself) into a directory on your server that nginx will serve under `/data/`.
 
 ## Manual (remote server build via SSH)
 
@@ -57,21 +58,7 @@ python3 scripts/remote-instance.py fetch --help
 
 The build command uploads a temporary copy of `spec.json` with `source_root` rewritten to the in-container uploaded instance path (default: `/data/internal/uploaded-instances/<instance-id>`). It does not modify your local spec file. Instance sync skips `.git` and `saves` by default; see `--help` for flags to change that.
 
-You can keep common settings in `scripts/remote-instance.json`:
-
-```json
-{
-    "remote": "minecraft@example.com",
-    "ssh_port": 22,
-    "internal_dir": "/srv/potato-launcher/state/internal",
-    "container": "potato-launcher-backend",
-    "docker_host": "unix:///run/user/1002/docker.sock",
-    "spec": "./spec.json",
-    "instances": {
-        "minigames": "/local/path/to/instance/minecraft"
-    }
-}
-```
+You can keep common settings in `scripts/remote-instance.json`. See [`scripts/remote-instance.example.json`](https://github.com/Petr1Furious/potato-launcher/blob/master/scripts/remote-instance.example.json) for an example.
 
 ## JSON structure
 
@@ -79,6 +66,7 @@ You can keep common settings in `scripts/remote-instance.json`:
 {
     "download_server_base": "string",
     "replace_download_urls": "boolean",
+    "resources_url_base": "string",
     "instances": [
         {
             "id": "string",
@@ -143,6 +131,7 @@ You can keep common settings in `scripts/remote-instance.json`:
 
 - **download_server_base** (required): Base URL where generated files are deployed. Files must be reachable at `<download_server_base>/<relative-path>`. Typically `https://your.domain/data`.
 - **replace_download_urls**: If `true`, libraries, assets, and included files are served from your server. If `false`, Mojang/upstream URLs are kept where possible; only metadata, content rules, and Forge patched jars come from your server. Default: `false`.
+- **resources_url_base**: Optional override for the assets base URL. When omitted, assets follow `replace_download_urls` (Mojang servers if `false`, your `download_server_base` if `true`). The backend can also set this from the `RESOURCES_URL_BASE` environment variable.
 - **instances** (required): Array of instance specs (see below).
 
 ## Instance fields
@@ -151,10 +140,10 @@ You can keep common settings in `scripts/remote-instance.json`:
 - **display_name**: Name shown in the launcher. Use a plain string (`"Minigames"`) or a language map object (`{ "en": "Minigames", "ru": "Миниигры" }`). Falls back to `id`.
 - **minecraft_version** (required): Minecraft version.
 - **mod_loader**: `vanilla`, `fabric`, `forge`, or `neoforge`. Default: `vanilla`.
-- **loader_version**: Mod loader version. Optional; if omitted, Fabric/Forge/NeoForge generators pick a default (latest / recommended / latest).
+- **loader_version**: Mod loader version. Required in the admin panel for non-vanilla instances. In manual `spec.json` files, it can be omitted — Fabric/Forge/NeoForge generators then pick a default (latest / recommended / latest).
 - **source_root**: Directory containing authored pack files. Required when `content_rules` is non-empty. Web UI / backend set this to the uploaded instance directory on build.
 - **content_rules**: Rules for syncing authored files into the client instance directory.
-- **mod_sync**: How local `mods/` is reconciled with the remote mod list.
+- **mod_sync**: How local `mods/` is reconciled with the remote mod list. Defaults to `delta` mode with empty required/blocked/optional lists if omitted.
 - **resource_sync**: When to verify client jar, libraries, and assets.
 - **auth_backend**: Auth provider for this instance. Omit to allow any provider.
 - **default_xmx**: Default JVM `-Xmx` (e.g. `4G`, `8192M`).
@@ -219,7 +208,7 @@ Example:
 - **mode**: `delta` (preserve user-added/removed mods), `mirror` (exact match), `mirror_fast` (mirror with size-only checks).
 - **required**: Mod IDs that must stay installed; removed locally they are restored.
 - **blocked**: Mod IDs that must not appear in the pack.
-- **optional_sets**: Toggleable optional mod groups users can enable/disable in the launcher. Each set's `display_name` supports the same string-or-language-map format as instance `display_name`.
+- **optional_sets**: Toggleable optional mod groups. In the launcher, players enable or disable each set with a checkbox in the instance settings panel. Sets with `enabled_by_default: true` are installed until the player turns them off; the choice is saved per instance. Each set's `display_name` supports the same string-or-language-map format as instance `display_name`.
 
 Mods are managed separately from `content_rules`; do not add a `mods` directory content rule.
 
@@ -233,7 +222,7 @@ Controls verification of client jar, libraries, and assets (separate from mod sy
 
 ## Authentication providers
 
-- `"mojang"`: Official Mojang auth. No extra fields.
+- `"microsoft"`: Official Microsoft/Minecraft account auth. No extra fields.
 - `"telegram"`: [tgauth](https://foxlab.dev/minecraft/tgauth-backend). Requires `"auth_base_url"`.
 - `"ely.by"`: [ely.by](https://ely.by). Requires `"client_id"`, `"client_secret"`, and optionally `"launcher_name"`.
 - `"offline"`: Offline mode.

@@ -7,7 +7,7 @@ export enum LoaderType {
 
 export enum AuthType {
   OFFLINE = "offline",
-  MOJANG = "mojang",
+  MICROSOFT = "microsoft",
   TELEGRAM = "telegram",
   ELY_BY = "ely.by",
 }

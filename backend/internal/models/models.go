@@ -17,10 +17,10 @@ const (
 type AuthType string
 
 const (
-	AuthMojang   AuthType = "mojang"
-	AuthTelegram AuthType = "telegram"
-	AuthEly      AuthType = "ely.by"
-	AuthOffline  AuthType = "offline"
+	AuthMicrosoft AuthType = "microsoft"
+	AuthTelegram  AuthType = "telegram"
+	AuthEly       AuthType = "ely.by"
+	AuthOffline   AuthType = "offline"
 )
 
 type AuthBackend struct {

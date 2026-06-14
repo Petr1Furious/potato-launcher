@@ -41,15 +41,6 @@ fn main() -> anyhow::Result<()> {
                 .help("Working directory")
                 .default_value("./workdir"),
         )
-        .arg(
-            Arg::new("delete_remote_instances")
-                .help("Comma-separated remote instance names to delete from fetched manifest")
-                .long("delete-remote")
-                .num_args(1..)
-                .use_value_delimiter(true)
-                .value_delimiter(',')
-                .value_name("NAME"),
-        )
         .get_matches();
 
     let spec_file = matches.get_one::<PathBuf>("spec_file").unwrap();

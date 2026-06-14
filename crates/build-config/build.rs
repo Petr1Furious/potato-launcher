@@ -1,14 +1,50 @@
-use std::{collections::HashSet, env, fs, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    env, fs,
+    path::PathBuf,
+};
 
 const LAUNCHER_NAME_DEFAULT: &str = "Potato Launcher";
 const LAUNCHER_APP_ID_DEFAULT: &str = "com.petr1furious.potato_launcher";
 
+const BUILD_ENV_PATH: &str = "../../build.env";
+
+fn load_build_env() -> HashMap<String, String> {
+    let build_env_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(BUILD_ENV_PATH);
+    println!("cargo:rerun-if-changed={}", build_env_path.display());
+
+    let Ok(contents) = fs::read_to_string(&build_env_path) else {
+        return HashMap::new();
+    };
+
+    contents
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            let (key, value) = line.split_once('=')?;
+            Some((key.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+fn get_env(key: &str, build_env: &HashMap<String, String>) -> Option<String> {
+    env::var(key)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| build_env.get(key).cloned())
+        .filter(|value| !value.is_empty())
+}
+
 fn main() {
+    let build_env = load_build_env();
+
     for name in [
         "LAUNCHER_NAME",
         "LAUNCHER_APP_ID",
         "LAUNCHER_ICON",
-        "VERSION_MANIFEST_URL",
         "INSTANCE_MANIFEST_URLS",
         "BACKEND_API_BASE",
         "VERSION",
@@ -17,26 +53,19 @@ fn main() {
         println!("cargo:rerun-if-env-changed={name}");
     }
 
-    let launcher_name = env::var("LAUNCHER_NAME").unwrap_or_else(|_| LAUNCHER_NAME_DEFAULT.into());
+    let launcher_name =
+        get_env("LAUNCHER_NAME", &build_env).unwrap_or_else(|| LAUNCHER_NAME_DEFAULT.into());
     let launcher_app_id =
-        env::var("LAUNCHER_APP_ID").unwrap_or_else(|_| LAUNCHER_APP_ID_DEFAULT.into());
-    let launcher_icon = env::var("LAUNCHER_ICON").ok();
-    let backend_api_base = env::var("BACKEND_API_BASE").ok();
-    let version = env::var("VERSION").ok();
-    let use_native_glfw_default = env::var("USE_NATIVE_GLFW_DEFAULT")
-        .unwrap_or_else(|_| "false".into())
+        get_env("LAUNCHER_APP_ID", &build_env).unwrap_or_else(|| LAUNCHER_APP_ID_DEFAULT.into());
+    let launcher_icon = get_env("LAUNCHER_ICON", &build_env);
+    let backend_api_base = get_env("BACKEND_API_BASE", &build_env);
+    let version = get_env("VERSION", &build_env);
+    let use_native_glfw_default = get_env("USE_NATIVE_GLFW_DEFAULT", &build_env)
+        .unwrap_or_else(|| "false".into())
         .parse::<bool>()
         .expect("USE_NATIVE_GLFW_DEFAULT must be a boolean");
 
-    // INSTANCE_MANIFEST_URLS takes priority; VERSION_MANIFEST_URL is only used
-    // as a fallback when INSTANCE_MANIFEST_URLS is unset.
-    let url_list = env::var("INSTANCE_MANIFEST_URLS").unwrap_or_default();
-    let raw_urls = if url_list.is_empty() {
-        env::var("VERSION_MANIFEST_URL").unwrap_or_default()
-    } else {
-        url_list
-    };
-
+    let raw_urls = get_env("INSTANCE_MANIFEST_URLS", &build_env).unwrap_or_default();
     let instance_manifest_urls = parse_url_list(&raw_urls);
     let urls_literal = instance_manifest_urls
         .iter()

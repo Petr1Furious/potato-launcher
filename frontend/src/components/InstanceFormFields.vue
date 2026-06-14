@@ -289,7 +289,7 @@ const isVanillaLoader = computed(
             </SelectTrigger>
             <SelectContent>
               <SelectItem :value="AuthType.OFFLINE">Offline</SelectItem>
-              <SelectItem :value="AuthType.MOJANG">Mojang</SelectItem>
+              <SelectItem :value="AuthType.MICROSOFT">Microsoft</SelectItem>
               <SelectItem :value="AuthType.TELEGRAM">Telegram</SelectItem>
               <SelectItem :value="AuthType.ELY_BY">Ely.by</SelectItem>
             </SelectContent>
