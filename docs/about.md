@@ -10,4 +10,4 @@ A Minecraft launcher that is easy to use and easy to deploy with basic DevOps sk
 - **Easy deployment (backend + frontend)**: Comes with a backend API and a web UI (admin panel) to manage instances and trigger builds. Easily deployable with Docker Compose.
 - **Custom auth**: Supports custom authentication servers
 - **Custom instances**: Players can create custom new instances with Fabric, Forge, NeoForge, or without a modloader for all Minecraft versions
-- **Vanilla format**: Fully compatible with vanilla, Forge, Fabric, and NeoForge version metadata formats. It can even be built with [vanilla manifest](https://piston-meta.mojang.com/mc/game/version_manifest_v2.json) and launch vanilla versions out of the box, just like the vanilla launcher
+- **Vanilla format**: Fully compatible with vanilla, Forge, Fabric, and NeoForge version metadata formats. Players can also create local vanilla instances from the launcher for any Minecraft version

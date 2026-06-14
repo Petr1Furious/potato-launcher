@@ -1,43 +1,49 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
-import { Loader2 } from 'lucide-vue-next';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { useAuth } from '@/composables/useAuth';
-import { useNotification } from '@/composables/useNotification';
-import { formatError } from '@/services/api';
+import { ref } from "vue";
+import { useRouter } from "vue-router";
+import { Loader2 } from "lucide-vue-next";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { useAuth } from "@/composables/useAuth";
+import { useNotification } from "@/composables/useNotification";
+import { formatError } from "@/services/api";
 
 const router = useRouter();
 const { login, loading, error } = useAuth();
 const { showSuccess, showError } = useNotification();
 
-const token = ref('');
-const tokenError = ref('');
+const token = ref("");
+const tokenError = ref("");
 
 const handleSubmit = async () => {
   if (!token.value.trim()) {
-    tokenError.value = 'Access token is required';
+    tokenError.value = "Access token is required";
     return;
   }
 
-  tokenError.value = '';
+  tokenError.value = "";
   try {
     await login({ token: token.value.trim() });
-    showSuccess('Logged in successfully');
-    router.push('/admin');
+    showSuccess("Logged in successfully");
+    router.push("/admin");
   } catch (err) {
-    showError(formatError(err, 'Login failed'));
+    showError(formatError(err, "Login failed"));
   }
 };
 
 const handleTokenChange = (value: string | number) => {
   token.value = String(value);
   if (tokenError.value) {
-    tokenError.value = '';
+    tokenError.value = "";
   }
 };
 </script>
@@ -56,11 +62,26 @@ const handleTokenChange = (value: string | number) => {
         <form class="space-y-4" @submit.prevent="handleSubmit">
           <div class="space-y-2">
             <Label for="token">Access Token *</Label>
-            <Input id="token" type="password" :disabled="loading" :model-value="token" placeholder="Enter token"
-              autocomplete="off" autocapitalize="off" spellcheck="false" @update:modelValue="handleTokenChange" />
-            <p v-if="tokenError" class="text-sm text-destructive">{{ tokenError }}</p>
+            <Input
+              id="token"
+              type="password"
+              :disabled="loading"
+              :model-value="token"
+              placeholder="Enter token"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              @update:modelValue="handleTokenChange"
+            />
+            <p v-if="tokenError" class="text-sm text-destructive">
+              {{ tokenError }}
+            </p>
           </div>
-          <Button type="submit" class="w-full" :disabled="loading || !token.trim()">
+          <Button
+            type="submit"
+            class="w-full"
+            :disabled="loading || !token.trim()"
+          >
             <Loader2 v-if="loading" class="h-4 w-4 animate-spin" />
             <span v-else>Sign In</span>
           </Button>

@@ -1,40 +1,42 @@
-import type { AuthResponse, TokenRequest } from '@/types/auth';
+import type { AuthResponse, TokenRequest } from "@/types/auth";
 
 class AuthService {
   private token: string | null = null;
 
   constructor() {
-    this.token = localStorage.getItem('auth_token');
+    this.token = localStorage.getItem("auth_token");
     this.syncCookie();
   }
 
   private syncCookie() {
-    if (typeof document === 'undefined') return;
+    if (typeof document === "undefined") return;
     if (this.token) {
       const encoded = encodeURIComponent(this.token);
-      const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+      const secure = window.location.protocol === "https:" ? "; Secure" : "";
       document.cookie = `pl_admin_token=${encoded}; Path=/; SameSite=Lax; Max-Age=86400${secure}`;
     } else {
-      document.cookie = 'pl_admin_token=; Path=/; Max-Age=0; SameSite=Lax';
+      document.cookie = "pl_admin_token=; Path=/; Max-Age=0; SameSite=Lax";
     }
   }
 
   async login(tokenRequest: TokenRequest): Promise<AuthResponse> {
     const response = await fetch(`/api/v1/auth/login`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(tokenRequest),
     });
 
     if (!response.ok) {
-      throw new Error(`Login failed: ${response.status} ${response.statusText}`);
+      throw new Error(
+        `Login failed: ${response.status} ${response.statusText}`,
+      );
     }
 
     const authResponse: AuthResponse = await response.json();
     this.token = authResponse.access_token;
-    localStorage.setItem('auth_token', authResponse.access_token);
+    localStorage.setItem("auth_token", authResponse.access_token);
     this.syncCookie();
 
     return authResponse;
@@ -42,7 +44,7 @@ class AuthService {
 
   logout(): void {
     this.token = null;
-    localStorage.removeItem('auth_token');
+    localStorage.removeItem("auth_token");
     this.syncCookie();
   }
 

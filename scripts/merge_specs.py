@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Merge two instance_builder spec JSON files.
+Merge two instance-builder spec JSON files.
 
 Usage:
   python3 scripts/merge_specs.py spec1.json spec2.json out.json

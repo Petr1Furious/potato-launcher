@@ -26,7 +26,7 @@ modules:
         CARGO_HOME: /run/build/potato-launcher/cargo
         VERSION: {{ version }}
         LAUNCHER_NAME: {{ app_name }}
-        VERSION_MANIFEST_URL: {{ version_manifest_url }}
+        INSTANCE_MANIFEST_URLS: {{ instance_manifest_urls }}
         BACKEND_API_BASE: ""
         # TODO: bundle patched GLFW and enable this
         # USE_NATIVE_GLFW_DEFAULT: "true"

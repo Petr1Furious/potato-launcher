@@ -1,0 +1,27 @@
+[package]
+name = "instance-builder"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+indicatif = "0.18.4"
+log.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+launcher-auth = { path = "../auth" }
+generate = { path = "../generate" }
+instance = { path = "../instance" }
+utils = { path = "../utils" }
+url.workspace = true
+relative-path.workspace = true
+shell-words = "1.1.1"
+thiserror.workspace = true
+tokio.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winapi.workspace = true
+winreg.workspace = true

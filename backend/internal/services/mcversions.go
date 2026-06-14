@@ -196,8 +196,8 @@ func neoforgeHasLoader(ctx context.Context, version string) (bool, error) {
 }
 
 func getNeoforgeLoaderVersions(ctx context.Context, version string) ([]string, error) {
-	prefix := mcToNeoforgePrefix(version)
-	if prefix == "" {
+	prefix := neoforgeMinecraftVersionPrefix(version)
+	if len(prefix) == 0 {
 		return nil, nil
 	}
 	items, err := fetchNeoforgeVersions(ctx)
@@ -206,10 +206,14 @@ func getNeoforgeLoaderVersions(ctx context.Context, version string) ([]string, e
 	}
 	matched := make([]string, 0)
 	for _, item := range items {
-		if strings.HasPrefix(item, prefix) {
+		if versionFragmentsStartWith(item, prefix) {
 			matched = append(matched, item)
 		}
 	}
+	slices.SortFunc(matched, func(a, b string) int {
+		return compareVersionFragments(versionStringToParts(a), versionStringToParts(b))
+	})
+	slices.Reverse(matched)
 	return matched, nil
 }
 
@@ -243,13 +247,136 @@ func fetchNeoforgeVersions(ctx context.Context) ([]string, error) {
 	return payload.Versioning.Versions.Version, nil
 }
 
-func mcToNeoforgePrefix(version string) string {
-	parts := strings.Split(version, ".")
-	if len(parts) >= 3 {
-		return fmt.Sprintf("%s.%s.", parts[1], parts[2])
+type versionFragmentKind int
+
+const (
+	versionFragmentNumber versionFragmentKind = iota
+	versionFragmentAlpha
+	versionFragmentBeta
+	versionFragmentSnapshot
+	versionFragmentString
+)
+
+type versionFragment struct {
+	kind  versionFragmentKind
+	text  string
+	value int
+}
+
+func versionStringToParts(version string) []versionFragment {
+	parts := strings.FieldsFunc(version, func(r rune) bool {
+		return r == '.' || r == '-' || r == '+'
+	})
+	out := make([]versionFragment, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if value, err := parseVersionNumber(part); err == nil {
+			out = append(out, versionFragment{kind: versionFragmentNumber, value: value})
+			continue
+		}
+		switch strings.ToLower(part) {
+		case "alpha":
+			out = append(out, versionFragment{kind: versionFragmentAlpha})
+		case "beta":
+			out = append(out, versionFragment{kind: versionFragmentBeta})
+		case "snapshot":
+			out = append(out, versionFragment{kind: versionFragmentSnapshot})
+		default:
+			out = append(out, versionFragment{kind: versionFragmentString, text: part})
+		}
 	}
-	if len(parts) == 2 {
-		return fmt.Sprintf("%s.0.", parts[1])
+	return out
+}
+
+func parseVersionNumber(part string) (int, error) {
+	value := 0
+	for _, ch := range part {
+		if ch < '0' || ch > '9' {
+			return 0, fmt.Errorf("not a number")
+		}
+		value = value*10 + int(ch-'0')
 	}
-	return ""
+	return value, nil
+}
+
+func neoforgeMinecraftVersionPrefix(minecraftVersion string) []versionFragment {
+	parts := versionStringToParts(minecraftVersion)
+	if len(parts) == 0 {
+		return parts
+	}
+
+	if parts[0].kind == versionFragmentString && parts[0].text == "25w14craftmine" {
+		return append([]versionFragment{{kind: versionFragmentNumber, value: 0}}, parts...)
+	}
+
+	for len(parts) < 3 {
+		parts = append(parts, versionFragment{kind: versionFragmentNumber, value: 0})
+	}
+	if parts[0].kind == versionFragmentNumber && parts[0].value == 1 {
+		parts = parts[1:]
+	}
+	return parts
+}
+
+func versionFragmentsStartWith(version string, prefix []versionFragment) bool {
+	parts := versionStringToParts(version)
+	if len(parts) < len(prefix) {
+		return false
+	}
+	for i, fragment := range prefix {
+		if !versionFragmentEqual(parts[i], fragment) {
+			return false
+		}
+	}
+	return true
+}
+
+func versionFragmentEqual(a, b versionFragment) bool {
+	if a.kind != b.kind {
+		return false
+	}
+	switch a.kind {
+	case versionFragmentNumber:
+		return a.value == b.value
+	case versionFragmentString:
+		return a.text == b.text
+	default:
+		return true
+	}
+}
+
+func compareVersionFragments(a, b []versionFragment) int {
+	maxLen := len(a)
+	if len(b) > maxLen {
+		maxLen = len(b)
+	}
+	for i := 0; i < maxLen; i++ {
+		var left, right versionFragment
+		if i < len(a) {
+			left = a[i]
+		}
+		if i < len(b) {
+			right = b[i]
+		}
+		if cmp := compareVersionFragment(left, right); cmp != 0 {
+			return cmp
+		}
+	}
+	return 0
+}
+
+func compareVersionFragment(a, b versionFragment) int {
+	if a.kind != b.kind {
+		return int(a.kind) - int(b.kind)
+	}
+	switch a.kind {
+	case versionFragmentNumber:
+		return a.value - b.value
+	case versionFragmentString:
+		return strings.Compare(a.text, b.text)
+	default:
+		return 0
+	}
 }

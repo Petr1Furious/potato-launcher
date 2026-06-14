@@ -1,0 +1,74 @@
+{
+    "download_server_base": "https://your.domain/data",
+    "replace_download_urls": true,
+    "instances": [
+        {
+            "id": "minigames",
+            "display_name": {
+                "en": "Minigames",
+                "ru": "Миниигры"
+            },
+            "minecraft_version": "26.1.2",
+            "mod_loader": "fabric",
+            "content_rules": [
+                {
+                    "type": "file",
+                    "path": "config/fabric_loader_dependencies.json",
+                    "apply_on": "update",
+                    "overwrite": true
+                },
+                {
+                    "type": "directory",
+                    "path": "config",
+                    "apply_on": "update",
+                    "overwrite": false,
+                    "delete_extra": true,
+                    "skip_if_dir_exists": false
+                },
+                {
+                    "type": "file",
+                    "path": "options.txt",
+                    "apply_on": "update",
+                    "overwrite": false
+                },
+                {
+                    "type": "file",
+                    "path": "servers.dat",
+                    "apply_on": "update",
+                    "overwrite": false
+                },
+                {
+                    "type": "config_options",
+                    "path": "config/some_config.json",
+                    "apply_on": "update",
+                    "config_type": "json",
+                    "options": [
+                        {
+                            "key": "some_option",
+                            "value": "some_value"
+                        }
+                    ]
+                }
+            ],
+            "mod_sync": {
+                "mode": "delta",
+                "required": ["some-required-mod"],
+                "blocked": ["some-blocked-mod"],
+                "optional_sets": [
+                    {
+                        "id": "voxy-set",
+                        "display_name": "Voxy",
+                        "enabled_by_default": true,
+                        "mod_ids": ["voxy", "vss"]
+                    }
+                ]
+            },
+            "resource_sync": "on_update",
+            "auth_backend": {
+                "type": "telegram",
+                "auth_base_url": "https://your.auth.domain"
+            },
+            "default_xmx": "6G"
+        }
+    ]
+}

@@ -20,7 +20,7 @@ def main():
 
     variables = {
         'app_name': get_env('LAUNCHER_NAME'),
-        'version_manifest_url': get_env('VERSION_MANIFEST_URL'),
+        'instance_manifest_urls': get_env('INSTANCE_MANIFEST_URLS', ''),
         'flatpak_id': get_env('LAUNCHER_APP_ID'),
         'app_name_lower': get_env('LAUNCHER_NAME').lower().replace(' ', '_'),
         'app_description': get_env('LAUNCHER_DESCRIPTION', ''),

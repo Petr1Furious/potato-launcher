@@ -78,7 +78,7 @@ func registerInstances(api huma.API, deps *Dependencies) {
 		}
 
 		updated, err := deps.Store.Update(func(spec *models.BuilderSpec) error {
-			if idx := instanceIndex(spec, instance.Name); idx != -1 {
+			if idx := instanceIndex(spec, instance.ID); idx != -1 {
 				return errInstanceExists
 			}
 			spec.Instances = append(spec.Instances, *instance)
@@ -88,25 +88,25 @@ func registerInstances(api huma.API, deps *Dependencies) {
 			return nil, mapAppError(err)
 		}
 
-		_, created := findInstance(updated, instance.Name)
+		_, created := findInstance(updated, instance.ID)
 		if created == nil {
 			return nil, huma.Error500InternalServerError("failed to create instance")
 		}
 
-		if err := ensureInstanceDir(deps.Config, instance.Name); err != nil {
-			deps.Logger.Warn("failed to create instance directory", "name", instance.Name, "error", err)
+		if err := ensureInstanceDir(deps.Config, instance.ID); err != nil {
+			deps.Logger.Warn("failed to create instance directory", "id", instance.ID, "error", err)
 		}
 
-		deps.Logger.Info("instance created", "name", instance.Name)
+		deps.Logger.Info("instance created", "id", instance.ID)
 		return &struct{ Body APIInstance }{Body: toAPIInstance(*created)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
 		OperationID: "get-instance",
 		Method:      http.MethodGet,
-		Path:        "/instances/{name}",
+		Path:        "/instances/{id}",
 		Summary:     "Get Instance",
-		Description: "Get a specific instance by name.",
+		Description: "Get a specific instance by ID.",
 		Tags:        []string{"Instances"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 		Responses: map[string]*huma.Response{
@@ -116,7 +116,7 @@ func registerInstances(api huma.API, deps *Dependencies) {
 		},
 	}, func(ctx context.Context, input *struct {
 		AuthHeaders
-		Name string `path:"name" doc:"Instance name"`
+		ID string `path:"id" doc:"Instance ID"`
 	}) (*struct {
 		Body APIInstance
 	}, error) {
@@ -127,7 +127,7 @@ func registerInstances(api huma.API, deps *Dependencies) {
 		if err != nil {
 			return nil, huma.Error500InternalServerError(err.Error())
 		}
-		_, instance := findInstance(spec, input.Name)
+		_, instance := findInstance(spec, input.ID)
 		if instance == nil {
 			return nil, huma.Error404NotFound("instance not found")
 		}
@@ -137,7 +137,7 @@ func registerInstances(api huma.API, deps *Dependencies) {
 	huma.Register(api, huma.Operation{
 		OperationID: "update-instance",
 		Method:      http.MethodPatch,
-		Path:        "/instances/{name}",
+		Path:        "/instances/{id}",
 		Summary:     "Update Instance",
 		Description: "Update an existing instance configuration.",
 		Tags:        []string{"Instances"},
@@ -145,13 +145,13 @@ func registerInstances(api huma.API, deps *Dependencies) {
 		Responses: map[string]*huma.Response{
 			"200": {Description: "Instance updated successfully"},
 			"404": {Description: "Instance not found"},
-			"409": {Description: "Instance name conflict"},
+			"409": {Description: "Instance ID conflict"},
 			"422": {Description: "Validation error"},
 			"500": {Description: "Internal server error"},
 		},
 	}, func(ctx context.Context, input *struct {
 		AuthHeaders
-		Name string `path:"name" doc:"Instance name"`
+		ID   string `path:"id" doc:"Instance ID"`
 		Body APIInstance
 	}) (*struct {
 		Body APIInstance
@@ -166,13 +166,13 @@ func registerInstances(api huma.API, deps *Dependencies) {
 		}
 
 		updated, err := deps.Store.Update(func(spec *models.BuilderSpec) error {
-			idx := instanceIndex(spec, input.Name)
+			idx := instanceIndex(spec, input.ID)
 			if idx == -1 {
 				return errInstanceNotFound
 			}
 
-			if newInstance.Name != input.Name {
-				if other := instanceIndex(spec, newInstance.Name); other != -1 {
+			if newInstance.ID != input.ID {
+				if other := instanceIndex(spec, newInstance.ID); other != -1 {
 					return errInstanceExists
 				}
 			}
@@ -185,15 +185,15 @@ func registerInstances(api huma.API, deps *Dependencies) {
 			return nil, mapAppError(err)
 		}
 
-		_, current := findInstance(updated, newInstance.Name)
-		deps.Logger.Info("instance updated", "name", input.Name, "new_name", newInstance.Name)
+		_, current := findInstance(updated, newInstance.ID)
+		deps.Logger.Info("instance updated", "id", input.ID, "new_id", newInstance.ID)
 		return &struct{ Body APIInstance }{Body: toAPIInstance(*current)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
 		OperationID: "delete-instance",
 		Method:      http.MethodDelete,
-		Path:        "/instances/{name}",
+		Path:        "/instances/{id}",
 		Summary:     "Delete Instance",
 		Description: "Delete an instance configuration.",
 		Tags:        []string{"Instances"},
@@ -205,13 +205,13 @@ func registerInstances(api huma.API, deps *Dependencies) {
 		},
 	}, func(ctx context.Context, input *struct {
 		AuthHeaders
-		Name string `path:"name" doc:"Instance name"`
+		ID string `path:"id" doc:"Instance ID"`
 	}) (*struct{}, error) {
 		if err := deps.ensureAuth(input.Authorization); err != nil {
 			return nil, err
 		}
 		_, err := deps.Store.Update(func(spec *models.BuilderSpec) error {
-			idx := instanceIndex(spec, input.Name)
+			idx := instanceIndex(spec, input.ID)
 			if idx == -1 {
 				return errInstanceNotFound
 			}
@@ -221,7 +221,7 @@ func registerInstances(api huma.API, deps *Dependencies) {
 		if err != nil {
 			return nil, mapAppError(err)
 		}
-		deps.Logger.Info("instance deleted", "name", input.Name)
+		deps.Logger.Info("instance deleted", "id", input.ID)
 		return &struct{}{}, nil
 	})
 
@@ -295,18 +295,18 @@ func registerInstances(api huma.API, deps *Dependencies) {
 	})
 }
 
-func instanceIndex(spec *models.BuilderSpec, name string) int {
+func instanceIndex(spec *models.BuilderSpec, id string) int {
 	for i := range spec.Instances {
-		if spec.Instances[i].Name == name {
+		if spec.Instances[i].ID == id {
 			return i
 		}
 	}
 	return -1
 }
 
-func findInstance(spec *models.BuilderSpec, name string) (int, *models.BuilderInstance) {
+func findInstance(spec *models.BuilderSpec, id string) (int, *models.BuilderInstance) {
 	for i := range spec.Instances {
-		if spec.Instances[i].Name == name {
+		if spec.Instances[i].ID == id {
 			return i, &spec.Instances[i]
 		}
 	}

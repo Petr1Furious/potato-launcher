@@ -1,0 +1,43 @@
+[package]
+name = "launcher-backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+instance = { path = "../instance" }
+launcher-auth = { path = "../auth" }
+launcher-build-config = { path = "../build-config" }
+launcher-bridge = { path = "../bridge" }
+log.workspace = true
+relative-path.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+thiserror.workspace = true
+url.workspace = true
+uuid.workspace = true
+launcher-i18n = { path = "../i18n" }
+generate = { path = "../generate" }
+utils = { path = "../utils" }
+sha1.workspace = true
+zip.workspace = true
+futures.workspace = true
+flate2.workspace = true
+tar.workspace = true
+either.workspace = true
+serde-saphyr = "0.0.27"
+toml_edit = "0.25.12"
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+winapi.workspace = true
+winreg.workspace = true
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+self-replace.workspace = true

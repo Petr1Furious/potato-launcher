@@ -25,8 +25,6 @@ type Config struct {
 	DownloadServerBase       string
 	ResourcesURLBase         *string
 	ReplaceDownloadURLs      bool
-	ExecBeforeAll            string
-	ExecAfterAll             string
 	LauncherDir              string
 	LauncherName             string
 }
@@ -42,12 +40,10 @@ func Load() (*Config, error) {
 		TempDir:                  getEnv("TEMP_DIR", os.TempDir()),
 		UploadedInstancesDir:     getEnv("UPLOADED_INSTANCES_DIR", "/data/internal/uploaded-instances"),
 		SpecFile:                 getEnv("SPEC_FILE", "/data/internal/spec.json"),
-		InstanceBuilderBinary:    getEnv("INSTANCE_BUILDER_BINARY", "instance_builder"),
+		InstanceBuilderBinary:    getEnv("INSTANCE_BUILDER_BINARY", "instance-builder"),
 		GeneratedDir:             getEnv("GENERATED_DIR", "/data/generated"),
 		WorkdirDir:               getEnv("WORKDIR_DIR", "/data/workdir"),
 		DownloadServerBase:       os.Getenv("DOWNLOAD_SERVER_BASE"),
-		ExecBeforeAll:            os.Getenv("EXEC_BEFORE_ALL"),
-		ExecAfterAll:             os.Getenv("EXEC_AFTER_ALL"),
 		ReplaceDownloadURLs:      getEnvBool("REPLACE_DOWNLOAD_URLS", false),
 		LauncherDir:              getEnv("LAUNCHER_DIR", "/data/launcher"),
 		LauncherName:             getEnv("LAUNCHER_NAME", "Potato Launcher"),

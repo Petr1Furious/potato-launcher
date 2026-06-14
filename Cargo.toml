@@ -1,10 +1,62 @@
 [workspace]
 members = [
-    "launcher",
-    "instance_builder",
-    "shared"
+    "crates/instance-builder",
+    "crates/auth",
+    "crates/backend",
+    "crates/bridge",
+    "crates/build-config",
+    "crates/frontend",
+    "crates/instance",
+    "crates/utils",
+    "crates/i18n",
+    "crates/launcher",
 ]
-resolver = "2"
+resolver = "3"
+
+[workspace.dependencies]
+reqwest = { version = "0.13.4", features = ["json", "stream", "form"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "fs",
+    "io-util",
+    "net",
+    "process",
+    "sync",
+] }
+tokio-util = "0.7.18"
+log = "0.4.32"
+fern = "0.7.1"
+humantime = "2"
+async-trait = "0.1.89"
+anyhow = "1.0.102"
+open = "5.3.5"
+dirs = "6.0.0"
+flate2 = { version = "1.1.9", default-features = false, features = ["miniz_oxide"] }
+futures = "0.3.32"
+lazy_static = "1.5.0"
+num_cpus = "1.17.0"
+rand = "0.10.1"
+sha1 = "0.11.0"
+tar = "0.4.46"
+clap = "4.6.1"
+winapi = { version = "0.3.9", features = ["fileapi", "winbase"] }
+winreg = "0.56.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
+self-replace = "1.5.0"
+url = "2.5.8"
+relative-path = { version = "2.0.1", features = ["serde"] }
+uuid = { version = "1.23.3", features = ["serde", "v4"] }
+toml = "1.1.2"
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "wayland", "x11"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+either = { version = "1.16.0", features = ["serde"] }
+unidecode = "0.3.0"
 
 [profile.release-lto]
 inherits = "release"

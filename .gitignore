@@ -5,11 +5,11 @@
 
 .DS_Store
 
-*.json
-instance_builder/*.json
-!instance_builder/spec.example.json
-instance_builder/generated/
-instance_builder/workdir/
+/*.json
+crates/instance-builder/*.json
+!crates/instance-builder/spec.example.json
+crates/instance-builder/generated/
+crates/instance-builder/workdir/
 
 .cargo/config.toml
 target/
@@ -19,8 +19,8 @@ docs/.vitepress/cache/
 docs/dist/
 
 # icons are generated during build
-launcher/assets/*
-!launcher/assets/.gitkeep
+crates/launcher/assets/*
+!crates/launcher/assets/.gitkeep
 
 # nix
 .direnv/
@@ -38,3 +38,4 @@ out/
 generated/
 workdir/
 state/
+*.local.md
