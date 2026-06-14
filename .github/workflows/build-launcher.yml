@@ -9,7 +9,7 @@ on:
         required: false
         default: false
   workflow_run:
-    workflows: ['Check']
+    workflows: ["Check"]
     types:
       - completed
 
@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ['windows-latest', 'ubuntu-latest', 'macos-latest']
+        os: ["windows-latest", "ubuntu-latest", "macos-latest"]
     env:
       LAUNCHER_NAME: ${{ vars.LAUNCHER_NAME }}
       LAUNCHER_APP_ID: ${{ vars.LAUNCHER_APP_ID }}
@@ -77,7 +77,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/andyholmes/flatter/freedesktop:24.08
+      image: ghcr.io/andyholmes/flatter/rust:25.08
       options: --privileged
     env:
       VERSION: ${{ github.sha }}
@@ -95,6 +95,12 @@ jobs:
 
       - name: Install packaging dependencies
         run: ./scripts/ci/install-packaging-deps.sh
+
+      - name: Install Rust SDK extension
+        run: |
+          flatpak install -y --or-update flathub \
+            org.freedesktop.Sdk//25.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
 
       - name: Install flatpak-cargo-generator dependencies
         run: dnf install -y python3-aiohttp python3-toml wget
@@ -115,9 +121,6 @@ jobs:
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
-
-      - name: Install Rust SDK
-        run: flatpak install runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/24.08 --noninteractive
 
       - name: Build Flatpak package
         id: flatpak

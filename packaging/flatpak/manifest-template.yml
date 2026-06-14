@@ -1,7 +1,7 @@
 id: {{ flatpak_id }}
 
 runtime: org.freedesktop.Platform
-runtime-version: '24.08'
+runtime-version: '25.08'
 
 sdk: org.freedesktop.Sdk
 sdk-extensions:
@@ -31,6 +31,8 @@ modules:
         # TODO: bundle patched GLFW and enable this
         # USE_NATIVE_GLFW_DEFAULT: "true"
     build-commands:
+      - source /usr/lib/sdk/rust-stable/enable.sh
+      - rustc --version
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --profile release-lto --bin launcher
       - install -Dm755 ./target/release-lto/launcher /app/bin/launcher
