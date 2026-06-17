@@ -1,13 +1,14 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use launcher_auth::storage::AccountKey;
 use serde::{Deserialize, Serialize};
 use url::Url;
 use utils::{
+    files,
     instance_id::{allocate_unique_name, slugify_local_dir_name, validate_instance_id},
     paths::{DataDir, InstanceDirFS, InstancesDir},
 };
@@ -126,18 +127,6 @@ pub enum InstanceStorageError {
     CreateInstancesDir(#[source] std::io::Error),
     #[error("failed to read instances directory: {0}")]
     ReadInstancesDir(#[source] std::io::Error),
-    #[error("failed to read local instance descriptor {path}: {source}")]
-    ReadDescriptor {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("failed to parse local instance descriptor {path}: {source}")]
-    ParseDescriptor {
-        path: PathBuf,
-        #[source]
-        source: serde_json::Error,
-    },
     #[error("failed to serialize local instance descriptor: {0}")]
     SerializeDescriptor(#[source] serde_json::Error),
     #[error("failed to create instance directory {path}: {source}")]
@@ -154,12 +143,6 @@ pub enum InstanceStorageError {
     },
     #[error("local instance handle not found: {0}")]
     MissingInstanceHandle(InstanceHandle),
-    #[error("duplicate local instance handle {handle} in {first_path:?} and {duplicate_path:?}")]
-    DuplicateInstanceHandle {
-        handle: InstanceHandle,
-        first_path: PathBuf,
-        duplicate_path: PathBuf,
-    },
     #[error("failed to delete instance directory {path}: {source}")]
     DeleteInstanceDir {
         path: PathBuf,
@@ -221,8 +204,17 @@ impl LocalInstance {
     }
 }
 
+/// Result of loading instance storage from disk, including any instances with
+/// corrupted descriptors that had to be repaired.
+#[derive(Debug, Default)]
+pub struct LoadedStorage {
+    pub storage: InstanceStorage,
+    /// `dir_name`s of instances that had to be recovered
+    pub recovered: Vec<String>,
+}
+
 impl InstanceStorage {
-    pub async fn load(data_dir: &DataDir) -> Result<Self, InstanceStorageError> {
+    pub async fn load(data_dir: &DataDir) -> Result<LoadedStorage, InstanceStorageError> {
         let instances_dir = instances_dir(data_dir);
         if let Err(source) = tokio::fs::create_dir_all(&instances_dir).await {
             return Err(InstanceStorageError::CreateInstancesDir(source));
@@ -232,7 +224,8 @@ impl InstanceStorage {
             .await
             .map_err(InstanceStorageError::ReadInstancesDir)?;
         let mut instances = Vec::new();
-        let mut seen_handles = HashMap::<InstanceHandle, PathBuf>::new();
+        let mut recovered = Vec::new();
+        let mut seen_handles = HashMap::<InstanceHandle, String>::new();
 
         while let Some(entry) = read_dir
             .next_entry()
@@ -256,34 +249,43 @@ impl InstanceStorage {
                 continue;
             }
 
-            let bytes = tokio::fs::read(&descriptor).await.map_err(|source| {
-                InstanceStorageError::ReadDescriptor {
-                    path: descriptor.clone(),
-                    source,
-                }
-            })?;
-            let mut instance =
-                serde_json::from_slice::<LocalInstance>(&bytes).map_err(|source| {
-                    InstanceStorageError::ParseDescriptor {
-                        path: descriptor.clone(),
-                        source,
-                    }
-                })?;
-            instance.dir_name = dir_name;
-            if let Some(first_path) =
-                seen_handles.insert(instance.handle.clone(), descriptor.clone())
-            {
-                return Err(InstanceStorageError::DuplicateInstanceHandle {
-                    handle: instance.handle.clone(),
-                    first_path,
-                    duplicate_path: descriptor,
+            let parsed = files::read_file_parsed::<LocalInstance>(&descriptor)
+                .await
+                .map_err(|err| {
+                    log::warn!(
+                        "Failed to load instance descriptor {}: {err}",
+                        descriptor.display()
+                    );
                 });
-            }
+
+            let instance = match parsed {
+                Err(()) => {
+                    recovered.push(dir_name.clone());
+                    recover_descriptor(&descriptor, &dir_name).await?
+                }
+                Ok(mut instance) => {
+                    instance.dir_name = dir_name.clone();
+                    if let Some(first_dir) = seen_handles.get(&instance.handle) {
+                        log::warn!(
+                            "Instance {dir_name} reuses handle {} already loaded from {first_dir}; assigning a new handle",
+                            instance.handle
+                        );
+                        instance.handle = InstanceHandle::local_new();
+                        write_descriptor(&descriptor, &instance).await?;
+                        recovered.push(dir_name.clone());
+                    }
+                    instance
+                }
+            };
+            seen_handles.insert(instance.handle.clone(), dir_name);
             instances.push(instance);
         }
 
         instances.sort_by(|a, b| a.dir_name.cmp(&b.dir_name));
-        Ok(Self { instances })
+        Ok(LoadedStorage {
+            storage: Self { instances },
+            recovered,
+        })
     }
 
     pub fn empty() -> Self {
@@ -386,7 +388,7 @@ impl InstanceStorage {
         let descriptor = instance_dir.local_instance_descriptor_path();
         let bytes = serde_json::to_vec_pretty(instance)
             .map_err(InstanceStorageError::SerializeDescriptor)?;
-        tokio::fs::write(&descriptor, bytes)
+        files::write_file_atomic(&descriptor, &bytes)
             .await
             .map_err(|source| InstanceStorageError::WriteDescriptor {
                 path: descriptor,
@@ -412,10 +414,9 @@ pub async fn save_instance_settings(
     instance_dir: &InstanceDirFS,
     settings: &InstanceUserSettings,
 ) -> Result<(), std::io::Error> {
-    tokio::fs::create_dir_all(instance_dir.to_fs()).await?;
     let bytes = serde_json::to_vec_pretty(settings)
         .map_err(|err| std::io::Error::other(err.to_string()))?;
-    tokio::fs::write(instance_dir.settings_path(), bytes).await
+    files::write_file_atomic(&instance_dir.settings_path(), &bytes).await
 }
 
 pub fn allocate_dir_name(taken: &HashSet<&str>, id: &str) -> Result<String, InstanceIdError> {
@@ -426,6 +427,37 @@ pub fn allocate_dir_name(taken: &HashSet<&str>, id: &str) -> Result<String, Inst
 pub fn allocate_local_dir_name(taken: &HashSet<&str>, display_name: &str) -> String {
     let base = slugify_local_dir_name(display_name);
     allocate_unique_name(taken, &base)
+}
+
+/// Backup the corrupted descriptor and write a minimal one in its place
+async fn recover_descriptor(
+    descriptor: &Path,
+    dir_name: &str,
+) -> Result<LocalInstance, InstanceStorageError> {
+    if let Err(err) = files::backup_corrupt_file(descriptor).await {
+        log::warn!(
+            "Failed to back up corrupt descriptor {}: {err}",
+            descriptor.display()
+        );
+    }
+    let instance =
+        LocalInstance::new_local_with_handle(InstanceHandle::local_new(), dir_name.to_string());
+    write_descriptor(descriptor, &instance).await?;
+    Ok(instance)
+}
+
+async fn write_descriptor(
+    descriptor: &Path,
+    instance: &LocalInstance,
+) -> Result<(), InstanceStorageError> {
+    let bytes =
+        serde_json::to_vec_pretty(instance).map_err(InstanceStorageError::SerializeDescriptor)?;
+    files::write_file_atomic(descriptor, &bytes)
+        .await
+        .map_err(|source| InstanceStorageError::WriteDescriptor {
+            path: descriptor.to_path_buf(),
+            source,
+        })
 }
 
 fn instances_dir(data_dir: &DataDir) -> PathBuf {
@@ -490,7 +522,7 @@ mod tests {
         storage.add(&data_dir, first).await.unwrap();
         storage.add(&data_dir, second).await.unwrap();
 
-        let loaded = InstanceStorage::load(&data_dir).await.unwrap();
+        let loaded = InstanceStorage::load(&data_dir).await.unwrap().storage;
         let first = loaded.get(&first_handle).unwrap();
         let second = loaded.get(&second_handle).unwrap();
 
@@ -501,7 +533,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_handle_descriptors_fail_explicitly() {
+    async fn duplicate_handle_descriptors_are_recovered() {
         let data_dir = temp_data_dir();
         let instances = instances_dir(&data_dir);
         tokio::fs::create_dir_all(instances.join("One"))
@@ -547,14 +579,65 @@ mod tests {
         .await
         .unwrap();
 
-        let err = InstanceStorage::load(&data_dir).await.unwrap_err();
-        assert!(matches!(
-            err,
-            InstanceStorageError::DuplicateInstanceHandle {
-                handle: duplicate_handle,
-                ..
-            } if duplicate_handle == handle
-        ));
+        let loaded = InstanceStorage::load(&data_dir).await.unwrap();
+        // the collision is broken by giving one of them a fresh local handle instead of dropping it
+        assert_eq!(loaded.storage.all().len(), 2);
+        assert_eq!(loaded.recovered.len(), 1);
+        let handles: HashSet<_> = loaded
+            .storage
+            .iter()
+            .map(|instance| instance.handle.clone())
+            .collect();
+        assert_eq!(handles.len(), 2);
+
+        // Reloading is stable: the rewritten descriptors are no longer in conflict
+        let reloaded = InstanceStorage::load(&data_dir).await.unwrap();
+        assert_eq!(reloaded.storage.all().len(), 2);
+        assert!(reloaded.recovered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn corrupt_descriptor_is_recovered_as_local_instance() {
+        let data_dir = temp_data_dir();
+        let instances = instances_dir(&data_dir);
+        tokio::fs::create_dir_all(instances.join("Broken"))
+            .await
+            .unwrap();
+        let broken_dir = InstancesDir::root()
+            .instance_dir("Broken")
+            .with_data_dir(data_dir.clone());
+        let descriptor = broken_dir.local_instance_descriptor_path();
+        tokio::fs::write(&descriptor, b"{ this is not valid json")
+            .await
+            .unwrap();
+
+        let loaded = InstanceStorage::load(&data_dir).await.unwrap();
+        assert_eq!(loaded.recovered, vec!["Broken".to_string()]);
+        let recovered = loaded
+            .storage
+            .iter()
+            .find(|instance| instance.dir_name == "Broken")
+            .unwrap();
+        assert!(recovered.is_installed());
+        assert!(recovered.source.is_none());
+
+        // The corrupted file is preserved nearby
+        let mut entries = tokio::fs::read_dir(broken_dir.to_fs()).await.unwrap();
+        let mut has_backup = false;
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .contains("local_instance.json.corrupt-")
+            {
+                has_backup = true;
+            }
+        }
+        assert!(has_backup);
+
+        // Subsequent loads are clean because the descriptor was rewritten
+        let reloaded = InstanceStorage::load(&data_dir).await.unwrap();
+        assert!(reloaded.recovered.is_empty());
     }
 
     #[tokio::test]
@@ -584,7 +667,7 @@ mod tests {
             .await
             .unwrap();
 
-        let loaded = InstanceStorage::load(&data_dir).await.unwrap();
+        let loaded = InstanceStorage::load(&data_dir).await.unwrap().storage;
         let pending = loaded.get(&handle).unwrap();
         assert!(pending.is_pending_remote());
         assert_eq!(pending.source.as_ref(), Some(&source));

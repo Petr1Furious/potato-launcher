@@ -610,6 +610,22 @@ ru = "Получение метаданных"
 en = "Install is already running"
 ru = "Установка уже выполняется"
 
+[notifications.instances_recovered]
+en = "Recovered ${count: i64} instance(s) with corrupted data; their files were kept"
+ru = "Восстановлено инстансов с повреждёнными данными: ${count: i64}; их файлы сохранены"
+
+[notifications.instances_load_failed]
+en = "Could not read installed instances from disk; the list may be incomplete"
+ru = "Не удалось прочитать установленные инстансы с диска; список может быть неполным"
+
+[notifications.settings_reset_from_corruption]
+en = "Launcher settings were corrupted and have been reset to defaults"
+ru = "Настройки лаунчера были повреждены и сброшены на стандартные"
+
+[notifications.accounts_reset_from_corruption]
+en = "Saved accounts were corrupted and could not be loaded; please sign in again"
+ru = "Сохранённые аккаунты повреждены и не были загружены; войдите снова"
+
 [notifications.preparing_local_instance]
 en = "Preparing local instance"
 ru = "Подготовка локального инстанса"

@@ -44,7 +44,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use url::Url;
-use utils::paths::{DataDir, InstanceDirFS, InstancesDir};
+use utils::{
+    files,
+    paths::{DataDir, InstanceDirFS, InstancesDir},
+};
 
 const SETTINGS_FILE: &str = "settings.json";
 
@@ -61,26 +64,43 @@ pub struct Settings {
 }
 
 impl Settings {
-    async fn load(launcher_dir: &Path) -> anyhow::Result<Self> {
+    fn defaults() -> Self {
+        Self {
+            backend_urls: default_instance_manifest_urls(),
+            hide_window_after_launch: false,
+            hide_usernames_in_cards: false,
+            language: None,
+        }
+    }
+
+    async fn load(launcher_dir: &Path) -> anyhow::Result<(Self, bool)> {
         let path = launcher_dir.join(SETTINGS_FILE);
-        if !path.exists() {
-            let mut settings = Self {
-                backend_urls: default_instance_manifest_urls(),
-                hide_window_after_launch: false,
-                hide_usernames_in_cards: false,
-                language: None,
+        let (mut settings, reset_from_corruption) =
+            match files::read_file_parsed::<Self>(&path).await {
+                Ok(settings) => (settings, false),
+                Err(files::ReadFileParsedError::Io(err))
+                    if err.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    (Self::defaults(), false)
+                }
+                Err(err) => {
+                    log::warn!(
+                        "Corrupt launcher settings {}: {err}; resetting",
+                        path.display()
+                    );
+                    if let Err(backup_err) = files::backup_corrupt_file(&path).await {
+                        log::warn!("Failed to back up corrupt settings file: {backup_err}");
+                    }
+                    (Self::defaults(), true)
+                }
             };
-            settings.ensure_language_resolved().await?;
+
+        let language_resolved = settings.ensure_language_resolved().await?;
+        if language_resolved || !path.exists() {
             settings.save(launcher_dir).await?;
-            return Ok(settings);
         }
 
-        let bytes = tokio::fs::read(path).await?;
-        let mut settings: Self = serde_json::from_slice(&bytes)?;
-        if settings.ensure_language_resolved().await? {
-            settings.save(launcher_dir).await?;
-        }
-        Ok(settings)
+        Ok((settings, reset_from_corruption))
     }
 
     async fn ensure_language_resolved(&mut self) -> anyhow::Result<bool> {
@@ -99,9 +119,8 @@ impl Settings {
     }
 
     async fn save(&self, launcher_dir: &Path) -> anyhow::Result<()> {
-        tokio::fs::create_dir_all(launcher_dir).await?;
         let bytes = serde_json::to_vec_pretty(self)?;
-        tokio::fs::write(launcher_dir.join(SETTINGS_FILE), bytes).await?;
+        files::write_file_atomic(&launcher_dir.join(SETTINGS_FILE), &bytes).await?;
         Ok(())
     }
 }
@@ -126,6 +145,7 @@ pub struct BackendState {
     add_account_cancel: Option<CancellationToken>,
     add_account_task: Option<JoinHandle<()>>,
     auth_launch_instance: Option<InstanceHandle>,
+    startup_notices: Vec<(NotificationLevel, Arc<str>)>,
 }
 
 struct LaunchHandle {
@@ -243,7 +263,15 @@ impl BackendState {
     async fn load(launcher_dir: PathBuf) -> anyhow::Result<Self> {
         tokio::fs::create_dir_all(&launcher_dir).await?;
         let data_dir = DataDir::new(launcher_dir.clone());
-        let settings = Settings::load(&launcher_dir).await?;
+        let mut startup_notices: Vec<(NotificationLevel, Arc<str>)> = Vec::new();
+        let (settings, settings_reset) = Settings::load(&launcher_dir).await?;
+        if settings_reset {
+            startup_notices.push((
+                NotificationLevel::Warning,
+                Arc::from(launcher_i18n::notifications::settings_reset_from_corruption()),
+            ));
+        }
+
         let mut catalogs = HashMap::new();
         for url in &settings.backend_urls {
             let entry = match load_cached_manifest(&launcher_dir, url).await {
@@ -261,14 +289,45 @@ impl BackendState {
             };
             catalogs.insert(url.clone(), entry);
         }
-        let instance_storage = InstanceStorage::load(&data_dir)
-            .await
-            .unwrap_or_else(|err| {
+
+        let instance_storage = match InstanceStorage::load(&data_dir).await {
+            Ok(loaded) => {
+                if !loaded.recovered.is_empty() {
+                    startup_notices.push((
+                        NotificationLevel::Warning,
+                        Arc::from(launcher_i18n::notifications::instances_recovered(
+                            loaded.recovered.len() as i64,
+                        )),
+                    ));
+                }
+                loaded.storage
+            }
+            Err(err) => {
                 log::warn!("Failed to load local instance storage: {err:?}");
+                startup_notices.push((
+                    NotificationLevel::Warning,
+                    Arc::from(launcher_i18n::notifications::instances_load_failed()),
+                ));
                 InstanceStorage::empty()
-            });
-        let auth_storage = AuthStorage::load(launcher_dir.join("auth_data.json"))
-            .unwrap_or_else(|_| AuthStorage::empty(launcher_dir.join("auth_data.json")));
+            }
+        };
+
+        let auth_path = launcher_dir.join("auth_data.json");
+        let auth_storage = match AuthStorage::load(auth_path.clone()).await {
+            Ok(storage) => storage,
+            Err(err) => {
+                log::warn!("Failed to load saved accounts: {err}");
+
+                if let Err(backup_err) = files::backup_corrupt_file(&auth_path).await {
+                    log::warn!("Failed to back up corrupt auth storage: {backup_err}");
+                }
+                startup_notices.push((
+                    NotificationLevel::Warning,
+                    Arc::from(launcher_i18n::notifications::accounts_reset_from_corruption()),
+                ));
+                AuthStorage::empty(auth_path)
+            }
+        };
 
         Ok(Self {
             launcher_dir,
@@ -290,6 +349,7 @@ impl BackendState {
             add_account_cancel: None,
             add_account_task: None,
             auth_launch_instance: None,
+            startup_notices,
         })
     }
 
@@ -554,11 +614,40 @@ impl BackendState {
         Ok(())
     }
 
-    fn refresh_all(&mut self, internal: &mpsc::UnboundedSender<BackendEvent>, tx: &FrontendSender) {
+    async fn refresh_all(
+        &mut self,
+        internal: &mpsc::UnboundedSender<BackendEvent>,
+        tx: &FrontendSender,
+    ) {
+        self.reload_instance_storage(tx).await;
         for (url, _, _) in self.visible_backend_urls() {
             self.start_fetch(url, internal);
         }
         self.emit_snapshot(tx);
+    }
+
+    async fn reload_instance_storage(&mut self, tx: &FrontendSender) {
+        let data_dir = DataDir::new(self.launcher_dir.clone());
+        match InstanceStorage::load(&data_dir).await {
+            Ok(loaded) => {
+                self.instance_storage = loaded.storage;
+                if !loaded.recovered.is_empty() {
+                    tx.send(MessageToFrontend::Notification {
+                        level: NotificationLevel::Warning,
+                        message: Arc::from(launcher_i18n::notifications::instances_recovered(
+                            loaded.recovered.len() as i64,
+                        )),
+                    });
+                }
+            }
+            Err(err) => {
+                log::warn!("Failed to reload local instance storage: {err:?}");
+                tx.send(MessageToFrontend::Notification {
+                    level: NotificationLevel::Warning,
+                    message: Arc::from(launcher_i18n::notifications::instances_load_failed()),
+                });
+            }
+        }
     }
 
     fn start_fetch(&mut self, url: Url, internal: &mpsc::UnboundedSender<BackendEvent>) {
@@ -1058,7 +1147,7 @@ impl BackendState {
         self.add_account_cancel.take();
     }
 
-    fn submit_offline_nickname(&mut self, nickname: String, tx: &FrontendSender) {
+    async fn submit_offline_nickname(&mut self, nickname: String, tx: &FrontendSender) {
         let nickname = nickname.trim();
         if nickname.is_empty() {
             tx.send(MessageToFrontend::Notification {
@@ -1069,7 +1158,7 @@ impl BackendState {
         }
 
         let (key, provider, account) = launch::offline_account(nickname);
-        match self.auth_storage.insert_account(&provider, account) {
+        match self.auth_storage.insert_account(&provider, account).await {
             Ok(_) => {
                 tx.send(MessageToFrontend::Notification {
                     level: NotificationLevel::Success,
@@ -1115,7 +1204,7 @@ impl BackendState {
     }
 
     async fn remove_account(&mut self, key: AccountKey, tx: &FrontendSender) {
-        match self.auth_storage.delete_account(key.0, &key.1) {
+        match self.auth_storage.delete_account(key.0, &key.1).await {
             Ok(()) => {
                 if let Err(err) = self.clear_account_references(&key).await {
                     log::warn!("Failed to clear instance account references for {key:?}: {err:#}");
@@ -1211,7 +1300,7 @@ impl BackendState {
             .and_then(|view| view.auth_provider.clone())
     }
 
-    fn handle_add_account_finished(
+    async fn handle_add_account_finished(
         &mut self,
         result: Result<(AuthProviderConfig, AccountData), Arc<str>>,
         tx: &FrontendSender,
@@ -1219,23 +1308,27 @@ impl BackendState {
         self.clear_add_account_task();
         tx.send(MessageToFrontend::AuthPromptCleared);
         match result {
-            Ok((provider, account)) => match self.auth_storage.insert_account(&provider, account) {
-                Ok((_, username)) => {
-                    tx.send(MessageToFrontend::Notification {
-                        level: NotificationLevel::Success,
-                        message: Arc::from(launcher_i18n::notifications::added_account(username)),
-                    });
+            Ok((provider, account)) => {
+                match self.auth_storage.insert_account(&provider, account).await {
+                    Ok((_, username)) => {
+                        tx.send(MessageToFrontend::Notification {
+                            level: NotificationLevel::Success,
+                            message: Arc::from(launcher_i18n::notifications::added_account(
+                                username,
+                            )),
+                        });
+                    }
+                    Err(err) => {
+                        log::error!("Failed to save authenticated account: {err:#}");
+                        tx.send(MessageToFrontend::Notification {
+                            level: NotificationLevel::Error,
+                            message: Arc::from(launcher_i18n::notifications::failed_save_account(
+                                err.to_string(),
+                            )),
+                        });
+                    }
                 }
-                Err(err) => {
-                    log::error!("Failed to save authenticated account: {err:#}");
-                    tx.send(MessageToFrontend::Notification {
-                        level: NotificationLevel::Error,
-                        message: Arc::from(launcher_i18n::notifications::failed_save_account(
-                            err.to_string(),
-                        )),
-                    });
-                }
-            },
+            }
             Err(error) => {
                 log::error!("Authentication failed: {error}");
                 tx.send(MessageToFrontend::Notification {
@@ -1841,13 +1934,13 @@ impl BackendState {
         self.emit_snapshot(tx);
     }
 
-    fn handle_launch_account_updated(
+    async fn handle_launch_account_updated(
         &mut self,
         provider: AuthProviderConfig,
         account: AccountData,
         tx: &FrontendSender,
     ) {
-        if let Err(err) = self.auth_storage.insert_account(&provider, account) {
+        if let Err(err) = self.auth_storage.insert_account(&provider, account).await {
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Warning,
                 message: Arc::from(launcher_i18n::notifications::failed_save_refreshed_account(
@@ -1964,7 +2057,10 @@ pub async fn run(
     }
 
     state.emit_snapshot(&frontend);
-    state.refresh_all(&internal_sender, &frontend);
+    for (level, message) in state.startup_notices.drain(..) {
+        frontend.send(MessageToFrontend::Notification { level, message });
+    }
+    state.refresh_all(&internal_sender, &frontend).await;
 
     loop {
         tokio::select! {
@@ -1974,7 +2070,7 @@ pub async fn run(
                 };
                 match message {
                     MessageToBackend::Refresh => {
-                        state.refresh_all(&internal_sender, &frontend);
+                        state.refresh_all(&internal_sender, &frontend).await;
                     }
                     MessageToBackend::InstallInstance { handle, force_overwrite } => {
                         state.start_install(handle, force_overwrite, frontend.clone(), internal_sender.clone());
@@ -2029,7 +2125,7 @@ pub async fn run(
                         state.cancel_auth(&frontend);
                     }
                     MessageToBackend::SubmitOfflineNickname(nickname) => {
-                        state.submit_offline_nickname(nickname, &frontend);
+                        state.submit_offline_nickname(nickname, &frontend).await;
                     }
                     MessageToBackend::RemoveAccount(account) => {
                         state.remove_account(account, &frontend).await;
@@ -2147,13 +2243,13 @@ pub async fn run(
                         state.handle_launch_started(handle, &frontend);
                     }
                     Some(BackendEvent::LaunchAccountUpdated { provider, account }) => {
-                        state.handle_launch_account_updated(provider, account, &frontend);
+                        state.handle_launch_account_updated(provider, account, &frontend).await;
                     }
                     Some(BackendEvent::LaunchFinished { handle, exit }) => {
                         state.handle_launch_finished(handle, exit, &frontend);
                     }
                     Some(BackendEvent::AddAccountFinished { result }) => {
-                        state.handle_add_account_finished(result, &frontend);
+                        state.handle_add_account_finished(result, &frontend).await;
                     }
                     Some(BackendEvent::AddAccountCancelled) => {
                         state.handle_add_account_cancelled(&frontend);

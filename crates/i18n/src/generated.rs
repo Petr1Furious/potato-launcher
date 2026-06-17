@@ -983,6 +983,7 @@ pub mod notifications {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
             "account_removed" => Some(account_removed()),
+            "accounts_reset_from_corruption" => Some(accounts_reset_from_corruption()),
             "add_account_already_running" => Some(add_account_already_running()),
             "already_launching_or_running" => Some(already_launching_or_running()),
             "authentication_cancelled" => Some(authentication_cancelled()),
@@ -992,6 +993,7 @@ pub mod notifications {
             "install_completed" => Some(install_completed()),
             "instance_deleted" => Some(instance_deleted()),
             "instance_not_installed_locally" => Some(instance_not_installed_locally()),
+            "instances_load_failed" => Some(instances_load_failed()),
             "invalid_java_path" => Some(invalid_java_path()),
             "java_path_cleared" => Some(java_path_cleared()),
             "java_path_install_in_progress" => Some(java_path_install_in_progress()),
@@ -1008,6 +1010,7 @@ pub mod notifications {
             "preparing_install" => Some(preparing_install()),
             "preparing_local_instance" => Some(preparing_local_instance()),
             "selected_account_must_match" => Some(selected_account_must_match()),
+            "settings_reset_from_corruption" => Some(settings_reset_from_corruption()),
             "stop_before_delete" => Some(stop_before_delete()),
             "use_account_selection_for_required" => Some(use_account_selection_for_required()),
             _ => None,
@@ -1017,6 +1020,12 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Аккаунт удалён",
             _ => "Account removed",
+        }
+    }
+    pub fn accounts_reset_from_corruption() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Сохранённые аккаунты повреждены и не были загружены; войдите снова",
+            _ => "Saved accounts were corrupted and could not be loaded; please sign in again",
         }
     }
     pub fn add_account_already_running() -> &'static str {
@@ -1211,6 +1220,22 @@ pub mod notifications {
             _ => "Instance is not installed locally",
         }
     }
+    pub fn instances_load_failed() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Не удалось прочитать установленные инстансы с диска; список может быть неполным",
+            _ => "Could not read installed instances from disk; the list may be incomplete",
+        }
+    }
+    pub fn instances_recovered(count: i64) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!(
+                "Восстановлено инстансов с повреждёнными данными: {count}; их файлы сохранены"
+            ),
+            _ => {
+                format!("Recovered {count} instance(s) with corrupted data; their files were kept")
+            }
+        }
+    }
     pub fn invalid_java_path() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => {
@@ -1331,6 +1356,12 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Выбранный аккаунт должен соответствовать провайдеру инстанса",
             _ => "Selected account must match the instance auth provider",
+        }
+    }
+    pub fn settings_reset_from_corruption() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Настройки лаунчера были повреждены и сброшены на стандартные",
+            _ => "Launcher settings were corrupted and have been reset to defaults",
         }
     }
     pub fn stop_before_delete() -> &'static str {

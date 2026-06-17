@@ -223,6 +223,36 @@ async fn atomic_replace_file(tmp_path: &Path, target_path: &Path) -> io::Result<
     fs::rename(tmp_path, target_path).await
 }
 
+/// also creates parent directories if they don't exist
+pub async fn write_file_atomic(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    let tmp_path = temp_path_for(path);
+    if let Err(err) = fs::write(&tmp_path, contents.as_ref()).await {
+        let _ = fs::remove_file(&tmp_path).await;
+        return Err(err);
+    }
+    atomic_replace_file(&tmp_path, path).await
+}
+
+/// Move a corrupted file nearby so that it stops interfering. Returns the
+/// backup path when a file was actually moved.
+pub async fn backup_corrupt_file(path: &Path) -> io::Result<Option<PathBuf>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(format!(".corrupt-{ts}"));
+    let backup = PathBuf::from(backup);
+    fs::rename(path, &backup).await?;
+    Ok(Some(backup))
+}
+
 #[cfg(unix)]
 async fn normalize_copied_file_mode(path: &Path) -> io::Result<()> {
     use std::fs::Permissions;
@@ -570,7 +600,7 @@ where
     T: serde::Serialize,
 {
     let content = serde_json::to_string(value)?;
-    fs::write(path, content).await?;
+    write_file_atomic(path, content.as_bytes()).await?;
     Ok(())
 }
 

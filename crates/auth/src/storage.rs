@@ -56,8 +56,8 @@ impl AuthStorage {
         }
     }
 
-    pub fn load(auth_data_path: PathBuf) -> Result<Self, AuthStorageError> {
-        let str_data = match std::fs::read_to_string(&auth_data_path) {
+    pub async fn load(auth_data_path: PathBuf) -> Result<Self, AuthStorageError> {
+        let str_data = match tokio::fs::read_to_string(&auth_data_path).await {
             Ok(data) => Some(data),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(AuthStorageError::ReadIo(e)),
@@ -109,9 +109,11 @@ impl AuthStorage {
         })
     }
 
-    fn save(&self) -> Result<(), AuthStorageError> {
+    async fn save(&self) -> Result<(), AuthStorageError> {
         let auth_data_str = serde_json::to_string(&self.storage)?;
-        std::fs::write(&self.disk_path, auth_data_str).map_err(AuthStorageError::WriteIo)?;
+        utils::files::write_file_atomic(&self.disk_path, auth_data_str.as_bytes())
+            .await
+            .map_err(AuthStorageError::WriteIo)?;
         Ok(())
     }
 
@@ -138,7 +140,7 @@ impl AuthStorage {
             .collect()
     }
 
-    pub fn insert_account(
+    pub async fn insert_account(
         &mut self,
         provider_spec: &AuthProviderConfig,
         auth_data: AccountData,
@@ -163,16 +165,16 @@ impl AuthStorage {
         for entry in self.storage.accounts.iter_mut() {
             if entry.provider_id == provider_id && entry.auth_data.user_info.username == username {
                 *entry = new_entry;
-                self.save()?;
+                self.save().await?;
                 return Ok((provider_id, username));
             }
         }
         self.storage.accounts.push(new_entry);
-        self.save()?;
+        self.save().await?;
         Ok((provider_id, username))
     }
 
-    pub fn delete_account(
+    pub async fn delete_account(
         &mut self,
         auth_provider_id: AuthProviderId,
         username: &Username,
@@ -189,7 +191,7 @@ impl AuthStorage {
         self.storage
             .providers
             .retain(|id, _| used_providers.contains(id));
-        self.save()
+        self.save().await
     }
 
     pub fn account_keys(&self) -> Vec<AccountKey> {
