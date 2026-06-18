@@ -33,6 +33,10 @@ impl InstanceHandle {
         ))
     }
 
+    pub fn recovered_new() -> Self {
+        Self(format!("recovered:{}", Uuid::new_v4()))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -270,7 +274,7 @@ impl InstanceStorage {
                             "Instance {dir_name} reuses handle {} already loaded from {first_dir}; assigning a new handle",
                             instance.handle
                         );
-                        instance.handle = InstanceHandle::local_new();
+                        instance.handle = InstanceHandle::recovered_new();
                         write_descriptor(&descriptor, &instance).await?;
                         recovered.push(dir_name.clone());
                     }
@@ -441,7 +445,7 @@ async fn recover_descriptor(
         );
     }
     let instance =
-        LocalInstance::new_local_with_handle(InstanceHandle::local_new(), dir_name.to_string());
+        LocalInstance::new_local_with_handle(InstanceHandle::recovered_new(), dir_name.to_string());
     write_descriptor(descriptor, &instance).await?;
     Ok(instance)
 }

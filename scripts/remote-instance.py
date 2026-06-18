@@ -156,6 +156,15 @@ def run_command(command, dry_run=False, execute_dry_run=False):
     subprocess.check_call(command)
 
 
+def remote_dir_exists(args, config, remote, path):
+    port = str(cfg_value(args, config, "ssh_port", "ssh_port", 22))
+    command = ["ssh", "-p", port, remote, "test", "-d", path]
+    if args.dry_run:
+        log("[dry-run] {0}".format(shell_join(command)))
+    result = subprocess.call(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return result == 0
+
+
 def rsync_supports_progress2():
     try:
         result = subprocess.Popen(
@@ -373,6 +382,14 @@ def fetch_command(args, config):
         remote_instance_dir = "{0}/uploaded-instances/{1}/".format(
             internal_dir.rstrip("/"), instance_id
         )
+        remote_instance_path = remote_instance_dir.rstrip("/")
+        if not remote_dir_exists(args, config, remote, remote_instance_path):
+            warn(
+                "remote instance dir not found for '{0}': {1}:{2} (skipping)".format(
+                    instance_id, remote, remote_instance_path
+                )
+            )
+            continue
         log("Fetching instance '{0}' -> {1}/".format(instance_id, local_dir))
         command = rsync_base(args, config, delete=args.delete)
         command.extend([remote_path(remote, remote_instance_dir), local_dir.rstrip("/") + "/"])

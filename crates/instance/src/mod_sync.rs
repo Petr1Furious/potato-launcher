@@ -165,7 +165,7 @@ impl<'a> ModSyncPlanner<'a> {
             }
 
             if self.optional_mod_to_set.contains_key(entry.mod_id.as_str()) {
-                self.plan_optional_entry(entry, false)?;
+                self.plan_optional_entry(entry, false, true)?;
                 continue;
             }
 
@@ -187,35 +187,35 @@ impl<'a> ModSyncPlanner<'a> {
     }
 
     fn plan_mirror(&mut self) -> Result<(), ModSyncError> {
-        let mut desired_mod_ids = HashSet::new();
+        let mut allowed_paths = HashSet::new();
+        let mut active_mod_ids = HashSet::new();
 
         for entry in self.new_entries {
-            if self.optional_mod_to_set.contains_key(entry.mod_id.as_str()) {
-                if self.optional_set_enabled(entry.mod_id.as_str()) {
-                    desired_mod_ids.insert(entry.mod_id.as_str());
-                }
-                self.plan_optional_entry(entry, true)?;
-                continue;
-            }
-
             if self.blocked.contains(entry.mod_id.as_str()) {
                 continue;
             }
 
-            desired_mod_ids.insert(entry.mod_id.as_str());
+            if self.optional_mod_to_set.contains_key(entry.mod_id.as_str()) {
+                if self.optional_set_enabled(entry.mod_id.as_str()) {
+                    allowed_paths.insert(self.mod_target_path(entry));
+                    active_mod_ids.insert(entry.mod_id.as_str());
+                    if self.should_warn_added(&entry.mod_id) {
+                        self.warn_added(&entry.mod_id, self.mod_target_path(entry));
+                    }
+                }
+                self.plan_optional_entry(entry, true, false)?;
+                continue;
+            }
+
+            allowed_paths.insert(self.mod_target_path(entry));
+            active_mod_ids.insert(entry.mod_id.as_str());
             if self.should_warn_added(&entry.mod_id) {
                 self.warn_added(&entry.mod_id, self.mod_target_path(entry));
             }
             self.push_check(entry, self.mod_target_path(entry));
         }
 
-        for (mod_id, paths) in self.local_mods.clone() {
-            if desired_mod_ids.contains(mod_id.as_str()) {
-                continue;
-            }
-            self.delete_paths(&mod_id, &paths, self.should_warn_removed(&mod_id));
-        }
-
+        self.delete_unallowed_local_mods(&allowed_paths, &active_mod_ids);
         Ok(())
     }
 
@@ -246,6 +246,7 @@ impl<'a> ModSyncPlanner<'a> {
         &mut self,
         entry: &ModEntry,
         force_check: bool,
+        delete_if_disabled: bool,
     ) -> Result<(), ModSyncError> {
         let mod_id = entry.mod_id.as_str();
         let cache_path = self.optional_cache_path(entry)?;
@@ -265,7 +266,7 @@ impl<'a> ModSyncPlanner<'a> {
                     source: cache_path,
                     target: target_path,
                 });
-        } else {
+        } else if delete_if_disabled {
             self.delete_local_mod(mod_id, self.should_warn_removed(mod_id));
         }
 
@@ -304,6 +305,23 @@ impl<'a> ModSyncPlanner<'a> {
             }
         }
         self.push_check(entry, expected_path);
+    }
+
+    fn delete_unallowed_local_mods(
+        &mut self,
+        allowed_paths: &HashSet<PathBuf>,
+        active_mod_ids: &HashSet<&str>,
+    ) {
+        for (mod_id, paths) in self.local_mods.clone() {
+            for path in paths {
+                if allowed_paths.contains(&path) {
+                    continue;
+                }
+                let warn =
+                    !active_mod_ids.contains(mod_id.as_str()) && self.should_warn_removed(&mod_id);
+                self.delete_paths(&mod_id, std::slice::from_ref(&path), warn);
+            }
+        }
     }
 
     fn delete_local_mod(&mut self, mod_id: &str, warn: bool) {

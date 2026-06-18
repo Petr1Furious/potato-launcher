@@ -343,6 +343,64 @@ fn mirror_removes_extra_user_mod_with_warning() {
 }
 
 #[test]
+fn mirror_replaces_stale_path_for_changed_mod() {
+    let dirs = TestDirs::new();
+    write_fabric_mod_jar(&dirs.mods_dir.join("fabric-api-old.jar"), "fabric-api");
+
+    let new = mod_entry("fabric-api", "fabric-api-new.jar", "new");
+    let result = plan(
+        std::slice::from_ref(&new),
+        &default_settings(ModSyncMode::Mirror),
+        &dirs.install_params(InstallCause::Run),
+    );
+
+    assert_eq!(
+        result.tasks.delete_tasks[0].path,
+        dirs.mods_dir.join("fabric-api-old.jar")
+    );
+    assert_eq!(
+        result.tasks.check_tasks[0].path,
+        dirs.mods_dir.join("fabric-api-new.jar")
+    );
+    assert!(result.warnings.is_empty());
+}
+
+#[test]
+fn mirror_optional_set_removes_stale_path_when_filename_changes() {
+    let dirs = TestDirs::new();
+    write_fabric_mod_jar(&dirs.mods_dir.join("jei-old.jar"), "jei");
+    let entry = mod_entry("jei", "jei-new.jar", "bbb");
+    let settings = ModSyncSettings {
+        optional_sets: vec![OptionalModSet {
+            id: "extras".to_string(),
+            display_name: LocalizedString::Plain("Extras".to_string()),
+            enabled_by_default: true,
+            mod_ids: vec!["jei".to_string()],
+        }],
+        ..default_settings(ModSyncMode::Mirror)
+    };
+
+    let result = plan(
+        std::slice::from_ref(&entry),
+        &settings,
+        &dirs.install_params(InstallCause::Run),
+    );
+
+    assert_eq!(
+        result.tasks.delete_tasks[0].path,
+        dirs.mods_dir.join("jei-old.jar")
+    );
+    assert_eq!(
+        result.tasks.check_tasks[0].path,
+        dirs.optional_mods_dir.join("jei-new.jar")
+    );
+    assert_eq!(
+        result.tasks.enable_optional_mod_tasks[0].target,
+        dirs.mods_dir.join("jei-new.jar")
+    );
+}
+
+#[test]
 fn force_overwrite_uses_mirror_behavior_in_delta_mode() {
     let dirs = TestDirs::new();
     let extra_path = dirs.mods_dir.join("extra.jar");
