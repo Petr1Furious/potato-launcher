@@ -720,50 +720,75 @@ pub(crate) async fn install_game_files(
     Ok(())
 }
 
-async fn enable_optional_mods(
-    tasks: Vec<instance::instance_metadata::EnableOptionalModTask>,
-) -> io::Result<()> {
-    for task in tasks {
-        if let Some(parent) = task.target.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        files::remove_file_or_dir(&task.target).await?;
-        if let Err(err) = tokio::fs::hard_link(&task.source, &task.target).await {
-            log::error!(
-                "Failed to hardlink optional mod from {} to {}; falling back to copy: {err}",
-                task.source.display(),
-                task.target.display()
-            );
-            tokio::fs::copy(&task.source, &task.target).await?;
-        }
+async fn link_optional_mod(source: &Path, target: &Path) -> io::Result<()> {
+    if !source.is_file() {
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    files::remove_file_or_dir(target).await?;
+    if let Err(err) = tokio::fs::hard_link(source, target).await {
+        log::error!(
+            "Failed to hardlink optional mod from {} to {}; falling back to copy: {err}",
+            source.display(),
+            target.display()
+        );
+        tokio::fs::copy(source, target).await?;
     }
     Ok(())
 }
 
-pub(crate) async fn sync_instance_mods(
-    client: &reqwest::Client,
-    launcher_dir: DataDir,
-    dir_name: &str,
-    view_handle: InstanceHandle,
-    optional_mod_preferences: HashMap<String, bool>,
-    frontend: FrontendSender,
-    internal: mpsc::UnboundedSender<BackendEvent>,
+async fn unlink_optional_mod(target: &Path) -> io::Result<()> {
+    if tokio::fs::try_exists(target).await.unwrap_or(false) {
+        files::remove_file_or_dir(target).await?;
+    }
+    Ok(())
+}
+
+async fn enable_optional_mods(
+    tasks: Vec<instance::instance_metadata::EnableOptionalModTask>,
+) -> io::Result<()> {
+    for task in tasks {
+        link_optional_mod(&task.source, &task.target).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn apply_optional_mod_set(
+    instance_dir: &InstanceDirFS,
+    metadata: &InstanceMetadata,
+    set_id: &str,
+    enabled: bool,
 ) -> anyhow::Result<()> {
-    let instance_dir = InstancesDir::root()
-        .instance_dir(dir_name)
-        .with_data_dir(launcher_dir.clone());
-    let metadata = InstanceMetadata::read_local(&instance_dir).await?;
-    let optional_sets_enabled =
-        mod_sync::resolve_optional_set_enabled(&metadata.mod_sync, &optional_mod_preferences);
-    let progress = BackendProgressReporter::new(view_handle, frontend.clone(), internal);
-    let install_params = InstallParams {
-        instance_dir,
-        cause: InstallCause::Update,
-        force_overwrite: false,
-        previous_mod_entries: metadata.mod_entries.clone(),
-        optional_sets_enabled,
+    let Some(set) = metadata
+        .mod_sync
+        .optional_sets
+        .iter()
+        .find(|entry| entry.id == set_id)
+    else {
+        return Ok(());
     };
-    install_game_files(client, &metadata, &install_params, &progress, &frontend).await
+    let mod_ids = set.mod_ids.iter().cloned().collect::<HashSet<_>>();
+
+    for entry in &metadata.mod_entries {
+        if !mod_ids.contains(&entry.mod_id) {
+            continue;
+        }
+        let filename =
+            entry.object.path.file_name().ok_or_else(|| {
+                anyhow!("optional mod entry has no jar filename: {}", entry.mod_id)
+            })?;
+        let source = instance_dir.optional_mods_dir().join(filename);
+        let target = entry.object.path.to_path(instance_dir.minecraft_dir());
+        if enabled {
+            link_optional_mod(&source, &target).await?;
+        } else {
+            unlink_optional_mod(&target).await?;
+        }
+    }
+
+    Ok(())
 }
 
 fn notify_mod_sync_warning(frontend: &FrontendSender, warning: &ModSyncWarning) {

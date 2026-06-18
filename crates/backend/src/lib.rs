@@ -171,10 +171,6 @@ enum BackendEvent {
         is_run: bool,
         result: Result<install::InstallOutput, Arc<str>>,
     },
-    ModSyncFinished {
-        handle: InstanceHandle,
-        result: Result<(), Arc<str>>,
-    },
     LaunchPrepFinished {
         handle: InstanceHandle,
     },
@@ -1493,7 +1489,6 @@ impl BackendState {
         set_id: String,
         enabled: bool,
         tx: &FrontendSender,
-        internal: mpsc::UnboundedSender<BackendEvent>,
     ) {
         if self.install_tasks.contains_key(&instance) {
             tx.send(MessageToFrontend::Notification {
@@ -1537,73 +1532,31 @@ impl BackendState {
             return;
         }
 
-        let settings = match self
+        if let Err(err) = self
             .update_instance_settings(&instance, |settings| {
-                settings.optional_mod_sets.insert(set_id, enabled);
+                settings.optional_mod_sets.insert(set_id.clone(), enabled);
             })
             .await
         {
-            Ok(settings) => settings,
-            Err(err) => {
-                log::error!(
-                    "Failed to save optional mod set setting for instance {instance}: {err:#}"
-                );
-                tx.send(MessageToFrontend::Notification {
-                    level: NotificationLevel::Error,
-                    message: Arc::from(launcher_i18n::notifications::failed_save_optional_mod(
-                        err.to_string(),
-                    )),
-                });
-                return;
-            }
-        };
+            log::error!(
+                "Failed to save optional mod set setting for instance {instance}: {err:#}"
+            );
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::failed_save_optional_mod(
+                    err.to_string(),
+                )),
+            });
+            return;
+        }
         self.emit_snapshot(tx);
 
-        let optional_mod_preferences = settings.optional_mod_sets.clone();
-        self.install_errors.remove(&instance);
-        self.installing.insert(
-            instance.clone(),
-            instances::InstallProgressView {
-                stage: ProgressStage::Files,
-                current: 0,
-                total: 0,
-                message: Arc::from(launcher_i18n::progress::syncing_optional_mods()),
-                show_bar: false,
-            },
-        );
-
-        let client = self.client.clone();
-        let task_instance = instance.clone();
-        let frontend = tx.clone();
-        let handle = tokio::spawn(async move {
-            let result = install::sync_instance_mods(
-                &client,
-                data_dir,
-                &dir_name,
-                task_instance.clone(),
-                optional_mod_preferences,
-                frontend,
-                internal.clone(),
-            )
+        if let Err(err) = install::apply_optional_mod_set(&instance_dir, &metadata, &set_id, enabled)
             .await
-            .map_err(|err| Arc::<str>::from(format!("{err:#}")));
-            let _ = internal.send(BackendEvent::ModSyncFinished {
-                handle: task_instance,
-                result,
-            });
-        });
-        self.install_tasks.insert(instance, handle);
-    }
-
-    async fn handle_mod_sync_finished(
-        &mut self,
-        handle: InstanceHandle,
-        result: Result<(), Arc<str>>,
-        tx: &FrontendSender,
-    ) {
-        self.install_tasks.remove(&handle);
-        self.installing.remove(&handle);
-        if let Err(err) = result {
+        {
+            log::error!(
+                "Failed to apply optional mod set {set_id} for instance {instance}: {err:#}"
+            );
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
                 message: Arc::from(launcher_i18n::notifications::optional_mod_sync_failed(
@@ -2164,7 +2117,6 @@ pub async fn run(
                                 set_id,
                                 enabled,
                                 &frontend,
-                                internal_sender.clone(),
                             )
                             .await;
                     }
@@ -2235,9 +2187,6 @@ pub async fn run(
                     }
                     Some(BackendEvent::InstallFinished { handle, is_run, result }) => {
                         state.handle_install_finished(handle, is_run, result, &frontend).await;
-                    }
-                    Some(BackendEvent::ModSyncFinished { handle, result }) => {
-                        state.handle_mod_sync_finished(handle, result, &frontend).await;
                     }
                     Some(BackendEvent::LaunchStarted { handle }) => {
                         state.handle_launch_started(handle, &frontend);

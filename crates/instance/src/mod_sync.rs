@@ -365,7 +365,9 @@ impl<'a> ModSyncPlanner<'a> {
     }
 
     fn should_warn_added(&self, mod_id: &str) -> bool {
-        self.previous.contains_key(mod_id) && !self.local_mods.contains_key(mod_id)
+        self.previous.contains_key(mod_id)
+            && !self.local_mods.contains_key(mod_id)
+            && !self.optional_mod_to_set.contains_key(mod_id)
     }
 
     fn should_warn_removed(&self, mod_id: &str) -> bool {

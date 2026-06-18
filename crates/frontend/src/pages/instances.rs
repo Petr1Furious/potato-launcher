@@ -981,6 +981,16 @@ impl InstancesPage {
                     }),
                 cx,
             ))
+            .when(
+                instance.locally_installed && !instance.optional_mod_sets.is_empty(),
+                |this| {
+                    this.child(detail_section(
+                        t::instances::optional_mods_title(),
+                        optional_mods_section(&instance, sender.clone(), cx),
+                        cx,
+                    ))
+                },
+            )
             .children(account_detail_sections(
                 &instance,
                 accounts.clone(),
@@ -1000,16 +1010,6 @@ impl InstancesPage {
                 ),
                 cx,
             ))
-            .when(
-                instance.locally_installed && !instance.optional_mod_sets.is_empty(),
-                |this| {
-                    this.child(detail_section(
-                        t::instances::optional_mods_title(),
-                        optional_mods_section(&instance, sender.clone(), cx),
-                        cx,
-                    ))
-                },
-            )
             .child(detail_section(
                 t::instances::actions(),
                 action_section(
