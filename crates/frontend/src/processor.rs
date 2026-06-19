@@ -2,7 +2,10 @@ use gpui::App;
 use launcher_bridge::{ExitOutcome, MessageToFrontend, NotificationLevel};
 use launcher_i18n::{self as t, set_lang};
 
-use crate::entity::{DataEntities, instance::InstanceProgressUpdate};
+use crate::{
+    entity::{DataEntities, instance::InstanceProgressUpdate},
+    notification_text::short_notification_text,
+};
 
 pub struct Processor {
     data: DataEntities,
@@ -57,7 +60,7 @@ impl Processor {
                     NotificationLevel::Info | NotificationLevel::Success => log::info!("{message}"),
                 }
                 self.data.notifications.update(cx, |entries, cx| {
-                    entries.push(level, message.to_string(), cx);
+                    entries.push(level, short_notification_text(&message), cx);
                 });
             }
             MessageToFrontend::AuthPrompt { context, message } => {
@@ -102,9 +105,9 @@ impl Processor {
                         )
                     }
                 };
-                self.data
-                    .notifications
-                    .update(cx, |entries, cx| entries.push(level, message, cx));
+                self.data.notifications.update(cx, |entries, cx| {
+                    entries.push(level, short_notification_text(&message), cx)
+                });
             }
             MessageToFrontend::LocalCreateVersionsUpdated {
                 versions,

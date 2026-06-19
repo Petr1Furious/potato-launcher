@@ -1,6 +1,7 @@
 pub mod auth_qr;
 pub mod component;
 pub mod entity;
+pub mod notification_text;
 pub mod pages;
 pub mod processor;
 pub mod root;

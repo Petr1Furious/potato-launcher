@@ -17,10 +17,7 @@ fn main() -> anyhow::Result<()> {
         LevelFilter::Info,
     )?;
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .enable_all()
-        .build()?;
+    let runtime = tokio::runtime::Runtime::new()?;
 
     let (backend_sender, backend_receiver, frontend_sender, frontend_receiver) =
         launcher_bridge::channel();

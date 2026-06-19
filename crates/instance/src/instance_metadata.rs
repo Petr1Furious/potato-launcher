@@ -12,9 +12,7 @@ use url::Url;
 use utils::{
     files::{self, CheckTask, ConfigOption, ConfigOptionTask, ConfigType, DeleteTask},
     hash_struct,
-    paths::{
-        AssetsDir, BaseUrl, DataDir, InstanceDirFS, InstancesDir, ResourcesUrlBase, VersionsDir,
-    },
+    paths::{BaseUrl, DataDir, InstanceDirFS, InstancesDir, ResourcesUrlBase, VersionsDir},
 };
 
 use crate::{
@@ -372,8 +370,12 @@ impl InstanceMetadata {
                 .check_tasks
                 .extend(self.get_library_check_tasks(params.instance_dir.data_dir())?);
             tasks.check_tasks.extend(
-                self.get_asset_check_tasks(client, params.instance_dir.data_dir())
-                    .await?,
+                self.get_asset_check_tasks(
+                    client,
+                    params.instance_dir.data_dir(),
+                    params.force_overwrite,
+                )
+                .await?,
             );
         }
 
@@ -458,6 +460,7 @@ impl InstanceMetadata {
         &self,
         client: &reqwest::Client,
         data_dir: &DataDir,
+        force_overwrite: bool,
     ) -> Result<Vec<CheckTask>, InstanceMetadataError> {
         let mut tasks = Vec::new();
 
@@ -465,19 +468,12 @@ impl InstanceMetadata {
             let Some(asset_index) = &version.asset_index else {
                 continue;
             };
-
-            let index_task = asset_index.get_check_task(data_dir);
-            if let Some(download_task) = files::get_download_task(&index_task).await? {
-                files::download_file(client, &download_task).await?;
-            }
-            let path = AssetsDir::root()
-                .asset_index_path(&asset_index.id)
-                .to_fs(data_dir);
-            let asset_metadata: AssetsMetadata = files::read_file_parsed(&path).await?;
+            let asset_metadata =
+                AssetsMetadata::read_or_download(client, asset_index, data_dir).await?;
             tasks.extend(asset_metadata.get_check_tasks(
                 data_dir,
                 &self.resources_url_base,
-                false,
+                force_overwrite,
             )?);
         }
 

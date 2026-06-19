@@ -152,7 +152,7 @@ ru = "Синхронизировать"
 
 [instances.hard_resync]
 en = "Hard Resync"
-ru = "Жёсткая синхронизация"
+ru = "Сбросить"
 
 [instances.delete]
 en = "Delete"

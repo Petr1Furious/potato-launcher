@@ -529,7 +529,7 @@ pub mod instances {
     }
     pub fn hard_resync() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Жёсткая синхронизация",
+            1 => "Сбросить",
             _ => "Hard Resync",
         }
     }

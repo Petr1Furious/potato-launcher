@@ -1538,9 +1538,7 @@ impl BackendState {
             })
             .await
         {
-            log::error!(
-                "Failed to save optional mod set setting for instance {instance}: {err:#}"
-            );
+            log::error!("Failed to save optional mod set setting for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
                 message: Arc::from(launcher_i18n::notifications::failed_save_optional_mod(
@@ -1551,8 +1549,8 @@ impl BackendState {
         }
         self.emit_snapshot(tx);
 
-        if let Err(err) = install::apply_optional_mod_set(&instance_dir, &metadata, &set_id, enabled)
-            .await
+        if let Err(err) =
+            install::apply_optional_mod_set(&instance_dir, &metadata, &set_id, enabled).await
         {
             log::error!(
                 "Failed to apply optional mod set {set_id} for instance {instance}: {err:#}"
