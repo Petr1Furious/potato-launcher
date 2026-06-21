@@ -23,7 +23,10 @@ use utils::{
 use crate::{
     BackendEvent,
     catalog::BackendCatalogEntry,
-    install::{BackendProgressReporter, InstallOutput, install_game_files, resolve_java},
+    install::{
+        BackendProgressReporter, InstallOutput, install_game_files, persist_java_installation,
+        resolve_java,
+    },
 };
 
 #[derive(Clone)]
@@ -115,11 +118,8 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
         .with_data_dir(data_dir.clone());
     instance_dir.ensure_dir();
 
-    let progress = BackendProgressReporter::new(
-        request.handle.clone(),
-        request.frontend.clone(),
-        request.internal,
-    );
+    let internal = request.internal.clone();
+    let progress = BackendProgressReporter::new(request.handle.clone(), request.internal);
 
     let generate_progress = progress.handle(
         ProgressStage::Metadata,
@@ -154,12 +154,23 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
 
     generate_progress.finish();
 
+    let instance_name = request.dir_name.clone();
+    log::info!(
+        "Starting local create for instance '{}' (handle {})",
+        instance_name,
+        request.handle
+    );
+
     let check_progress = progress.handle(
         ProgressStage::Checking,
         launcher_i18n::progress::checking_install_files(),
     );
+    let check_count = result.check_tasks.len();
+    log::info!("local create for instance '{instance_name}': {check_count} check task(s)");
+    files::log_check_tasks("local create", &instance_name, &result.check_tasks);
     let download_tasks =
         files::get_download_tasks(result.check_tasks, check_progress.clone()).await?;
+    files::log_download_tasks("local create", &instance_name, check_count, &download_tasks);
     check_progress.finish();
 
     let download_progress = progress.handle(
@@ -169,6 +180,7 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     adaptive_download::download_files(download_tasks, download_progress).await?;
 
     if !result.copy_tasks.is_empty() {
+        files::log_copy_tasks("local create", &instance_name, &result.copy_tasks);
         let copy_progress = progress.handle(
             ProgressStage::Copying,
             launcher_i18n::progress::copying_files(),
@@ -194,7 +206,8 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     )
     .await?;
 
-    resolve_java(&metadata, &data_dir, None, &progress).await?;
+    let installation = resolve_java(&metadata, &data_dir, None, &progress).await?;
+    persist_java_installation(request.handle.clone(), &installation, &internal);
 
     let instance = LocalInstance::new_local_with_handle(request.handle, request.dir_name);
 

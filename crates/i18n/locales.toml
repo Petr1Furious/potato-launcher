@@ -314,6 +314,10 @@ ru = "Не удалось сохранить настройку native GLFW: ${e
 en = "Optional mods cannot be changed while a local install is in progress"
 ru = "Опциональные моды нельзя изменить, пока идёт локальная установка"
 
+[notifications.optional_mod_instance_running]
+en = "Optional mods cannot be changed while the instance is launching or running"
+ru = "Опциональные моды нельзя изменить, пока инстанс запускается или уже запущен"
+
 [notifications.failed_save_optional_mod]
 en = "Failed to save optional mod setting: ${error: String}"
 ru = "Не удалось сохранить настройку опционального мода: ${error: String}"
@@ -597,6 +601,10 @@ ru = "Распаковка нативных библиотек"
 [progress.java_already_installed]
 en = "Java is already installed"
 ru = "Java уже установлена"
+
+[progress.checking_java]
+en = "Checking Java"
+ru = "Проверка Java"
 
 [progress.installing_java_version]
 en = "Installing Java ${version: String}"

@@ -404,6 +404,58 @@ pub async fn get_download_tasks(
         .collect())
 }
 
+pub fn log_check_tasks(action: &str, instance: &str, tasks: &[CheckTask]) {
+    if !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
+    for (index, task) in tasks.iter().enumerate() {
+        log::debug!(
+            "{action} for instance '{instance}' check[{index}]: {} -> {}",
+            task.url,
+            task.path.display()
+        );
+    }
+}
+
+pub fn log_download_tasks(
+    action: &str,
+    instance: &str,
+    checked_count: usize,
+    tasks: &[DownloadTask],
+) {
+    log::info!(
+        "{action} for instance '{instance}': checked {checked_count} file(s), {} need download",
+        tasks.len()
+    );
+    if !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
+    for (index, task) in tasks.iter().enumerate() {
+        log::debug!(
+            "{action} for instance '{instance}' download[{index}]: {} -> {}",
+            task.url,
+            task.path.display()
+        );
+    }
+}
+
+pub fn log_copy_tasks(action: &str, instance: &str, tasks: &[CopyTask]) {
+    log::info!(
+        "{action} for instance '{instance}': {} copy task(s)",
+        tasks.len()
+    );
+    if !log::log_enabled!(log::Level::Debug) {
+        return;
+    }
+    for (index, task) in tasks.iter().enumerate() {
+        log::debug!(
+            "{action} for instance '{instance}' copy[{index}]: {} -> {}",
+            task.source.display(),
+            task.target.display()
+        );
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum DownloadFileError {
     #[error("network request failed while downloading file: {0}")]

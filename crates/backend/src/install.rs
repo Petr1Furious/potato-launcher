@@ -9,7 +9,7 @@ use std::{
 use anyhow::anyhow;
 use either::Either;
 use instance::{
-    instance_metadata::{InstallCause, InstallParams, InstanceMetadata, ModSyncWarning},
+    instance_metadata::{InstallCause, InstallParams, InstanceMetadata, ModSyncWarning, TaskSet},
     manifest::InstanceManifestEntry,
     mod_sync,
     storage::{self, InstanceHandle, InstanceState, LocalInstance, RemoteSource},
@@ -23,7 +23,8 @@ use utils::{
     java,
     paths::{DataDir, InstanceDirFS, InstancesDir, NativesDir},
     progress::{
-        ProgressEvent, ProgressHandle, ProgressReporter, ProgressStage, ProgressTracker, Unit,
+        ProgressBar, ProgressEvent, ProgressHandle, ProgressReporter, ProgressStage,
+        ProgressTracker, Unit,
     },
 };
 
@@ -43,6 +44,7 @@ pub(crate) struct InstallRequest {
     pub(crate) catalogs: HashMap<Url, BackendCatalogEntry>,
     pub(crate) frontend: FrontendSender,
     pub(crate) internal: mpsc::UnboundedSender<BackendEvent>,
+    pub(crate) java_path: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,21 +64,12 @@ struct InstallPlan {
 #[derive(Clone)]
 pub(crate) struct BackendProgressReporter {
     handle: InstanceHandle,
-    frontend: FrontendSender,
     internal: mpsc::UnboundedSender<BackendEvent>,
 }
 
 impl BackendProgressReporter {
-    pub fn new(
-        handle: InstanceHandle,
-        frontend: FrontendSender,
-        internal: mpsc::UnboundedSender<BackendEvent>,
-    ) -> Self {
-        Self {
-            handle,
-            frontend,
-            internal,
-        }
+    pub fn new(handle: InstanceHandle, internal: mpsc::UnboundedSender<BackendEvent>) -> Self {
+        Self { handle, internal }
     }
 
     pub fn handle(&self, stage: ProgressStage, message: impl Into<String>) -> ProgressHandle<Self> {
@@ -102,13 +95,6 @@ impl ProgressReporter for BackendProgressReporter {
             event.current
         };
 
-        self.frontend.send(MessageToFrontend::InstanceProgress {
-            handle: self.handle.clone(),
-            stage,
-            current,
-            total: event.total,
-            message: Arc::<str>::from(message.clone()),
-        });
         let _ = self.internal.send(BackendEvent::InstallProgress {
             handle: self.handle.clone(),
             stage,
@@ -144,18 +130,57 @@ fn stage_message(stage: &ProgressStage) -> String {
     }
 }
 
+fn install_action_label(cause: InstallCause, force_overwrite: bool) -> &'static str {
+    match (cause, force_overwrite) {
+        (InstallCause::Run, _) => "launch",
+        (InstallCause::Update, true) => "force sync",
+        (InstallCause::Update, false) => "sync",
+    }
+}
+
+fn instance_dir_name(instance_dir: &InstanceDirFS) -> String {
+    instance_dir
+        .to_fs()
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn log_install_task_set(action: &str, instance: &str, tasks: &TaskSet) {
+    log::info!(
+        "{action} for instance '{instance}': {} check, {} delete, {} config, {} optional-mod task(s)",
+        tasks.check_tasks.len(),
+        tasks.delete_tasks.len(),
+        tasks.config_option_tasks.len(),
+        tasks.enable_optional_mod_tasks.len()
+    );
+    files::log_check_tasks(action, instance, &tasks.check_tasks);
+}
+
 pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<InstallOutput> {
+    let local_only = request
+        .local_instances
+        .iter()
+        .find(|instance| instance.handle == request.handle && instance.source.is_none())
+        .cloned();
+    if let Some(local) = local_only {
+        return install_local_only_instance(request, local).await;
+    }
+
     let plan = resolve_install_plan(&request.handle, &request.local_instances, &request.catalogs)?;
+    let action = install_action_label(request.cause, request.force_overwrite);
+    log::info!(
+        "Starting {action} for instance '{}' (handle {})",
+        plan.dir_name,
+        request.handle
+    );
     let instance_dir = InstancesDir::root()
         .instance_dir(&plan.dir_name)
         .with_data_dir(request.launcher_dir.clone());
     instance_dir.ensure_dir();
 
-    let progress = BackendProgressReporter::new(
-        plan.view_handle.clone(),
-        request.frontend.clone(),
-        request.internal,
-    );
+    let internal = request.internal.clone();
+    let progress = BackendProgressReporter::new(plan.view_handle.clone(), request.internal);
 
     let metadata = install_metadata(
         &request.client,
@@ -198,7 +223,14 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     metadata.save(&instance_dir).await?;
 
     if request.cause == InstallCause::Update {
-        resolve_java(&metadata, &request.launcher_dir, None, &progress).await?;
+        let installation = resolve_java(
+            &metadata,
+            &request.launcher_dir,
+            request.java_path.as_deref(),
+            &progress,
+        )
+        .await?;
+        persist_java_installation(request.handle.clone(), &installation, &internal);
     }
 
     let instance = if let Some(mut existing) = plan.existing {
@@ -226,6 +258,63 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     };
 
     Ok(InstallOutput { instance })
+}
+
+async fn install_local_only_instance(
+    request: InstallRequest,
+    local: LocalInstance,
+) -> anyhow::Result<InstallOutput> {
+    if request.cause != InstallCause::Run {
+        return Err(anyhow::anyhow!(
+            "local-only instance cannot be updated from a backend"
+        ));
+    }
+    if !local.is_installed() {
+        return Err(anyhow!(
+            "attempting to run an instance that is not installed"
+        ));
+    }
+
+    let action = install_action_label(request.cause, request.force_overwrite);
+    log::info!(
+        "Starting {action} for instance '{}' (handle {})",
+        local.dir_name,
+        local.handle
+    );
+
+    let instance_dir = InstancesDir::root()
+        .instance_dir(&local.dir_name)
+        .with_data_dir(request.launcher_dir.clone());
+
+    let progress = BackendProgressReporter::new(local.handle.clone(), request.internal);
+
+    let metadata = InstanceMetadata::read_local(&instance_dir)
+        .await
+        .map_err(|err| anyhow!("failed to read local instance metadata: {err}"))?;
+    let previous_mod_entries = metadata.mod_entries.clone();
+    let optional_sets_enabled = mod_sync::resolve_optional_set_enabled(
+        &metadata.mod_sync,
+        &request.optional_mod_preferences,
+    );
+    let install_params = InstallParams {
+        instance_dir: instance_dir.clone(),
+        cause: InstallCause::Run,
+        force_overwrite: request.force_overwrite,
+        previous_mod_entries,
+        optional_sets_enabled,
+    };
+
+    install_game_files(
+        &request.client,
+        &metadata,
+        &install_params,
+        &progress,
+        &request.frontend,
+    )
+    .await?;
+    metadata.save(&instance_dir).await?;
+
+    Ok(InstallOutput { instance: local })
 }
 
 fn resolve_install_plan(
@@ -676,7 +765,17 @@ pub(crate) async fn install_game_files(
     progress: &BackendProgressReporter,
     frontend: &FrontendSender,
 ) -> anyhow::Result<()> {
+    let action = install_action_label(params.cause, params.force_overwrite);
+    let instance = instance_dir_name(&params.instance_dir);
     let install_tasks = metadata.get_all_install_tasks(client, params).await?;
+
+    if !install_tasks.mod_warnings.is_empty() {
+        log::info!(
+            "{action} for instance '{instance}': {} mod sync warning(s)",
+            install_tasks.mod_warnings.len()
+        );
+    }
+    log_install_task_set(action, &instance, &install_tasks.tasks);
 
     for warning in &install_tasks.mod_warnings {
         notify_mod_sync_warning(frontend, warning);
@@ -686,12 +785,14 @@ pub(crate) async fn install_game_files(
         files::remove_file_or_dir(&delete_task.path).await?;
     }
 
+    let check_count = install_tasks.tasks.check_tasks.len();
     let check_progress = progress.handle(
         ProgressStage::Checking,
         launcher_i18n::progress::checking_install_files(),
     );
     let download_tasks =
         files::get_download_tasks(install_tasks.tasks.check_tasks, check_progress).await?;
+    files::log_download_tasks(action, &instance, check_count, &download_tasks);
 
     let download_progress = progress.handle(
         ProgressStage::Downloading,
@@ -808,46 +909,52 @@ fn notify_mod_sync_warning(frontend: &FrontendSender, warning: &ModSyncWarning) 
     });
 }
 
+pub(crate) fn persist_java_installation(
+    instance: InstanceHandle,
+    installation: &java::JavaInstallation,
+    internal: &mpsc::UnboundedSender<BackendEvent>,
+) {
+    let _ = internal.send(BackendEvent::JavaResolved {
+        instance,
+        path: Some(Arc::from(installation.path.to_string_lossy().as_ref())),
+    });
+}
+
 pub(crate) async fn resolve_java(
     metadata: &InstanceMetadata,
     data_dir: &DataDir,
-    configured_path: Option<&str>,
+    stored_path: Option<&str>,
     progress: &BackendProgressReporter,
 ) -> anyhow::Result<java::JavaInstallation> {
     let java_version = metadata.get_java_version();
-    if let Some(path) = configured_path {
+    let java_progress = progress.handle(
+        ProgressStage::Java,
+        launcher_i18n::progress::checking_java(),
+    );
+
+    if let Some(path) = stored_path.filter(|path| !path.is_empty()) {
         let java_path = Path::new(path);
         if java::check_java(&java_version, java_path).await
             && let Some(installation) = java::get_installation_pub(java_path).await
         {
-            progress
-                .handle(
-                    ProgressStage::Java,
-                    launcher_i18n::progress::java_already_installed(),
-                )
-                .finish();
+            java_progress.set_message(launcher_i18n::progress::java_already_installed());
+            java_progress.finish();
             return Ok(installation);
         }
+        log::warn!(
+            "Stored Java path {path} is invalid for Java {java_version}; searching for a replacement"
+        );
     }
     if let Some(installation) = java::get_java(&java_version, data_dir).await {
-        progress
-            .handle(
-                ProgressStage::Java,
-                launcher_i18n::progress::java_already_installed(),
-            )
-            .finish();
+        java_progress.set_message(launcher_i18n::progress::java_already_installed());
+        java_progress.finish();
         return Ok(installation);
     }
 
-    java::download_java(
-        &java_version,
-        data_dir,
-        progress.handle(
-            ProgressStage::Java,
-            launcher_i18n::progress::installing_java_version(java_version.clone()),
-        ),
-    )
-    .await?;
+    java_progress.set_message(launcher_i18n::progress::installing_java_version(
+        java_version.clone(),
+    ));
+    java::download_java(&java_version, data_dir, java_progress).await?;
     java::get_java(&java_version, data_dir)
         .await
         .ok_or_else(|| anyhow::anyhow!("Java {java_version} is still missing after download"))

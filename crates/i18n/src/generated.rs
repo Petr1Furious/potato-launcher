@@ -1007,6 +1007,7 @@ pub mod notifications {
             "minecraft_terminated" => Some(minecraft_terminated()),
             "offline_nickname_empty" => Some(offline_nickname_empty()),
             "optional_mod_install_in_progress" => Some(optional_mod_install_in_progress()),
+            "optional_mod_instance_running" => Some(optional_mod_instance_running()),
             "preparing_install" => Some(preparing_install()),
             "preparing_local_instance" => Some(preparing_local_instance()),
             "selected_account_must_match" => Some(selected_account_must_match()),
@@ -1334,6 +1335,12 @@ pub mod notifications {
             _ => "Optional mods cannot be changed while a local install is in progress",
         }
     }
+    pub fn optional_mod_instance_running() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Опциональные моды нельзя изменить, пока инстанс запускается или уже запущен",
+            _ => "Optional mods cannot be changed while the instance is launching or running",
+        }
+    }
     pub fn optional_mod_sync_failed(error: String) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Не удалось синхронизировать опциональные моды: {error}"),
@@ -1466,6 +1473,7 @@ pub mod progress {
         match key {
             "checking_files" => Some(checking_files()),
             "checking_install_files" => Some(checking_install_files()),
+            "checking_java" => Some(checking_java()),
             "copying_files" => Some(copying_files()),
             "downloading_files" => Some(downloading_files()),
             "downloading_install_files" => Some(downloading_install_files()),
@@ -1491,6 +1499,12 @@ pub mod progress {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Проверка файлов установки",
             _ => "Checking install files",
+        }
+    }
+    pub fn checking_java() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Проверка Java",
+            _ => "Checking Java",
         }
     }
     pub fn copying_files() -> &'static str {

@@ -561,6 +561,26 @@ impl BackendState {
         }
     }
 
+    fn apply_install_progress(
+        &mut self,
+        handle: InstanceHandle,
+        progress: instances::InstallProgressView,
+        frontend: &FrontendSender,
+    ) {
+        if !self.install_tasks.contains_key(&handle) && !self.java_prep_tasks.contains(&handle) {
+            return;
+        }
+
+        self.installing.insert(handle.clone(), progress.clone());
+        frontend.send(MessageToFrontend::InstanceProgress {
+            handle,
+            stage: progress.stage,
+            current: progress.current,
+            total: progress.total,
+            message: progress.message,
+        });
+    }
+
     fn emit_snapshot(&self, tx: &FrontendSender) {
         tx.send(MessageToFrontend::BackendsUpdated {
             backends: self.backend_statuses(),
@@ -769,6 +789,7 @@ impl BackendState {
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) -> install::InstallRequest {
         let optional_mod_preferences = self.load_settings_for_id(&handle).optional_mod_sets;
+        let java_path = self.load_settings_for_id(&handle).java_path.clone();
         install::InstallRequest {
             handle,
             cause: if is_run {
@@ -784,6 +805,7 @@ impl BackendState {
             catalogs: self.catalogs.clone(),
             frontend: tx,
             internal,
+            java_path,
         }
     }
 
@@ -1506,6 +1528,13 @@ impl BackendState {
             });
             return;
         }
+        if self.running.contains(&instance) || self.launching.contains(&instance) {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Warning,
+                message: Arc::from(launcher_i18n::notifications::optional_mod_instance_running()),
+            });
+            return;
+        }
         let Some(local) = self
             .instance_storage
             .all()
@@ -1609,23 +1638,24 @@ impl BackendState {
             });
             return;
         }
+        let Some(path) = path.filter(|path| !path.is_empty()) else {
+            log::warn!("Ignoring request to clear Java path for instance {instance}");
+            return;
+        };
         let Some(required_version) = self.required_java_version_for(&instance) else {
             log::error!("Missing required Java version for instance {instance}");
             return;
         };
-        if let Some(ref path_str) = path {
-            let java_path = std::path::Path::new(path_str);
-            if !utils::java::check_java(&required_version, java_path).await {
-                tx.send(MessageToFrontend::Notification {
-                    level: NotificationLevel::Error,
-                    message: Arc::from(launcher_i18n::notifications::invalid_java_path()),
-                });
-                return;
-            }
+        let java_path = std::path::Path::new(&path);
+        if !utils::java::check_java(&required_version, java_path).await {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::invalid_java_path()),
+            });
+            return;
         }
-        let is_set = path.is_some();
         if let Err(err) = self
-            .update_instance_settings(&instance, |settings| settings.java_path = path)
+            .update_instance_settings(&instance, |settings| settings.java_path = Some(path))
             .await
         {
             log::error!("Failed to save Java path for instance {instance}: {err:#}");
@@ -1637,14 +1667,9 @@ impl BackendState {
             });
             return;
         }
-        let message = if is_set {
-            launcher_i18n::notifications::java_path_set().to_owned()
-        } else {
-            launcher_i18n::notifications::java_path_cleared().to_owned()
-        };
         tx.send(MessageToFrontend::Notification {
             level: NotificationLevel::Success,
-            message: Arc::from(message),
+            message: Arc::from(launcher_i18n::notifications::java_path_set()),
         });
         self.emit_snapshot(tx);
     }
@@ -1667,16 +1692,51 @@ impl BackendState {
         if self.is_local_install_in_progress(&instance) {
             return;
         }
-        let Some(required_version) = self.required_java_version_for(&instance) else {
-            log::error!("Missing required Java version for instance {instance}");
+        let Some(local) = self.instance_storage.get(&instance).cloned() else {
             return;
         };
-        let data_dir = utils::paths::DataDir::new(self.launcher_dir.clone());
+        let stored_java_path = self.load_settings_for_id(&instance).java_path.clone();
+        let launcher_dir = self.launcher_dir.clone();
+
         tokio::spawn(async move {
-            let path = utils::java::get_java(&required_version, &data_dir)
-                .await
-                .map(|installation| Arc::<str>::from(installation.path.to_string_lossy().as_ref()));
-            let _ = internal.send(BackendEvent::JavaResolved { instance, path });
+            let data_dir = utils::paths::DataDir::new(launcher_dir);
+            let instance_dir = InstancesDir::root()
+                .instance_dir(&local.dir_name)
+                .with_data_dir(data_dir.clone());
+            let metadata = match launch::read_metadata(&instance_dir).await {
+                Ok(metadata) => metadata,
+                Err(err) => {
+                    log::error!(
+                        "Failed to read instance metadata for Java resolve on {instance}: {err:#}"
+                    );
+                    let _ = internal.send(BackendEvent::JavaResolved {
+                        instance,
+                        path: None,
+                    });
+                    return;
+                }
+            };
+            let progress =
+                install::BackendProgressReporter::new(instance.clone(), internal.clone());
+            match install::resolve_java(
+                &metadata,
+                &data_dir,
+                stored_java_path.as_deref(),
+                &progress,
+            )
+            .await
+            {
+                Ok(installation) => {
+                    install::persist_java_installation(instance, &installation, &internal);
+                }
+                Err(err) => {
+                    log::error!("Failed to resolve Java for instance {instance}: {err:#}");
+                    let _ = internal.send(BackendEvent::JavaResolved {
+                        instance,
+                        path: None,
+                    });
+                }
+            }
         });
     }
 
@@ -1738,10 +1798,10 @@ impl BackendState {
         self.installing.insert(
             handle.clone(),
             instances::InstallProgressView {
-                stage: launcher_bridge::ProgressStage::Java,
+                stage: launcher_bridge::ProgressStage::Files,
                 current: 0,
                 total: 0,
-                message: Arc::from(launcher_i18n::progress::installing_java()),
+                message: Arc::from(launcher_i18n::progress::checking_install_files()),
                 show_bar: false,
             },
         );
@@ -1790,14 +1850,12 @@ impl BackendState {
                     .instance_dir(&local.dir_name)
                     .with_data_dir(data_dir.clone());
                 let metadata = launch::read_metadata(&instance_dir).await?;
-                let progress = install::BackendProgressReporter::new(
-                    launch_handle.clone(),
-                    frontend.clone(),
-                    internal.clone(),
-                );
+                let progress =
+                    install::BackendProgressReporter::new(launch_handle.clone(), internal.clone());
                 let java =
                     install::resolve_java(&metadata, &data_dir, java_path.as_deref(), &progress)
                         .await?;
+                install::persist_java_installation(launch_handle.clone(), &java, &internal);
                 let _ = internal.send(BackendEvent::LaunchPrepFinished {
                     handle: launch_handle.clone(),
                 });
@@ -1863,6 +1921,27 @@ impl BackendState {
                 task,
             },
         );
+    }
+
+    async fn handle_java_resolved(
+        &mut self,
+        instance: InstanceHandle,
+        path: Option<Arc<str>>,
+        tx: &FrontendSender,
+    ) {
+        if let Some(ref path) = path {
+            if let Err(err) = self
+                .update_instance_settings(&instance, |settings| {
+                    settings.java_path = Some(path.to_string());
+                })
+                .await
+            {
+                log::error!("Failed to save Java path for instance {instance}: {err:#}");
+            } else {
+                self.emit_snapshot(tx);
+            }
+        }
+        tx.send(MessageToFrontend::JavaPathResolved { instance, path });
     }
 
     fn handle_launch_prep_finished(&mut self, handle: InstanceHandle, tx: &FrontendSender) {
@@ -2168,17 +2247,17 @@ pub async fn run(
                         state.handle_fetch_finished(url, result, &frontend);
                     }
                     Some(BackendEvent::InstallProgress { handle, stage, current, total, message, show_bar }) => {
-                        if state.install_tasks.contains_key(&handle)
-                            || state.java_prep_tasks.contains(&handle)
-                        {
-                            state.installing.insert(handle, instances::InstallProgressView {
+                        state.apply_install_progress(
+                            handle,
+                            instances::InstallProgressView {
                                 stage,
                                 current,
                                 total,
                                 message,
                                 show_bar,
-                            });
-                        }
+                            },
+                            &frontend,
+                        );
                     }
                     Some(BackendEvent::LaunchPrepFinished { handle }) => {
                         state.handle_launch_prep_finished(handle, &frontend);
@@ -2205,7 +2284,7 @@ pub async fn run(
                         state.handle_auth_launch_prompt(instance);
                     }
                     Some(BackendEvent::JavaResolved { instance, path }) => {
-                        frontend.send(MessageToFrontend::JavaPathResolved { instance, path });
+                        state.handle_java_resolved(instance, path, &frontend).await;
                     }
                     None => break,
                 }

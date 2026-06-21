@@ -1979,39 +1979,40 @@ fn runtime_section(
                 )),
         )
         .child(
-            h_flex()
-                .gap_2()
-                .child(Input::new(&memory_input))
-                .child(
-                    Button::new(format!("save-memory-{handle}"))
-                        .label(t::instances::set_memory())
-                        .on_click({
-                            let input = memory_input.clone();
-                            let sender = sender.clone();
-                            let handle = handle.clone();
-                            move |_, _, cx| {
-                                let value = input.read(cx).value().trim().parse::<u64>().ok();
-                                sender.send(MessageToBackend::SetInstanceMemory {
-                                    instance: handle.clone(),
-                                    xmx_mb: value,
-                                });
-                            }
-                        }),
-                )
-                .child(
-                    Button::new(format!("clear-memory-{handle}"))
-                        .label(t::common::default())
-                        .on_click({
-                            let sender = sender.clone();
-                            let handle = handle.clone();
-                            move |_, _, _| {
-                                sender.send(MessageToBackend::SetInstanceMemory {
-                                    instance: handle.clone(),
-                                    xmx_mb: None,
-                                });
-                            }
-                        }),
-                ),
+            v_flex().gap_2().child(Input::new(&memory_input)).child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(format!("save-memory-{handle}"))
+                            .label(t::instances::set_memory())
+                            .on_click({
+                                let input = memory_input.clone();
+                                let sender = sender.clone();
+                                let handle = handle.clone();
+                                move |_, _, cx| {
+                                    let value = input.read(cx).value().trim().parse::<u64>().ok();
+                                    sender.send(MessageToBackend::SetInstanceMemory {
+                                        instance: handle.clone(),
+                                        xmx_mb: value,
+                                    });
+                                }
+                            }),
+                    )
+                    .child(
+                        Button::new(format!("clear-memory-{handle}"))
+                            .label(t::common::default())
+                            .on_click({
+                                let sender = sender.clone();
+                                let handle = handle.clone();
+                                move |_, _, _| {
+                                    sender.send(MessageToBackend::SetInstanceMemory {
+                                        instance: handle.clone(),
+                                        xmx_mb: None,
+                                    });
+                                }
+                            }),
+                    ),
+            ),
         )
         .child(
             v_flex()
@@ -2029,39 +2030,40 @@ fn runtime_section(
                         )),
                 )
                 .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Input::new(&jvm_flags_input))
-                        .child(
-                            Button::new(format!("save-jvm-flags-{handle}"))
-                                .label(t::instances::set_flags())
-                                .on_click({
-                                    let input = jvm_flags_input.clone();
-                                    let sender = sender.clone();
-                                    let handle = handle.clone();
-                                    move |_, _, cx| {
-                                        let value = input.read(cx).value().to_string();
-                                        sender.send(MessageToBackend::SetInstanceJvmFlags {
-                                            instance: handle.clone(),
-                                            flags: Some(value),
-                                        });
-                                    }
-                                }),
-                        )
-                        .child(
-                            Button::new(format!("clear-jvm-flags-{handle}"))
-                                .label(t::common::default())
-                                .on_click({
-                                    let sender = sender.clone();
-                                    let handle = handle.clone();
-                                    move |_, _, _| {
-                                        sender.send(MessageToBackend::SetInstanceJvmFlags {
-                                            instance: handle.clone(),
-                                            flags: None,
-                                        });
-                                    }
-                                }),
-                        ),
+                    v_flex().gap_2().child(Input::new(&jvm_flags_input)).child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new(format!("save-jvm-flags-{handle}"))
+                                    .label(t::instances::set_flags())
+                                    .on_click({
+                                        let input = jvm_flags_input.clone();
+                                        let sender = sender.clone();
+                                        let handle = handle.clone();
+                                        move |_, _, cx| {
+                                            let value = input.read(cx).value().to_string();
+                                            sender.send(MessageToBackend::SetInstanceJvmFlags {
+                                                instance: handle.clone(),
+                                                flags: Some(value),
+                                            });
+                                        }
+                                    }),
+                            )
+                            .child(
+                                Button::new(format!("clear-jvm-flags-{handle}"))
+                                    .label(t::common::default())
+                                    .on_click({
+                                        let sender = sender.clone();
+                                        let handle = handle.clone();
+                                        move |_, _, _| {
+                                            sender.send(MessageToBackend::SetInstanceJvmFlags {
+                                                instance: handle.clone(),
+                                                flags: None,
+                                            });
+                                        }
+                                    }),
+                            ),
+                    ),
                 ),
         )
         .child(java_section(
@@ -2111,91 +2113,77 @@ fn java_section(
                 )
             })
             .child(
-                h_flex().gap_2().child(Input::new(&java_path_input)).child(
-                    Button::new(format!("java-set-{handle}"))
-                        .label(t::instances::set_java_path())
-                        .on_click({
-                            let input = java_path_input.clone();
-                            let sender = sender.clone();
-                            let handle = handle.clone();
-                            move |_, _, cx| {
-                                let value = input.read(cx).value().trim().to_string();
-                                if !value.is_empty() {
-                                    sender.send(MessageToBackend::SetInstanceJavaPath {
-                                        instance: handle.clone(),
-                                        path: Some(value),
-                                    });
-                                }
-                            }
-                        }),
-                ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new(format!("java-find-{handle}"))
-                            .label(t::instances::java_find())
-                            .on_click({
-                                let sender = sender.clone();
-                                let handle = handle.clone();
-                                cx.listener(move |page, _, _, cx| {
-                                    page.data.java_resolve.update(cx, |cache, cx| {
-                                        cache.set_resolving(handle.clone(), cx);
-                                    });
-                                    sender.send(MessageToBackend::ResolveJavaPath(handle.clone()));
-                                })
-                            }),
-                    )
-                    .child(
-                        Button::new(format!("java-clear-{handle}"))
-                            .label(t::instances::java_clear())
-                            .disabled(instance.java_path.is_none())
-                            .on_click({
-                                let sender = sender.clone();
-                                let input = java_path_input.clone();
-                                let handle = handle.clone();
-                                cx.listener(move |_, _, window, cx| {
-                                    input.update(cx, |state, cx| {
-                                        state.set_value(String::new(), window, cx)
-                                    });
-                                    sender.send(MessageToBackend::SetInstanceJavaPath {
-                                        instance: handle.clone(),
-                                        path: None,
-                                    });
-                                })
-                            }),
-                    )
-                    .child(
-                        Button::new(format!("java-browse-{handle}"))
-                            .label(t::instances::java_browse())
-                            .on_click({
-                                let sender = sender.clone();
-                                let handle = handle.clone();
-                                cx.listener(move |_, _, _window, cx| {
-                                    let receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-                                        files: true,
-                                        directories: false,
-                                        multiple: false,
-                                        prompt: None,
-                                    });
+                v_flex().gap_2().child(Input::new(&java_path_input)).child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new(format!("java-set-{handle}"))
+                                .label(t::instances::set_java_path())
+                                .on_click({
+                                    let input = java_path_input.clone();
                                     let sender = sender.clone();
                                     let handle = handle.clone();
-                                    cx.spawn(async move |_, _cx| {
-                                        if let Ok(Ok(Some(paths))) = receiver.await
-                                            && let Some(path) = paths.into_iter().next()
-                                        {
-                                            let path_str = path.to_string_lossy().to_string();
+                                    move |_, _, cx| {
+                                        let value = input.read(cx).value().trim().to_string();
+                                        if !value.is_empty() {
                                             sender.send(MessageToBackend::SetInstanceJavaPath {
                                                 instance: handle.clone(),
-                                                path: Some(path_str),
+                                                path: Some(value),
                                             });
                                         }
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new(format!("java-find-{handle}"))
+                                .label(t::instances::java_find())
+                                .on_click({
+                                    let sender = sender.clone();
+                                    let handle = handle.clone();
+                                    cx.listener(move |page, _, _, cx| {
+                                        page.data.java_resolve.update(cx, |cache, cx| {
+                                            cache.set_resolving(handle.clone(), cx);
+                                        });
+                                        sender.send(MessageToBackend::ResolveJavaPath(
+                                            handle.clone(),
+                                        ));
                                     })
-                                    .detach();
-                                })
-                            }),
-                    ),
+                                }),
+                        )
+                        .child(
+                            Button::new(format!("java-browse-{handle}"))
+                                .label(t::instances::java_browse())
+                                .on_click({
+                                    let sender = sender.clone();
+                                    let handle = handle.clone();
+                                    cx.listener(move |_, _, _window, cx| {
+                                        let receiver =
+                                            cx.prompt_for_paths(gpui::PathPromptOptions {
+                                                files: true,
+                                                directories: false,
+                                                multiple: false,
+                                                prompt: None,
+                                            });
+                                        let sender = sender.clone();
+                                        let handle = handle.clone();
+                                        cx.spawn(async move |_, _cx| {
+                                            if let Ok(Ok(Some(paths))) = receiver.await
+                                                && let Some(path) = paths.into_iter().next()
+                                            {
+                                                let path_str = path.to_string_lossy().to_string();
+                                                sender.send(
+                                                    MessageToBackend::SetInstanceJavaPath {
+                                                        instance: handle.clone(),
+                                                        path: Some(path_str),
+                                                    },
+                                                );
+                                            }
+                                        })
+                                        .detach();
+                                    })
+                                }),
+                        ),
+                ),
             )
             .when_some(resolve_state, |this, state| {
                 use crate::entity::java_resolve::JavaResolveState;
@@ -2227,7 +2215,12 @@ fn optional_mods_section(
     cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
     let handle = instance.handle.clone();
-    let syncing = matches!(instance.status, InstanceLiveStatus::Installing { .. });
+    let mods_locked = matches!(
+        instance.status,
+        InstanceLiveStatus::Installing { .. }
+            | InstanceLiveStatus::Launching
+            | InstanceLiveStatus::Running
+    );
     v_flex()
         .gap_2()
         .child(
@@ -2243,7 +2236,7 @@ fn optional_mods_section(
             let checkbox_id = format!("optional-mod-set-{handle}-{set_id}");
             Checkbox::new(checkbox_id)
                 .checked(enabled)
-                .disabled(syncing)
+                .disabled(mods_locked)
                 .label(display_name)
                 .on_click({
                     let sender = sender.clone();
