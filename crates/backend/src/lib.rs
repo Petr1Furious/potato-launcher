@@ -1109,9 +1109,10 @@ impl BackendState {
         let cancel_token = cancel.clone();
         self.add_account_cancel = Some(cancel);
         let auth_prompt = Arc::new(AuthPromptReporter::new(tx));
+        let client = self.client.clone();
         let task = tokio::spawn(async move {
             let result = tokio::select! {
-                result = perform_auth(None, provider.clone(), auth_prompt) => {
+                result = perform_auth(&client, None, provider.clone(), auth_prompt) => {
                     Some(
                         result
                             .map(|account| (provider, account))
@@ -1814,6 +1815,7 @@ impl BackendState {
         let jvm_flags = settings.jvm_flags.clone();
         let use_native_glfw = settings.use_native_glfw;
         let launcher_dir = self.launcher_dir.clone();
+        let client = self.client.clone();
         let local_instances = self.instance_storage.all().to_vec();
         let account_entries = self.launch_accounts();
         let frontend = tx.clone();
@@ -1868,6 +1870,7 @@ impl BackendState {
                     java,
                     use_native_glfw,
                     launcher_dir,
+                    client,
                     local_instances,
                     account_entries,
                     frontend,

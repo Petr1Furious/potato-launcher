@@ -428,6 +428,7 @@ pub mod instances {
             "add_account" => Some(add_account()),
             "add_account_card" => Some(add_account_card()),
             "any_provider" => Some(any_provider()),
+            "choose_account" => Some(choose_account()),
             "confirm_delete" => Some(confirm_delete()),
             "confirm_delete_hint" => Some(confirm_delete_hint()),
             "delete" => Some(delete()),
@@ -501,6 +502,12 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Любой провайдер",
             _ => "Any provider",
+        }
+    }
+    pub fn choose_account() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Выберите аккаунт",
+            _ => "Choose an account",
         }
     }
     pub fn confirm_delete() -> &'static str {
@@ -998,6 +1005,7 @@ pub mod notifications {
             "java_path_cleared" => Some(java_path_cleared()),
             "java_path_install_in_progress" => Some(java_path_install_in_progress()),
             "java_path_set" => Some(java_path_set()),
+            "launch_auth_offline_fallback" => Some(launch_auth_offline_fallback()),
             "local_instance_loader_version_required" => {
                 Some(local_instance_loader_version_required())
             }
@@ -1261,6 +1269,14 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Путь к Java задан",
             _ => "Java path set",
+        }
+    }
+    pub fn launch_auth_offline_fallback() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => {
+                "Не удалось связаться с сервером аутентификации. Запуск с сохранёнными данными аккаунта."
+            }
+            _ => "Could not reach the auth server. Launching with saved account data instead.",
         }
     }
     pub fn launch_failed(error: String) -> String {

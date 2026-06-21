@@ -46,8 +46,8 @@ impl TelegramAuthError {
 }
 
 impl TGAuthProvider {
-    async fn get_bot_name(&self) -> Result<String, TelegramAuthError> {
-        let bot_info: BotInfo = Client::new()
+    async fn get_bot_name(&self, client: &Client) -> Result<String, TelegramAuthError> {
+        let bot_info: BotInfo = client
             .get(format!("{}/info", self.auth_base_url))
             .send()
             .await?
@@ -76,10 +76,10 @@ struct LoginPollResponse {
 impl AuthProvider for TGAuthProvider {
     async fn authenticate(
         &self,
+        client: &Client,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
     ) -> Result<AuthState, AuthProviderError> {
-        let client = Client::new();
-        let bot_name = self.get_bot_name().await?;
+        let bot_name = self.get_bot_name(client).await?;
         let start_resp: LoginStartResponse = client
             .post(format!("{}/login/start", self.auth_base_url))
             .send()
@@ -130,12 +130,16 @@ impl AuthProvider for TGAuthProvider {
         }))
     }
 
-    async fn refresh(&self, _: String) -> Result<AuthState, AuthProviderError> {
+    async fn refresh(&self, _client: &Client, _: String) -> Result<AuthState, AuthProviderError> {
         Ok(AuthState::Auth)
     }
 
-    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError> {
-        let resp: UserInfo = Client::new()
+    async fn get_user_info(
+        &self,
+        client: &Client,
+        token: &str,
+    ) -> Result<AuthState, AuthProviderError> {
+        let resp: UserInfo = client
             .get(format!("{}/login/profile", self.auth_base_url))
             .header("Authorization", format!("Bearer {token}"))
             .send()

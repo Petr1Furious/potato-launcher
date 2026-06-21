@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::warn;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -50,6 +51,10 @@ impl AuthProviderError {
             AuthProviderError::ElyBy(err) => err.is_timeout(),
         }
     }
+
+    pub fn is_network_error(&self) -> bool {
+        self.is_connect_error() || self.is_timeout()
+    }
 }
 
 /// All methods here should be stateless
@@ -57,12 +62,21 @@ impl AuthProviderError {
 pub trait AuthProvider {
     async fn authenticate(
         &self,
+        client: &Client,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
     ) -> Result<AuthState, AuthProviderError>;
 
-    async fn refresh(&self, refresh_token: String) -> Result<AuthState, AuthProviderError>;
+    async fn refresh(
+        &self,
+        client: &Client,
+        refresh_token: String,
+    ) -> Result<AuthState, AuthProviderError>;
 
-    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError>;
+    async fn get_user_info(
+        &self,
+        client: &Client,
+        token: &str,
+    ) -> Result<AuthState, AuthProviderError>;
 
     fn get_injector_url(&self) -> Option<String>;
 }

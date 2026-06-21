@@ -16,7 +16,7 @@ use launcher_auth::{
     providers::{AuthProviderConfig, OfflineAuthProvider},
     storage::{AccountKey, StorageAccountEntry},
 };
-use launcher_bridge::{AuthPromptContext, FrontendSender, MessageToFrontend};
+use launcher_bridge::{AuthPromptContext, FrontendSender, MessageToFrontend, NotificationLevel};
 use launcher_build_config::{launcher_name, use_native_glfw_default, version};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
@@ -62,6 +62,7 @@ pub(crate) struct LaunchRequest {
     pub(crate) java: java::JavaInstallation,
     pub(crate) use_native_glfw: Option<bool>,
     pub(crate) launcher_dir: PathBuf,
+    pub(crate) client: reqwest::Client,
     pub(crate) local_instances: Vec<LocalInstance>,
     pub(crate) account_entries: Vec<(AccountKey, AuthProviderConfig, AccountData)>,
     pub(crate) frontend: FrontendSender,
@@ -149,21 +150,40 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         required_provider.as_ref(),
         &request.account_entries,
     )?;
-    let online = !matches!(provider, AuthProviderConfig::Offline(_));
     let original_account_data = account_data.clone();
-    let account_data = if online {
-        perform_auth(
+    let auth_messages = Arc::new(LaunchAuthMessages::new(
+        request.frontend.clone(),
+        request.handle.clone(),
+        request.internal.clone(),
+    ));
+    let (account_data, online) = if is_offline_provider(&provider) {
+        (account_data, false)
+    } else {
+        match perform_auth(
+            &request.client,
             Some(account_data),
             provider.clone(),
-            Arc::new(LaunchAuthMessages::new(
-                request.frontend.clone(),
-                request.handle.clone(),
-                request.internal.clone(),
-            )),
+            auth_messages.clone(),
         )
-        .await?
-    } else {
-        account_data
+        .await
+        {
+            Ok(data) => (data, true),
+            Err(err) if err.is_network_error() => {
+                log::warn!(
+                    "Online auth for instance {} failed due to network error; falling back to stored account data: {err:#}",
+                    request.handle
+                );
+                auth_messages.clear().await;
+                request.frontend.send(MessageToFrontend::Notification {
+                    level: NotificationLevel::Warning,
+                    message: Arc::from(
+                        launcher_i18n::notifications::launch_auth_offline_fallback(),
+                    ),
+                });
+                (original_account_data.clone(), false)
+            }
+            Err(err) => return Err(LaunchError::Auth(err)),
+        }
     };
     let refreshed_account =
         (account_data != original_account_data).then(|| (provider.clone(), account_data.clone()));
@@ -438,6 +458,10 @@ pub(crate) async fn read_metadata(
     Ok(InstanceMetadata::read_local(instance_dir).await?)
 }
 
+fn is_offline_provider(provider: &AuthProviderConfig) -> bool {
+    matches!(provider, AuthProviderConfig::Offline(_))
+}
+
 pub(crate) fn stored_account_if_valid(
     key: &Option<AccountKey>,
     accounts: &[(AccountKey, AuthProviderConfig, AccountData)],
@@ -623,6 +647,18 @@ mod tests {
 
         assert_eq!(actual_provider, required);
         assert_eq!(actual_account, account);
+    }
+
+    #[test]
+    fn offline_provider_is_detected() {
+        use launcher_auth::providers::MicrosoftAuthProvider;
+
+        assert!(is_offline_provider(&AuthProviderConfig::Offline(
+            OfflineAuthProvider {}
+        )));
+        assert!(!is_offline_provider(&AuthProviderConfig::Microsoft(
+            MicrosoftAuthProvider {}
+        )));
     }
 
     #[test]

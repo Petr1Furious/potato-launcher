@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use reqwest::Client;
 
 use crate::{
     providers::{AuthProviderConfig, AuthProviderError},
@@ -46,6 +47,10 @@ impl PerformAuthError {
     pub fn is_timeout(&self) -> bool {
         matches!(self, Self::AuthProvider(err) if err.is_timeout())
     }
+
+    pub fn is_network_error(&self) -> bool {
+        self.is_connect_error() || self.is_timeout()
+    }
 }
 
 #[async_trait]
@@ -59,6 +64,7 @@ pub trait AuthMessageProvider {
 }
 
 pub async fn perform_auth(
+    client: &Client,
     account_data: Option<AccountData>,
     auth_provider: AuthProviderConfig,
     auth_message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
@@ -76,7 +82,7 @@ pub async fn perform_auth(
         match auth_state {
             AuthState::Auth => {
                 auth_state = auth_provider
-                    .authenticate(auth_message_provider.clone())
+                    .authenticate(client, auth_message_provider.clone())
                     .await?;
             }
 
@@ -85,7 +91,7 @@ pub async fn perform_auth(
                     .as_ref()
                     .and_then(|data| data.refresh_token.clone());
                 auth_state = match refresh_token {
-                    Some(refresh_token) => auth_provider.refresh(refresh_token).await?,
+                    Some(refresh_token) => auth_provider.refresh(client, refresh_token).await?,
                     None => AuthState::Auth,
                 };
             }
@@ -93,7 +99,7 @@ pub async fn perform_auth(
             AuthState::UserInfo(data) => {
                 auth_result_data = Some(data.clone());
                 auth_state = auth_provider
-                    .get_user_info(&data.access_token)
+                    .get_user_info(client, &data.access_token)
                     .await
                     .or_else(|e| {
                         if e.is_client_error() {

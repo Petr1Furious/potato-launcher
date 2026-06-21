@@ -298,6 +298,10 @@ ru = "Опциональные моды"
 en = "Choose which optional mods to install for this instance."
 ru = "Выберите, какие опциональные моды устанавливать для этого инстанса."
 
+[instances.choose_account]
+en = "Choose an account"
+ru = "Выберите аккаунт"
+
 [instances.java_install_required]
 en = "Wait for the local install to finish before configuring Java."
 ru = "Дождитесь завершения локальной установки, чтобы настроить Java."
@@ -729,6 +733,10 @@ ru = "Не удалось сохранить аккаунт: ${error: String}"
 [notifications.authentication_failed]
 en = "Authentication failed: ${error: String}"
 ru = "Ошибка авторизации: ${error: String}"
+
+[notifications.launch_auth_offline_fallback]
+en = "Could not reach the auth server. Launching with saved account data instead."
+ru = "Не удалось связаться с сервером аутентификации. Запуск с сохранёнными данными аккаунта."
 
 [notifications.authentication_cancelled]
 en = "Authentication cancelled"

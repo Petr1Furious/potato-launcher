@@ -135,11 +135,12 @@ async fn get_ms_token(
 impl AuthProvider for MicrosoftAuthProvider {
     async fn authenticate(
         &self,
+        client: &Client,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
     ) -> Result<AuthState, AuthProviderError> {
         let ms_token = get_ms_token(message_provider.clone()).await?;
         message_provider.clear().await;
-        let mc_flow = MinecraftAuthorizationFlow::new(Client::new());
+        let mc_flow = MinecraftAuthorizationFlow::new(client.clone());
         let mc_token = mc_flow
             .exchange_microsoft_token(ms_token.access_token)
             .await
@@ -158,7 +159,11 @@ impl AuthProvider for MicrosoftAuthProvider {
         }))
     }
 
-    async fn refresh(&self, refresh_token: String) -> Result<AuthState, AuthProviderError> {
+    async fn refresh(
+        &self,
+        client: &Client,
+        refresh_token: String,
+    ) -> Result<AuthState, AuthProviderError> {
         let oauth_client = get_oauth_client()?;
         let token_response = oauth_client
             .exchange_refresh_token(&RefreshToken::new(refresh_token))
@@ -167,7 +172,7 @@ impl AuthProvider for MicrosoftAuthProvider {
             .await
             .map_err(|e| MicrosoftAuthError::TokenExchange(e.to_string()))?;
 
-        let mc_flow = MinecraftAuthorizationFlow::new(Client::new());
+        let mc_flow = MinecraftAuthorizationFlow::new(client.clone());
         let mc_token = mc_flow
             .exchange_microsoft_token(token_response.access_token().secret().to_string())
             .await
@@ -184,8 +189,11 @@ impl AuthProvider for MicrosoftAuthProvider {
         }))
     }
 
-    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError> {
-        let client = Client::new();
+    async fn get_user_info(
+        &self,
+        client: &Client,
+        token: &str,
+    ) -> Result<AuthState, AuthProviderError> {
         let resp: MinecraftProfileResponse = client
             .get("https://api.minecraftservices.com/minecraft/profile")
             .header("Authorization", format!("Bearer {token}"))

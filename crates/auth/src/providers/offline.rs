@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -17,6 +18,7 @@ pub struct OfflineAuthProvider {}
 impl AuthProvider for OfflineAuthProvider {
     async fn authenticate(
         &self,
+        _client: &Client,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
     ) -> Result<AuthState, AuthProviderError> {
         Ok(AuthState::UserInfo(AuthResultData {
@@ -25,11 +27,15 @@ impl AuthProvider for OfflineAuthProvider {
         }))
     }
 
-    async fn refresh(&self, _: String) -> Result<AuthState, AuthProviderError> {
+    async fn refresh(&self, _client: &Client, _: String) -> Result<AuthState, AuthProviderError> {
         Ok(AuthState::Auth)
     }
 
-    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError> {
+    async fn get_user_info(
+        &self,
+        _client: &Client,
+        token: &str,
+    ) -> Result<AuthState, AuthProviderError> {
         let nickname = token;
         let namespace = Uuid::NAMESPACE_DNS;
         let generated_uuid = Uuid::new_v3(&namespace, nickname.as_bytes());

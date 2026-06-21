@@ -100,12 +100,12 @@ struct AuthQuery {
 }
 
 async fn exchange_code(
+    client: &Client,
     client_id: &str,
     client_secret: &str,
     code: &str,
     redirect_uri: &str,
 ) -> Result<String, ExchangeCodeError> {
-    let client = Client::new();
     let resp = client
         .post("https://account.ely.by/api/oauth2/v1/token")
         .form(&[
@@ -169,6 +169,7 @@ impl ElyByAuthProvider {
 
     async fn handle_request(
         &self,
+        client: Client,
         redirect_uri: String,
         req: Request<hyper::body::Incoming>,
         token_tx: Box<mpsc::UnboundedSender<TokenResult>>,
@@ -180,6 +181,7 @@ impl ElyByAuthProvider {
         let auth_query: AuthQuery = serde_urlencoded::from_str(query)?;
 
         let token_result = match exchange_code(
+            &client,
             &self.client_id,
             &self.client_secret,
             &auth_query.code,
@@ -223,6 +225,7 @@ impl ElyByAuthProvider {
 impl AuthProvider for ElyByAuthProvider {
     async fn authenticate(
         &self,
+        client: &Client,
         message_provider: Arc<dyn AuthMessageProvider + Send + Sync>,
     ) -> Result<AuthState, AuthProviderError> {
         let addr = SocketAddr::from(([127, 0, 0, 1], 0));
@@ -239,6 +242,7 @@ impl AuthProvider for ElyByAuthProvider {
         );
         self.print_auth_url(&redirect_uri, message_provider).await;
 
+        let http_client = client.clone();
         let mut http = http1::Builder::new();
         http.keep_alive(false);
 
@@ -263,7 +267,8 @@ impl AuthProvider for ElyByAuthProvider {
                 io,
                 service_fn(|req: Request<hyper::body::Incoming>| {
                     let token_tx = token_tx.clone();
-                    self.handle_request(redirect_uri.clone(), req, token_tx)
+                    let client = http_client.clone();
+                    self.handle_request(client, redirect_uri.clone(), req, token_tx)
                 }),
             )
             .await
@@ -286,12 +291,15 @@ impl AuthProvider for ElyByAuthProvider {
         }
     }
 
-    async fn refresh(&self, _: String) -> Result<AuthState, AuthProviderError> {
+    async fn refresh(&self, _client: &Client, _: String) -> Result<AuthState, AuthProviderError> {
         Ok(AuthState::Auth)
     }
 
-    async fn get_user_info(&self, token: &str) -> Result<AuthState, AuthProviderError> {
-        let client = Client::new();
+    async fn get_user_info(
+        &self,
+        client: &Client,
+        token: &str,
+    ) -> Result<AuthState, AuthProviderError> {
         let resp: UserInfo = client
             .get("https://account.ely.by/api/account/v1/info")
             .header("Authorization", format!("Bearer {token}"))
