@@ -80,6 +80,17 @@ impl BackendProgressReporter {
                 size: 1,
             })
     }
+
+    pub fn set_status(&self, stage: ProgressStage, message: impl Into<String>) {
+        self.event(ProgressEvent {
+            stage,
+            message: Some(message.into()),
+            current: 0,
+            total: 0,
+            unit: None,
+            finished: false,
+        });
+    }
 }
 
 impl ProgressReporter for BackendProgressReporter {
@@ -767,6 +778,10 @@ pub(crate) async fn install_game_files(
 ) -> anyhow::Result<()> {
     let action = install_action_label(params.cause, params.force_overwrite);
     let instance = instance_dir_name(&params.instance_dir);
+    progress.set_status(
+        ProgressStage::Checking,
+        launcher_i18n::progress::collecting_install_tasks(),
+    );
     let install_tasks = metadata.get_all_install_tasks(client, params).await?;
 
     if !install_tasks.mod_warnings.is_empty() {
@@ -794,10 +809,14 @@ pub(crate) async fn install_game_files(
         files::get_download_tasks(install_tasks.tasks.check_tasks, check_progress).await?;
     files::log_download_tasks(action, &instance, check_count, &download_tasks);
 
-    let download_progress = progress.handle(
-        ProgressStage::Downloading,
-        launcher_i18n::progress::downloading_install_files(),
-    );
+    let download_progress = if download_tasks.is_empty() {
+        ProgressHandle::new(progress.clone(), ProgressStage::Downloading)
+    } else {
+        progress.handle(
+            ProgressStage::Downloading,
+            launcher_i18n::progress::downloading_install_files(),
+        )
+    };
     adaptive_download::download_files(download_tasks, download_progress).await?;
 
     enable_optional_mods(install_tasks.tasks.enable_optional_mod_tasks).await?;

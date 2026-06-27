@@ -1409,6 +1409,7 @@ pub mod progress {
             "checking_files" => Some(checking_files()),
             "checking_install_files" => Some(checking_install_files()),
             "checking_java" => Some(checking_java()),
+            "collecting_install_tasks" => Some(collecting_install_tasks()),
             "copying_files" => Some(copying_files()),
             "downloading_files" => Some(downloading_files()),
             "downloading_install_files" => Some(downloading_install_files()),
@@ -1440,6 +1441,12 @@ pub mod progress {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Проверка Java",
             _ => "Checking Java",
+        }
+    }
+    pub fn collecting_install_tasks() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Подготовка к установке",
+            _ => "Preparing to install",
         }
     }
     pub fn copying_files() -> &'static str {

@@ -598,6 +598,10 @@ ru = "Синхронизация опциональных модов..."
 en = "Checking install files"
 ru = "Проверка файлов установки"
 
+[progress.collecting_install_tasks]
+en = "Preparing to install"
+ru = "Подготовка к установке"
+
 [progress.downloading_install_files]
 en = "Downloading install files"
 ru = "Загрузка файлов установки"
