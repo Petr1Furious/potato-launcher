@@ -1492,8 +1492,10 @@ impl BackendState {
         enabled: bool,
         tx: &FrontendSender,
     ) {
-        if self.launch_after_install.contains_key(&instance) {
-            self.launch_after_install.insert(instance, enabled);
+        if let std::collections::hash_map::Entry::Occupied(mut e) =
+            self.launch_after_install.entry(instance)
+        {
+            e.insert(enabled);
             self.emit_snapshot(tx);
         }
     }
