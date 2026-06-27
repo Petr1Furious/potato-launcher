@@ -382,7 +382,6 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
     views.sort_by(|a, b| {
         section_key(a)
             .cmp(&section_key(b))
-            .then_with(|| a.display_name.cmp(&b.display_name))
             .then_with(|| a.dir_name.cmp(&b.dir_name))
             .then_with(|| a.handle.cmp(&b.handle))
     });

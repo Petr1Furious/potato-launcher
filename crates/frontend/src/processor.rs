@@ -1,6 +1,6 @@
 use gpui::App;
 use launcher_bridge::{ExitOutcome, MessageToFrontend, NotificationLevel};
-use launcher_i18n::{self as t, set_lang};
+use launcher_i18n::set_lang;
 
 use crate::{
     entity::{DataEntities, instance::InstanceProgressUpdate},
@@ -80,28 +80,12 @@ impl Processor {
                 }
                 ExitOutcome::ExitCode(code) => {
                     log::warn!("Instance {instance} exited with code {code}");
-                    let message = t::notifications::minecraft_exited_with_code(code);
-                    self.data.notifications.update(cx, |entries, cx| {
-                        entries.push(
-                            NotificationLevel::Error,
-                            short_notification_text(&message),
-                            cx,
-                        )
-                    });
                 }
                 ExitOutcome::Terminated => {
                     log::info!("Instance {instance} was terminated");
                 }
                 ExitOutcome::Error(error) => {
                     log::error!("Instance {instance} failed to launch: {error}");
-                    let message = t::notifications::launch_failed(error.to_string());
-                    self.data.notifications.update(cx, |entries, cx| {
-                        entries.push(
-                            NotificationLevel::Error,
-                            short_notification_text(&message),
-                            cx,
-                        )
-                    });
                 }
             },
             MessageToFrontend::LocalCreateVersionsUpdated {

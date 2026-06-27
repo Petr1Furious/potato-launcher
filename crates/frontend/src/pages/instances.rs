@@ -1843,6 +1843,7 @@ fn account_detail_sections(
 
     let mut sections = Vec::new();
     let required_provider_for_add = required_provider.clone();
+    let sender_for_add = sender.clone();
     sections.push(detail_section(
         t::accounts::account_section(),
         v_flex()
@@ -1855,25 +1856,22 @@ fn account_detail_sections(
                         required_provider,
                     ))),
             )
-            .when(matching_accounts.is_empty(), |this| {
-                let sender = sender.clone();
-                this.child(
-                    Button::new(format!("add-required-account-{}", instance.handle))
-                        .label(t::instances::add_account())
-                        .on_click(cx.listener(move |page, _, _, cx| {
-                            start_add_required_account(
-                                &required_provider_for_add,
-                                &sender,
-                                &page.offline_nickname_input,
-                                cx,
-                            );
-                        })),
-                )
-            })
             .children(
                 matching_accounts.into_iter().map(|account| {
                     account_select_row(instance, account, sender.clone(), false, cx)
                 }),
+            )
+            .child(
+                Button::new(format!("add-required-account-{}", instance.handle))
+                    .label(t::instances::add_account())
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        start_add_required_account(
+                            &required_provider_for_add,
+                            &sender_for_add,
+                            &page.offline_nickname_input,
+                            cx,
+                        );
+                    })),
             ),
         cx,
     ));
@@ -2982,9 +2980,7 @@ fn action_section(
 
 fn status_error(status: &InstanceLiveStatus) -> Option<String> {
     match status {
-        InstanceLiveStatus::InstallFailed(error) | InstanceLiveStatus::LaunchFailed(error) => {
-            Some(error.to_string())
-        }
+        InstanceLiveStatus::InstallFailed(error) => Some(error.to_string()),
         _ => None,
     }
 }
@@ -3104,7 +3100,7 @@ fn status_label(instance: &InstanceView) -> String {
         InstanceLiveStatus::InstallFailed(_) => t::instances::status_failed().to_string(),
         InstanceLiveStatus::Launching => t::instances::launching().to_string(),
         InstanceLiveStatus::Running => t::instances::status_running().to_string(),
-        InstanceLiveStatus::LaunchFailed(_) => t::instances::status_launch_failed().to_string(),
+        InstanceLiveStatus::LaunchFailed(error) => error.to_string(),
         InstanceLiveStatus::OrphanedFromBackend => t::instances::status_orphaned().to_string(),
     };
     if instance.launch_blocked_reason.is_some()

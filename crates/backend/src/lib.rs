@@ -1978,7 +1978,12 @@ impl BackendState {
                 );
             }
             launcher_bridge::ExitOutcome::Error(error) => {
-                self.launch_errors.insert(handle.clone(), error.clone());
+                self.launch_errors.insert(
+                    handle.clone(),
+                    Arc::from(launcher_i18n::notifications::launch_failed(
+                        error.to_string(),
+                    )),
+                );
             }
         }
         tx.send(MessageToFrontend::LaunchFinished {
