@@ -1487,7 +1487,6 @@ fn instance_card(
     let orphaned = instance.is_orphaned();
     let installed = instance.locally_installed;
     let status = status_label(&instance);
-    let progress = progress_ratio(&instance.status);
     let action = action_button(instance.clone(), sender, cx);
     let details_handle = instance.handle.clone();
     let show_dir_name = instance.dir_name.as_ref() != instance.display_name.as_ref();
@@ -1551,15 +1550,7 @@ fn instance_card(
             this.child(account_summary(&instance, cx))
         })
         .child(status_badge(&instance, orphaned, status, cx))
-        .child(progress_slot(progress, cx))
         .child(card_actions(action, settings))
-}
-
-fn progress_slot(value: Option<f32>, cx: &mut Context<InstancesPage>) -> gpui::Div {
-    div()
-        .w_full()
-        .h(px(6.0))
-        .when_some(value, |this, value| this.child(progress_bar(value, cx)))
 }
 
 fn account_summary(instance: &InstanceView, cx: &mut Context<InstancesPage>) -> gpui::Div {
@@ -1599,25 +1590,26 @@ fn account_summary(instance: &InstanceView, cx: &mut Context<InstancesPage>) -> 
         )
 }
 
-fn status_badge(
+fn status_badge_color(
     instance: &InstanceView,
     orphaned: bool,
-    status: String,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui::Hsla {
     let is_error = matches!(
         instance.status,
         InstanceLiveStatus::InstallFailed(_) | InstanceLiveStatus::LaunchFailed(_)
     );
     let is_blocked = instance.launch_blocked_reason.is_some();
-    let color = if orphaned || is_error {
+    if orphaned || is_error {
         cx.theme().red.opacity(0.16)
     } else if is_blocked {
         cx.theme().yellow.opacity(0.18)
     } else {
         cx.theme().muted
-    };
+    }
+}
 
+fn status_badge_solid(status: String, color: gpui::Hsla, radius: gpui::Pixels) -> gpui::Div {
     div()
         .w_full()
         .min_h_8()
@@ -1626,9 +1618,72 @@ fn status_badge(
         .justify_center()
         .px_2()
         .py_1()
-        .rounded(cx.theme().radius)
+        .rounded(radius)
         .bg(color)
-        .child(div().text_xs().text_center().line_clamp(2).child(status))
+        .child(
+            div()
+                .relative()
+                .text_xs()
+                .text_center()
+                .line_clamp(2)
+                .child(status),
+        )
+}
+
+fn status_badge(
+    instance: &InstanceView,
+    orphaned: bool,
+    status: String,
+    cx: &mut Context<InstancesPage>,
+) -> gpui::Div {
+    let color = status_badge_color(instance, orphaned, cx);
+    let radius = cx.theme().radius;
+
+    let Some(fill) = status_progress_fill(&instance.status) else {
+        return status_badge_solid(status, color, radius);
+    };
+
+    if fill >= 1.0 {
+        return status_badge_solid(status, color, radius);
+    }
+
+    div()
+        .w_full()
+        .min_h_8()
+        .relative()
+        .overflow_hidden()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px_2()
+        .py_1()
+        .rounded(radius)
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .h_full()
+                .w(relative(fill))
+                .rounded(radius)
+                .bg(color),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .rounded(radius)
+                .border_1()
+                .border_color(color),
+        )
+        .child(
+            div()
+                .relative()
+                .text_xs()
+                .text_center()
+                .line_clamp(2)
+                .child(status),
+        )
 }
 
 fn start_add_required_account(
@@ -3118,22 +3173,28 @@ fn status_label(instance: &InstanceView) -> String {
     }
 }
 
-fn progress_ratio(status: &InstanceLiveStatus) -> Option<f32> {
-    let InstanceLiveStatus::Installing {
-        current,
-        total,
-        show_bar,
-        ..
-    } = status
-    else {
-        return None;
-    };
-    if !*show_bar || *total <= 1 {
-        None
-    } else {
-        let current = (*current).min(*total);
-        Some((current as f32 / *total as f32).clamp(0.0, 1.0))
+fn status_progress_fill(status: &InstanceLiveStatus) -> Option<f32> {
+    match status {
+        InstanceLiveStatus::Launching => Some(0.0),
+        InstanceLiveStatus::Installing {
+            current,
+            total,
+            show_bar,
+            ..
+        } => {
+            if !*show_bar || *total <= 1 {
+                Some(0.0)
+            } else {
+                let current = (*current).min(*total);
+                Some((current as f32 / *total as f32).clamp(0.0, 1.0))
+            }
+        }
+        _ => None,
     }
+}
+
+fn progress_ratio(status: &InstanceLiveStatus) -> Option<f32> {
+    status_progress_fill(status).filter(|&fill| fill > 0.0)
 }
 
 #[allow(dead_code)]
