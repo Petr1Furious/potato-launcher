@@ -176,7 +176,7 @@ async fn collect_mod_entries(
         let mod_id = match utils::mod_id::extract_mod_id(&path) {
             Ok(Some(mod_id)) => mod_id,
             Ok(None) => {
-                warn!("Skipping mod jar without mod id: {}", path.display());
+                warn!("Skipping {}, failed to extract mod id", path.display());
                 continue;
             }
             Err(err) => {

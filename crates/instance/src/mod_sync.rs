@@ -430,7 +430,7 @@ fn scan_local_mods(mods_dir: &Path) -> Result<HashMap<String, Vec<PathBuf>>, Mod
         }
         match utils::mod_id::extract_mod_id(&path) {
             Ok(Some(mod_id)) => mods.entry(mod_id).or_default().push(path),
-            Ok(None) => log::debug!("Skipping jar without mod id: {}", path.display()),
+            Ok(None) => log::warn!("Skipping {}, failed to extract mod id", path.display()),
             Err(err) => log::warn!("Failed to read mod id from {}: {err:#}", path.display()),
         }
     }
