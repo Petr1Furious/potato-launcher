@@ -138,6 +138,10 @@ ru = "Играть"
 en = "Play Again"
 ru = "Играть снова"
 
+[instances.launch_after_install]
+en = "Launch after install"
+ru = "Запустить после установки"
+
 [instances.launching]
 en = "Launching"
 ru = "Запуск"

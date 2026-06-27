@@ -1487,7 +1487,7 @@ fn instance_card(
     let orphaned = instance.is_orphaned();
     let installed = instance.locally_installed;
     let status = status_label(&instance);
-    let action = action_button(instance.clone(), sender, cx);
+    let action = action_button(instance.clone(), sender.clone(), cx);
     let details_handle = instance.handle.clone();
     let show_dir_name = instance.dir_name.as_ref() != instance.display_name.as_ref();
     let settings = Button::new(format!("settings-{details_handle}"))
@@ -1550,7 +1550,35 @@ fn instance_card(
             this.child(account_summary(&instance, cx))
         })
         .child(status_badge(&instance, orphaned, status, cx))
+        .child(install_options_slot(&instance, sender.clone()))
         .child(card_actions(action, settings))
+}
+
+const INSTALL_OPTIONS_SLOT_HEIGHT: f32 = 20.0;
+
+fn install_options_slot(instance: &InstanceView, sender: BackendSender) -> gpui::Div {
+    div()
+        .w_full()
+        .h(px(INSTALL_OPTIONS_SLOT_HEIGHT))
+        .flex()
+        .items_center()
+        .when_some(instance.launch_after_install, |this, enabled| {
+            let handle = instance.handle.clone();
+            this.child(
+                Checkbox::new(format!("launch-after-install-{handle}"))
+                    .checked(enabled)
+                    .label(t::instances::launch_after_install())
+                    .on_click({
+                        let sender = sender.clone();
+                        move |_, _, _| {
+                            sender.send(MessageToBackend::SetLaunchAfterInstall {
+                                instance: handle.clone(),
+                                enabled: !enabled,
+                            });
+                        }
+                    }),
+            )
+        })
 }
 
 fn account_summary(instance: &InstanceView, cx: &mut Context<InstancesPage>) -> gpui::Div {
@@ -1740,6 +1768,7 @@ fn action_button(
                         sender.send(MessageToBackend::InstallInstance {
                             handle: handle.clone(),
                             force_overwrite: false,
+                            launch_after_install: Some(true),
                         });
                     })
             }
@@ -1789,6 +1818,7 @@ fn action_button(
                         sender.send(MessageToBackend::InstallInstance {
                             handle: handle.clone(),
                             force_overwrite: false,
+                            launch_after_install: Some(true),
                         });
                     })
             }
@@ -2929,6 +2959,7 @@ fn action_section(
                                     sender.send(MessageToBackend::InstallInstance {
                                         handle: handle.clone(),
                                         force_overwrite: false,
+                                        launch_after_install: None,
                                     });
                                 }
                             }),
@@ -2947,6 +2978,7 @@ fn action_section(
                                     sender.send(MessageToBackend::InstallInstance {
                                         handle: handle.clone(),
                                         force_overwrite: true,
+                                        launch_after_install: None,
                                     });
                                 }
                             }),
@@ -3018,6 +3050,7 @@ fn action_section(
                             sender.send(MessageToBackend::InstallInstance {
                                 handle: handle.clone(),
                                 force_overwrite: false,
+                                launch_after_install: Some(true),
                             });
                         }),
                 )

@@ -142,6 +142,7 @@ pub struct BackendState {
     running: HashSet<InstanceHandle>,
     launch_tasks: HashMap<InstanceHandle, LaunchHandle>,
     launch_errors: HashMap<InstanceHandle, Arc<str>>,
+    launch_after_install: HashMap<InstanceHandle, bool>,
     add_account_cancel: Option<CancellationToken>,
     add_account_task: Option<JoinHandle<()>>,
     auth_launch_instance: Option<InstanceHandle>,
@@ -342,6 +343,7 @@ impl BackendState {
             running: HashSet::new(),
             launch_tasks: HashMap::new(),
             launch_errors: HashMap::new(),
+            launch_after_install: HashMap::new(),
             add_account_cancel: None,
             add_account_task: None,
             auth_launch_instance: None,
@@ -450,6 +452,7 @@ impl BackendState {
             local_metadata: &local_metadata,
             user_settings: &instance_settings,
             accounts: &account_views,
+            launch_after_install: &self.launch_after_install,
         })
         .into()
     }
@@ -734,6 +737,7 @@ impl BackendState {
 
         let handle = InstanceHandle::local_new();
         self.install_errors.remove(&handle);
+        self.launch_after_install.insert(handle.clone(), true);
         self.creating_local
             .insert(handle.clone(), Arc::from(dir_name.clone()));
         self.creating_local_params.insert(
@@ -813,6 +817,7 @@ impl BackendState {
         &mut self,
         handle: InstanceHandle,
         force_overwrite: bool,
+        launch_after_install: Option<bool>,
         tx: FrontendSender,
         internal: mpsc::UnboundedSender<BackendEvent>,
     ) {
@@ -825,6 +830,9 @@ impl BackendState {
         }
 
         self.install_errors.remove(&handle);
+        if let Some(enabled) = launch_after_install {
+            self.launch_after_install.insert(handle.clone(), enabled);
+        }
         self.installing.insert(
             handle.clone(),
             instances::InstallProgressView {
@@ -934,6 +942,7 @@ impl BackendState {
             handle.abort();
         }
         self.installing.remove(&handle);
+        self.launch_after_install.remove(&handle);
         let params = self.creating_local_params.remove(&handle);
         let dir_name = self
             .creating_local
@@ -991,6 +1000,7 @@ impl BackendState {
         };
 
         self.install_errors.remove(&handle);
+        self.launch_after_install.insert(handle.clone(), true);
         self.creating_local
             .insert(handle.clone(), Arc::from(params.dir_name.clone()));
         self.installing.insert(
@@ -1474,6 +1484,18 @@ impl BackendState {
 
     fn is_local_install_in_progress(&self, instance: &InstanceHandle) -> bool {
         self.creating_local.contains_key(instance)
+    }
+
+    fn set_launch_after_install(
+        &mut self,
+        instance: InstanceHandle,
+        enabled: bool,
+        tx: &FrontendSender,
+    ) {
+        if self.launch_after_install.contains_key(&instance) {
+            self.launch_after_install.insert(instance, enabled);
+            self.emit_snapshot(tx);
+        }
     }
 
     async fn set_optional_mod_set_enabled(
@@ -2077,8 +2099,18 @@ pub async fn run(
                     MessageToBackend::Refresh => {
                         state.refresh_all(&internal_sender, &frontend).await;
                     }
-                    MessageToBackend::InstallInstance { handle, force_overwrite } => {
-                        state.start_install(handle, force_overwrite, frontend.clone(), internal_sender.clone());
+                    MessageToBackend::InstallInstance {
+                        handle,
+                        force_overwrite,
+                        launch_after_install,
+                    } => {
+                        state.start_install(
+                            handle,
+                            force_overwrite,
+                            launch_after_install,
+                            frontend.clone(),
+                            internal_sender.clone(),
+                        );
                         state.emit_snapshot(&frontend);
                     }
                     MessageToBackend::CancelInstall(handle) => {
@@ -2172,6 +2204,9 @@ pub async fn run(
                             )
                             .await;
                     }
+                    MessageToBackend::SetLaunchAfterInstall { instance, enabled } => {
+                        state.set_launch_after_install(instance, enabled, &frontend);
+                    }
                     MessageToBackend::ResolveJavaPath(instance) => {
                         state.resolve_java_path(instance, internal_sender.clone());
                     }
@@ -2238,7 +2273,25 @@ pub async fn run(
                         state.handle_launch_prep_finished(handle, &frontend);
                     }
                     Some(BackendEvent::InstallFinished { handle, is_run, result }) => {
-                        state.handle_install_finished(handle, is_run, result, &frontend).await;
+                        let launch_after = if is_run {
+                            state.launch_after_install.remove(&handle);
+                            None
+                        } else {
+                            state.launch_after_install.remove(&handle)
+                        };
+                        let should_launch = launch_after == Some(true) && result.is_ok();
+                        state
+                            .handle_install_finished(handle.clone(), is_run, result, &frontend)
+                            .await;
+                        if should_launch {
+                            state.start_launch(
+                                handle,
+                                None,
+                                frontend.clone(),
+                                internal_sender.clone(),
+                            );
+                            state.emit_snapshot(&frontend);
+                        }
                     }
                     Some(BackendEvent::LaunchStarted { handle }) => {
                         state.handle_launch_started(handle, &frontend);

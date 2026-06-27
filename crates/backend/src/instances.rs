@@ -94,6 +94,7 @@ pub struct InstanceViewBuildInput<'a> {
     pub local_metadata: &'a HashMap<InstanceHandle, LocalMetadataView>,
     pub user_settings: &'a HashMap<InstanceHandle, InstanceUserSettingsView>,
     pub accounts: &'a [AccountView],
+    pub launch_after_install: &'a HashMap<InstanceHandle, bool>,
 }
 
 pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceView> {
@@ -105,6 +106,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
         local_metadata,
         user_settings,
         accounts,
+        launch_after_install,
     } = input;
     let InstanceLiveState {
         installing,
@@ -236,7 +238,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             display_name,
             dir_name: Arc::<str>::from(local.dir_name.clone()),
             origin,
-            status,
+            status: status.clone(),
             locally_installed: local.is_installed(),
             orphaned,
             auth_provider,
@@ -258,6 +260,11 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 &metadata.mod_sync,
                 &settings.optional_mod_sets,
                 language,
+            ),
+            launch_after_install: view_launch_after_install(
+                &local.handle,
+                &status,
+                launch_after_install,
             ),
         });
     }
@@ -285,6 +292,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 show_bar: false,
             }
         };
+        let launch_after = view_launch_after_install(handle, &status, launch_after_install);
         views.push(InstanceView {
             handle: handle.clone(),
             display_name: dir_name.clone(),
@@ -307,6 +315,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             required_java_version: None,
             use_native_glfw: None,
             optional_mod_sets: Arc::from([]),
+            launch_after_install: launch_after,
         });
     }
 
@@ -338,6 +347,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 &settings.account_override,
                 accounts,
             );
+            let launch_after = view_launch_after_install(&id, &status, launch_after_install);
             views.push(InstanceView {
                 handle: id.clone(),
                 display_name: Arc::<str>::from(resolve_instance_display_name(
@@ -375,6 +385,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 required_java_version: Some(Arc::from(entry.required_java_version.as_str())),
                 use_native_glfw: settings.use_native_glfw,
                 optional_mod_sets: Arc::from([]),
+                launch_after_install: launch_after,
             });
         }
     }
@@ -390,6 +401,17 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
 
 pub fn remote_entry_handle(url: &Url, id: &str) -> InstanceHandle {
     InstanceHandle::remote(url, id)
+}
+
+fn view_launch_after_install(
+    handle: &InstanceHandle,
+    status: &InstanceLiveStatus,
+    launch_after_install: &HashMap<InstanceHandle, bool>,
+) -> Option<bool> {
+    match status {
+        InstanceLiveStatus::Installing { .. } => launch_after_install.get(handle).copied(),
+        _ => None,
+    }
 }
 
 fn fetched_manifests(
@@ -551,6 +573,7 @@ mod tests {
         launch_errors: HashMap<InstanceHandle, Arc<str>>,
         local_metadata: HashMap<InstanceHandle, LocalMetadataView>,
         user_settings: HashMap<InstanceHandle, InstanceUserSettingsView>,
+        launch_after_install: HashMap<InstanceHandle, bool>,
     }
 
     impl TestBuildFixture {
@@ -585,6 +608,7 @@ mod tests {
                 local_metadata: &self.local_metadata,
                 user_settings: &self.user_settings,
                 accounts,
+                launch_after_install: &self.launch_after_install,
             })
         }
     }

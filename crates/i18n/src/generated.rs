@@ -444,6 +444,7 @@ pub mod instances {
             "java_section" => Some(java_section()),
             "jvm_flags_default" => Some(jvm_flags_default()),
             "kill" => Some(kill()),
+            "launch_after_install" => Some(launch_after_install()),
             "launch_blocked" => Some(launch_blocked()),
             "launching" => Some(launching()),
             "local_empty_hint" => Some(local_empty_hint()),
@@ -610,6 +611,12 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Завершить",
             _ => "Kill",
+        }
+    }
+    pub fn launch_after_install() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Запустить после установки",
+            _ => "Launch after install",
         }
     }
     pub fn launch_blocked() -> &'static str {

@@ -23,6 +23,8 @@ pub enum MessageToBackend {
     InstallInstance {
         handle: InstanceHandle,
         force_overwrite: bool,
+        /// When `Some`, shows launch-after checkbox defaulting to that value.
+        launch_after_install: Option<bool>,
     },
     CancelInstall(InstanceHandle),
     RetryCreateLocal(InstanceHandle),
@@ -65,6 +67,10 @@ pub enum MessageToBackend {
     SetOptionalModSetEnabled {
         instance: InstanceHandle,
         set_id: String,
+        enabled: bool,
+    },
+    SetLaunchAfterInstall {
+        instance: InstanceHandle,
         enabled: bool,
     },
     ResolveJavaPath(InstanceHandle),
@@ -163,6 +169,8 @@ pub struct InstanceView {
     /// `None` uses the launcher build default.
     pub use_native_glfw: Option<bool>,
     pub optional_mod_sets: Arc<[OptionalModSetView]>,
+    /// `Some` while install/update is in progress and launch-after is offered.
+    pub launch_after_install: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
