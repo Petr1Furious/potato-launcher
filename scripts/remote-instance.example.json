@@ -5,5 +5,10 @@
     "spec": "./spec.json",
     "instances": {
         "minigames": "/local/path/to/instance/minecraft"
+    },
+    "env": {
+        "HTTP_PROXY": "http://127.0.0.1:8080",
+        "HTTPS_PROXY": "http://127.0.0.1:8080",
+        "NO_PROXY": "localhost,127.0.0.1"
     }
 }

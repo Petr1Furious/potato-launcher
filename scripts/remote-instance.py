@@ -201,6 +201,31 @@ def rsync_base(args, config, delete=False):
     return command
 
 
+def config_env(config):
+    raw = config.get("env", {})
+    if raw in (None, ""):
+        return {}
+    if not isinstance(raw, dict):
+        die("config field 'env' must be an object")
+    result = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key:
+            die("config env keys must be non-empty strings")
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            die("config env value for '{0}' must be a string".format(key))
+        result[key] = value
+    return result
+
+
+def docker_exec_env_args(config):
+    args = []
+    for key, value in sorted(config_env(config).items()):
+        args.extend(["-e", "{0}={1}".format(key, value)])
+    return args
+
+
 def rewrite_spec_source_roots(spec_path, source_root_base):
     try:
         with open(spec_path, "r") as file_obj:
@@ -322,16 +347,18 @@ def build_command(args, config):
             "container_workdir",
             cfg_container_path(config, "workdir", DEFAULT_CONTAINER_WORKDIR),
         )
-        docker_command = [
-            "docker",
-            "exec",
-            container,
-            "instance-builder",
-            "-s",
-            container_spec,
-            container_generated,
-            container_workdir,
-        ]
+        docker_command = ["docker", "exec"]
+        docker_command.extend(docker_exec_env_args(config))
+        docker_command.extend(
+            [
+                container,
+                "instance-builder",
+                "-s",
+                container_spec,
+                container_generated,
+                container_workdir,
+            ]
+        )
         remote_command = shell_join(docker_command)
         if docker_host:
             remote_command = "DOCKER_HOST={0} {1}".format(
@@ -459,6 +486,7 @@ def build_parser():
         epilog="""Notes:
   - Spec source_root values are rewritten only in a temporary uploaded copy.
   - Default excludes are .git and saves. Use --no-default-excludes to disable them.
+  - Optional config "env" object passes variables to remote docker exec (e.g. HTTP_PROXY).
 """,
     )
     build.add_argument(

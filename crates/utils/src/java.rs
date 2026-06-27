@@ -1,13 +1,14 @@
 use flate2::read::GzDecoder;
 use futures::StreamExt;
 use regex::Regex;
-use reqwest::{Client, Url};
+use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tar::Archive;
 use tokio::process::Command;
+use url::Url;
 
 use serde_json::Value;
 #[cfg(target_os = "windows")]

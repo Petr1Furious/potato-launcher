@@ -431,7 +431,8 @@ async fn run_forge_command(
     forge_work_dir: &Path,
 ) -> Result<(), RunForgeCommandError> {
     let mut cmd = tokio::process::Command::new(&to_abs_path_str(java_path)?);
-    cmd.current_dir(&to_abs_path_str(forge_work_dir)?)
+    cmd.args(utils::java_proxy::jvm_args_from_env())
+        .current_dir(&to_abs_path_str(forge_work_dir)?)
         .arg("-jar")
         .arg(&to_abs_path_str(forge_installer_path)?)
         .arg("--installClient")
@@ -445,6 +446,7 @@ async fn run_forge_command(
             info!("Retrying without '--installClient' argument.");
             let mut retry_cmd = tokio::process::Command::new(&to_abs_path_str(java_path)?);
             retry_cmd
+                .args(utils::java_proxy::jvm_args_from_env())
                 .current_dir(&to_abs_path_str(forge_work_dir)?)
                 .arg("-jar")
                 .arg(&to_abs_path_str(forge_installer_path)?);

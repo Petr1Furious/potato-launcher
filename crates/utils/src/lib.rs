@@ -4,6 +4,7 @@ pub mod compat;
 pub mod files;
 pub mod instance_id;
 pub mod java;
+pub mod java_proxy;
 pub mod logging;
 pub mod mod_id;
 pub mod paths;
