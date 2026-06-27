@@ -883,12 +883,7 @@ impl BackendState {
                     Ok(()) => {
                         self.install_errors.remove(&output.instance.handle);
                         if !is_run {
-                            tx.send(MessageToFrontend::Notification {
-                                level: NotificationLevel::Success,
-                                message: Arc::from(
-                                    launcher_i18n::notifications::install_completed(),
-                                ),
-                            });
+                            log::info!("Instance install completed for {}", output.instance.handle);
                         }
                     }
                     Err(err) => {
@@ -1035,17 +1030,11 @@ impl BackendState {
 
     async fn delete_instance(&mut self, handle: InstanceHandle, tx: &FrontendSender) {
         if self.running.contains(&handle) || self.launching.contains(&handle) {
-            tx.send(MessageToFrontend::Notification {
-                level: NotificationLevel::Warning,
-                message: Arc::from(launcher_i18n::notifications::stop_before_delete()),
-            });
+            log::warn!("Ignoring delete for {handle}: instance is running or launching");
             return;
         }
         if self.install_tasks.contains_key(&handle) {
-            tx.send(MessageToFrontend::Notification {
-                level: NotificationLevel::Warning,
-                message: Arc::from(launcher_i18n::notifications::cancel_install_before_delete()),
-            });
+            log::warn!("Ignoring delete for {handle}: install is in progress");
             return;
         }
         let data_dir = DataDir::new(self.launcher_dir.clone());
@@ -1057,10 +1046,7 @@ impl BackendState {
             Ok(Some(_)) => {
                 self.install_errors.remove(&handle);
                 self.launch_errors.remove(&handle);
-                tx.send(MessageToFrontend::Notification {
-                    level: NotificationLevel::Success,
-                    message: Arc::from(launcher_i18n::notifications::instance_deleted()),
-                });
+                log::info!("Instance deleted: {handle}");
             }
             Ok(None) => {
                 tx.send(MessageToFrontend::Notification {
@@ -1098,10 +1084,7 @@ impl BackendState {
         }
 
         if self.add_account_task.is_some() {
-            tx.send(MessageToFrontend::Notification {
-                level: NotificationLevel::Info,
-                message: Arc::from(launcher_i18n::notifications::add_account_already_running()),
-            });
+            log::warn!("Ignoring add account request: authentication already in progress");
             return;
         }
 
@@ -1179,12 +1162,7 @@ impl BackendState {
         let (key, provider, account) = launch::offline_account(nickname);
         match self.auth_storage.insert_account(&provider, account).await {
             Ok(_) => {
-                tx.send(MessageToFrontend::Notification {
-                    level: NotificationLevel::Success,
-                    message: Arc::from(launcher_i18n::notifications::added_offline_account(
-                        key.1.clone(),
-                    )),
-                });
+                log::info!("Added offline account {}", key.1);
             }
             Err(err) => {
                 log::error!("Failed to save offline account {key:?}: {err:#}");
@@ -1228,10 +1206,7 @@ impl BackendState {
                 if let Err(err) = self.clear_account_references(&key).await {
                     log::warn!("Failed to clear instance account references for {key:?}: {err:#}");
                 }
-                tx.send(MessageToFrontend::Notification {
-                    level: NotificationLevel::Success,
-                    message: Arc::from(launcher_i18n::notifications::account_removed()),
-                });
+                log::info!("Account removed: {key:?}");
             }
             Err(err) => {
                 log::error!("Failed to remove account {key:?}: {err:#}");
@@ -1330,12 +1305,7 @@ impl BackendState {
             Ok((provider, account)) => {
                 match self.auth_storage.insert_account(&provider, account).await {
                     Ok((_, username)) => {
-                        tx.send(MessageToFrontend::Notification {
-                            level: NotificationLevel::Success,
-                            message: Arc::from(launcher_i18n::notifications::added_account(
-                                username,
-                            )),
-                        });
+                        log::info!("Added account {username}");
                     }
                     Err(err) => {
                         log::error!("Failed to save authenticated account: {err:#}");
@@ -1668,10 +1638,7 @@ impl BackendState {
             });
             return;
         }
-        tx.send(MessageToFrontend::Notification {
-            level: NotificationLevel::Success,
-            message: Arc::from(launcher_i18n::notifications::java_path_set()),
-        });
+        log::info!("Java path set for instance {instance}");
         self.emit_snapshot(tx);
     }
 

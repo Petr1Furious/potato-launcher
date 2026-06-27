@@ -646,10 +646,6 @@ ru = "Подготовка локального инстанса"
 en = "Instance name cannot be empty"
 ru = "Имя инстанса не может быть пустым"
 
-[notifications.local_instance_name_exists]
-en = "An instance named \"${name: String}\" already exists"
-ru = "Инстанс с именем «${name: String}» уже существует"
-
 [notifications.local_instance_loader_version_required]
 en = "Loader version is required for Forge and NeoForge"
 ru = "Для Forge и NeoForge нужна версия загрузчика"
@@ -657,10 +653,6 @@ ru = "Для Forge и NeoForge нужна версия загрузчика"
 [notifications.preparing_install]
 en = "Preparing install"
 ru = "Подготовка к установке"
-
-[notifications.install_completed]
-en = "Instance install completed"
-ru = "Установка инстанса завершена"
 
 [notifications.failed_save_installed]
 en = "Failed to save installed instance: ${error: String}"
@@ -678,18 +670,6 @@ ru = "Удалён мод ${mod_id: String} (${path: String})"
 en = "Restored mod ${mod_id: String} (${path: String})"
 ru = "Восстановлен мод ${mod_id: String} (${path: String})"
 
-[notifications.stop_before_delete]
-en = "Stop the instance before deleting it"
-ru = "Остановите инстанс перед удалением"
-
-[notifications.cancel_install_before_delete]
-en = "Cancel the install before deleting this instance"
-ru = "Отмените установку перед удалением инстанса"
-
-[notifications.instance_deleted]
-en = "Instance deleted"
-ru = "Инстанс удалён"
-
 [notifications.instance_not_installed_locally]
 en = "Instance is not installed locally"
 ru = "Инстанс не установлен локально"
@@ -706,25 +686,13 @@ ru = "Введите офлайн-ник в настройках инстанс�
 en = "Offline nickname cannot be empty"
 ru = "Офлайн-ник не может быть пустым"
 
-[notifications.added_offline_account]
-en = "Added offline account ${username: String}"
-ru = "Добавлен офлайн-аккаунт ${username: String}"
-
 [notifications.failed_save_offline_account]
 en = "Failed to save offline account: ${error: String}"
 ru = "Не удалось сохранить офлайн-аккаунт: ${error: String}"
 
-[notifications.account_removed]
-en = "Account removed"
-ru = "Аккаунт удалён"
-
 [notifications.failed_remove_account]
 en = "Failed to remove account: ${error: String}"
 ru = "Не удалось удалить аккаунт: ${error: String}"
-
-[notifications.added_account]
-en = "Added account ${username: String}"
-ru = "Добавлен аккаунт ${username: String}"
 
 [notifications.failed_save_account]
 en = "Failed to save account: ${error: String}"
@@ -741,10 +709,6 @@ ru = "Не удалось связаться с сервером аутенти�
 [notifications.authentication_cancelled]
 en = "Authentication cancelled"
 ru = "Авторизация отменена"
-
-[notifications.add_account_already_running]
-en = "Account login is already in progress"
-ru = "Вход в аккаунт уже выполняется"
 
 [notifications.use_account_selection_for_required]
 en = "Use Account selection for accounts from the required provider"
@@ -782,14 +746,6 @@ ru = "Неверная установка Java: выбранный файл не
 en = "Failed to save Java path: ${error: String}"
 ru = "Не удалось сохранить путь к Java: ${error: String}"
 
-[notifications.java_path_set]
-en = "Java path set"
-ru = "Путь к Java задан"
-
-[notifications.java_path_cleared]
-en = "Java path cleared"
-ru = "Путь к Java сброшен"
-
 [notifications.already_launching_or_running]
 en = "Instance is already launching or running"
 ru = "Инстанс уже запускается или работает"
@@ -805,14 +761,6 @@ ru = "Не удалось сохранить обновлённый аккаун
 [notifications.minecraft_exited_with_code]
 en = "Minecraft exited with code ${code: i32}"
 ru = "Minecraft завершился с кодом ${code: i32}"
-
-[notifications.minecraft_exited_successfully]
-en = "Minecraft exited successfully"
-ru = "Minecraft успешно завершился"
-
-[notifications.minecraft_terminated]
-en = "Minecraft was terminated"
-ru = "Minecraft был завершён"
 
 [notifications.launch_failed]
 en = "Launch failed: ${error: String}"

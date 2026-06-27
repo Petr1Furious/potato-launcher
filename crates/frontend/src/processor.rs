@@ -74,41 +74,36 @@ impl Processor {
                     session.clear(cx);
                 });
             }
-            MessageToFrontend::LaunchFinished { instance, exit } => {
-                let (level, message) = match exit {
-                    ExitOutcome::Success => {
-                        log::info!("Instance {instance} exited successfully");
-                        (
-                            NotificationLevel::Success,
-                            t::notifications::minecraft_exited_successfully().to_string(),
-                        )
-                    }
-                    ExitOutcome::ExitCode(code) => {
-                        log::warn!("Instance {instance} exited with code {code}");
-                        (
+            MessageToFrontend::LaunchFinished { instance, exit } => match exit {
+                ExitOutcome::Success => {
+                    log::info!("Instance {instance} exited successfully");
+                }
+                ExitOutcome::ExitCode(code) => {
+                    log::warn!("Instance {instance} exited with code {code}");
+                    let message = t::notifications::minecraft_exited_with_code(code);
+                    self.data.notifications.update(cx, |entries, cx| {
+                        entries.push(
                             NotificationLevel::Error,
-                            t::notifications::minecraft_exited_with_code(code),
+                            short_notification_text(&message),
+                            cx,
                         )
-                    }
-                    ExitOutcome::Terminated => {
-                        log::info!("Instance {instance} was terminated");
-                        (
-                            NotificationLevel::Info,
-                            t::notifications::minecraft_terminated().to_string(),
-                        )
-                    }
-                    ExitOutcome::Error(error) => {
-                        log::error!("Instance {instance} failed to launch: {error}");
-                        (
+                    });
+                }
+                ExitOutcome::Terminated => {
+                    log::info!("Instance {instance} was terminated");
+                }
+                ExitOutcome::Error(error) => {
+                    log::error!("Instance {instance} failed to launch: {error}");
+                    let message = t::notifications::launch_failed(error.to_string());
+                    self.data.notifications.update(cx, |entries, cx| {
+                        entries.push(
                             NotificationLevel::Error,
-                            t::notifications::launch_failed(error.to_string()),
+                            short_notification_text(&message),
+                            cx,
                         )
-                    }
-                };
-                self.data.notifications.update(cx, |entries, cx| {
-                    entries.push(level, short_notification_text(&message), cx)
-                });
-            }
+                    });
+                }
+            },
             MessageToFrontend::LocalCreateVersionsUpdated {
                 versions,
                 latest_release,

@@ -989,30 +989,21 @@ pub mod nav {
 pub mod notifications {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
-            "account_removed" => Some(account_removed()),
             "accounts_reset_from_corruption" => Some(accounts_reset_from_corruption()),
-            "add_account_already_running" => Some(add_account_already_running()),
             "already_launching_or_running" => Some(already_launching_or_running()),
             "authentication_cancelled" => Some(authentication_cancelled()),
-            "cancel_install_before_delete" => Some(cancel_install_before_delete()),
             "enter_offline_nickname" => Some(enter_offline_nickname()),
             "install_already_running" => Some(install_already_running()),
-            "install_completed" => Some(install_completed()),
-            "instance_deleted" => Some(instance_deleted()),
             "instance_not_installed_locally" => Some(instance_not_installed_locally()),
             "instances_load_failed" => Some(instances_load_failed()),
             "invalid_java_path" => Some(invalid_java_path()),
-            "java_path_cleared" => Some(java_path_cleared()),
             "java_path_install_in_progress" => Some(java_path_install_in_progress()),
-            "java_path_set" => Some(java_path_set()),
             "launch_auth_offline_fallback" => Some(launch_auth_offline_fallback()),
             "local_instance_loader_version_required" => {
                 Some(local_instance_loader_version_required())
             }
             "local_instance_name_empty" => Some(local_instance_name_empty()),
-            "minecraft_exited_successfully" => Some(minecraft_exited_successfully()),
             "minecraft_running" => Some(minecraft_running()),
-            "minecraft_terminated" => Some(minecraft_terminated()),
             "offline_nickname_empty" => Some(offline_nickname_empty()),
             "optional_mod_install_in_progress" => Some(optional_mod_install_in_progress()),
             "optional_mod_instance_running" => Some(optional_mod_instance_running()),
@@ -1020,39 +1011,14 @@ pub mod notifications {
             "preparing_local_instance" => Some(preparing_local_instance()),
             "selected_account_must_match" => Some(selected_account_must_match()),
             "settings_reset_from_corruption" => Some(settings_reset_from_corruption()),
-            "stop_before_delete" => Some(stop_before_delete()),
             "use_account_selection_for_required" => Some(use_account_selection_for_required()),
             _ => None,
-        }
-    }
-    pub fn account_removed() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Аккаунт удалён",
-            _ => "Account removed",
         }
     }
     pub fn accounts_reset_from_corruption() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Сохранённые аккаунты повреждены и не были загружены; войдите снова",
             _ => "Saved accounts were corrupted and could not be loaded; please sign in again",
-        }
-    }
-    pub fn add_account_already_running() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Вход в аккаунт уже выполняется",
-            _ => "Account login is already in progress",
-        }
-    }
-    pub fn added_account(username: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Добавлен аккаунт {username}"),
-            _ => format!("Added account {username}"),
-        }
-    }
-    pub fn added_offline_account(username: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Добавлен офлайн-аккаунт {username}"),
-            _ => format!("Added offline account {username}"),
         }
     }
     pub fn already_launching_or_running() -> &'static str {
@@ -1071,12 +1037,6 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Ошибка авторизации: {error}"),
             _ => format!("Authentication failed: {error}"),
-        }
-    }
-    pub fn cancel_install_before_delete() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Отмените установку перед удалением инстанса",
-            _ => "Cancel the install before deleting this instance",
         }
     }
     pub fn enter_offline_nickname() -> &'static str {
@@ -1205,22 +1165,10 @@ pub mod notifications {
             _ => "Install is already running",
         }
     }
-    pub fn install_completed() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Установка инстанса завершена",
-            _ => "Instance install completed",
-        }
-    }
     pub fn install_failed(error: String) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Ошибка установки: {error}"),
             _ => format!("Install failed: {error}"),
-        }
-    }
-    pub fn instance_deleted() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Инстанс удалён",
-            _ => "Instance deleted",
         }
     }
     pub fn instance_not_installed_locally() -> &'static str {
@@ -1253,22 +1201,10 @@ pub mod notifications {
             _ => "Invalid Java installation: the selected file is not a compatible Java executable",
         }
     }
-    pub fn java_path_cleared() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Путь к Java сброшен",
-            _ => "Java path cleared",
-        }
-    }
     pub fn java_path_install_in_progress() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Путь к Java нельзя изменить, пока идёт локальная установка",
             _ => "Java path cannot be changed while a local install is in progress",
-        }
-    }
-    pub fn java_path_set() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Путь к Java задан",
-            _ => "Java path set",
         }
     }
     pub fn launch_auth_offline_fallback() -> &'static str {
@@ -1297,18 +1233,6 @@ pub mod notifications {
             _ => "Instance name cannot be empty",
         }
     }
-    pub fn local_instance_name_exists(name: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Инстанс с именем «{name}» уже существует"),
-            _ => format!("An instance named \"{name}\" already exists"),
-        }
-    }
-    pub fn minecraft_exited_successfully() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Minecraft успешно завершился",
-            _ => "Minecraft exited successfully",
-        }
-    }
     pub fn minecraft_exited_with_code(code: i32) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Minecraft завершился с кодом {code}"),
@@ -1319,12 +1243,6 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Minecraft запущен",
             _ => "Minecraft is running",
-        }
-    }
-    pub fn minecraft_terminated() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Minecraft был завершён",
-            _ => "Minecraft was terminated",
         }
     }
     pub fn mod_added(mod_id: String, path: String) -> String {
@@ -1385,12 +1303,6 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Настройки лаунчера были повреждены и сброшены на стандартные",
             _ => "Launcher settings were corrupted and have been reset to defaults",
-        }
-    }
-    pub fn stop_before_delete() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Остановите инстанс перед удалением",
-            _ => "Stop the instance before deleting it",
         }
     }
     pub fn use_account_selection_for_required() -> &'static str {

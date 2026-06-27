@@ -42,6 +42,7 @@ use url::Url;
 use crate::entity::{
     DataEntities,
     account::AccountsUpdatedEvent,
+    auth::AuthSessionUpdatedEvent,
     backend::BackendsUpdatedEvent,
     instance::InstancesUpdatedEvent,
     java_resolve::{JavaResolveCache, JavaResolvedEvent},
@@ -85,6 +86,7 @@ pub struct InstancesPage {
     _local_loader_subscription: gpui::Subscription,
     _mc_version_selected_subscription: gpui::Subscription,
     _java_resolve_subscription: gpui::Subscription,
+    _auth_subscription: gpui::Subscription,
 }
 
 impl InstancesPage {
@@ -101,6 +103,10 @@ impl InstancesPage {
             &data.settings,
             |_, _, _: &LauncherSettingsUpdatedEvent, cx| cx.notify(),
         );
+        let _auth_subscription =
+            cx.subscribe(&data.auth, |_, _, _: &AuthSessionUpdatedEvent, cx| {
+                cx.notify();
+            });
         let backend_url_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::manifest_url()));
         let offline_nickname_input = cx
@@ -222,6 +228,7 @@ impl InstancesPage {
             _local_loader_subscription,
             _mc_version_selected_subscription,
             _java_resolve_subscription,
+            _auth_subscription,
         }
     }
 
@@ -408,12 +415,13 @@ impl Render for InstancesPage {
             list.into_any_element()
         };
 
-        let auth_active = self.data.auth.read(cx).is_active();
         div()
             .size_full()
             .relative()
             .child(content)
-            .when(auth_active, |this| this.child(self.auth_modal(window, cx)))
+            .when(self.data.auth.read(cx).is_active(), |this| {
+                this.child(self.auth_modal(window, cx))
+            })
             .into_any_element()
     }
 }
@@ -675,6 +683,7 @@ impl InstancesPage {
         div()
             .absolute()
             .inset_0()
+            .occlude()
             .flex()
             .items_center()
             .justify_center()
@@ -840,6 +849,7 @@ impl InstancesPage {
         div()
             .absolute()
             .inset_0()
+            .occlude()
             .flex()
             .items_center()
             .justify_center()
@@ -2910,7 +2920,7 @@ fn action_section(
                 } else {
                     t::instances::delete()
                 })
-                .disabled(!instance.locally_installed)
+                .disabled(!instance.locally_installed || instance_delete_blocked(&instance.status))
                 .on_click({
                     let sender = sender.clone();
                     let handle = handle.clone();
@@ -3133,6 +3143,15 @@ fn progress_ratio(status: &InstanceLiveStatus) -> Option<f32> {
 #[allow(dead_code)]
 fn _url_key(url: &Url) -> String {
     url.as_str().to_string()
+}
+
+fn instance_delete_blocked(status: &InstanceLiveStatus) -> bool {
+    matches!(
+        status,
+        InstanceLiveStatus::Running
+            | InstanceLiveStatus::Launching
+            | InstanceLiveStatus::Installing { .. }
+    )
 }
 
 fn create_local_form_issue(page: &InstancesPage, cx: &App) -> Option<String> {

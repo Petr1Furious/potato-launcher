@@ -1,4 +1,4 @@
-use gpui::{Context, IntoElement, ParentElement, Styled, div, px};
+use gpui::{Context, IntoElement, ParentElement, Styled, div, prelude::*, px};
 use gpui_component::{ActiveTheme, StyledExt, button::Button, v_flex};
 use launcher_bridge::NotificationLevel;
 use launcher_i18n as t;
@@ -42,6 +42,7 @@ fn notification_card(
     };
 
     div()
+        .occlude()
         .p_3()
         .rounded(cx.theme().radius_lg)
         .border_1()
