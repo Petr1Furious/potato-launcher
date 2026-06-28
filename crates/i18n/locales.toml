@@ -226,9 +226,9 @@ ru = "Не в каталоге"
 en = "${status: String}, no account"
 ru = "${status: String}, нет аккаунта"
 
-[instances.recommended_memory]
-en = "Recommended memory: ${xmx: u64} MB"
-ru = "Рекомендуемая память: ${xmx: u64} МБ"
+[instances.default_memory]
+en = "Default memory: ${xmx: u64} MB"
+ru = "Память по умолчанию: ${xmx: u64} МБ"
 
 [instances.effective_memory]
 en = "Effective memory: ${xmx: u64} MB"
@@ -382,6 +382,14 @@ ru = "Добавить Telegram"
 en = "Add Ely.by"
 ru = "Добавить Ely.by"
 
+[accounts.advanced]
+en = "Advanced"
+ru = "Дополнительно"
+
+[accounts.advanced_section]
+en = "Advanced Accounts"
+ru = "Дополнительные аккаунты"
+
 [backends.title]
 en = "Backends"
 ru = "Бэкенды"
@@ -515,8 +523,8 @@ en = "Offline"
 ru = "Офлайн"
 
 [placeholders.manifest_url]
-en = "https://example.com/manifest.json"
-ru = "https://example.com/manifest.json"
+en = "https://example.com/data/instance_manifest.json"
+ru = "https://example.com/data/instance_manifest.json"
 
 [placeholders.offline_nickname]
 en = "Offline nickname"

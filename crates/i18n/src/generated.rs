@@ -21,6 +21,8 @@ pub mod accounts {
             "add_microsoft" => Some(add_microsoft()),
             "add_offline" => Some(add_offline()),
             "add_telegram" => Some(add_telegram()),
+            "advanced" => Some(advanced()),
+            "advanced_section" => Some(advanced_section()),
             "no_accounts_yet" => Some(no_accounts_yet()),
             "section" => Some(section()),
             "title" => Some(title()),
@@ -67,6 +69,18 @@ pub mod accounts {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Добавить Telegram",
             _ => "Add Telegram",
+        }
+    }
+    pub fn advanced() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Дополнительно",
+            _ => "Advanced",
+        }
+    }
+    pub fn advanced_section() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Дополнительные аккаунты",
+            _ => "Advanced Accounts",
         }
     }
     pub fn no_accounts_yet() -> &'static str {
@@ -523,6 +537,12 @@ pub mod instances {
             _ => "Click Confirm Delete to remove this instance from disk.",
         }
     }
+    pub fn default_memory(xmx: u64) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Память по умолчанию: {xmx} МБ"),
+            _ => format!("Default memory: {xmx} MB"),
+        }
+    }
     pub fn delete() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Удалить",
@@ -711,12 +731,6 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Играть снова",
             _ => "Play Again",
-        }
-    }
-    pub fn recommended_memory(xmx: u64) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Рекомендуемая память: {xmx} МБ"),
-            _ => format!("Recommended memory: {xmx} MB"),
         }
     }
     pub fn remove() -> &'static str {
@@ -1374,8 +1388,8 @@ pub mod placeholders {
     }
     pub fn manifest_url() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "https://example.com/manifest.json",
-            _ => "https://example.com/manifest.json",
+            1 => "https://example.com/data/instance_manifest.json",
+            _ => "https://example.com/data/instance_manifest.json",
         }
     }
     pub fn memory_mib() -> &'static str {

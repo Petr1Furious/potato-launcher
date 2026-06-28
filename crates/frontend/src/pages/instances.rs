@@ -57,6 +57,7 @@ pub struct InstancesPage {
     show_global_settings: bool,
     show_backend_settings: bool,
     show_accounts_panel: bool,
+    show_advanced_accounts: bool,
     show_create_local_modal: bool,
     create_local_loader: LocalLoader,
     pending_delete: Option<InstanceHandle>,
@@ -199,6 +200,7 @@ impl InstancesPage {
             show_global_settings: false,
             show_backend_settings: false,
             show_accounts_panel: false,
+            show_advanced_accounts: false,
             show_create_local_modal: false,
             create_local_loader: LocalLoader::Vanilla,
             create_local_show_snapshots: false,
@@ -256,6 +258,9 @@ impl InstancesPage {
         self.show_global_settings = false;
         self.show_backend_settings = false;
         self.show_accounts_panel = !should_close;
+        if should_close {
+            self.show_advanced_accounts = false;
+        }
         cx.notify();
     }
 }
@@ -421,6 +426,9 @@ impl Render for InstancesPage {
             .child(content)
             .when(self.data.auth.read(cx).is_active(), |this| {
                 this.child(self.auth_modal(window, cx))
+            })
+            .when(self.show_advanced_accounts, |this| {
+                this.child(self.advanced_accounts_modal(cx))
             })
             .into_any_element()
     }
@@ -1149,6 +1157,7 @@ impl InstancesPage {
                             .label(t::common::close())
                             .on_click(cx.listener(|page, _, _, cx| {
                                 page.show_accounts_panel = false;
+                                page.show_advanced_accounts = false;
                                 cx.notify();
                             })),
                     ),
@@ -1160,17 +1169,70 @@ impl InstancesPage {
             ))
             .child(detail_section(
                 t::accounts::add_account_section(),
-                add_account_section(
-                    self.offline_nickname_input.clone(),
-                    self.telegram_base_url_input.clone(),
-                    self.elyby_client_id_input.clone(),
-                    self.elyby_client_secret_input.clone(),
-                    self.elyby_launcher_name_input.clone(),
-                    sender,
-                    cx,
-                ),
+                add_account_section(self.offline_nickname_input.clone(), sender, cx),
                 cx,
             ))
+    }
+
+    fn advanced_accounts_modal(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let sender = self.data.backend_sender.clone();
+
+        div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().background.opacity(0.88))
+            .child(
+                v_flex()
+                    .w(px(420.0))
+                    .gap_3()
+                    .p_4()
+                    .rounded(cx.theme().radius_lg)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().popover)
+                    .shadow_lg()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_semibold()
+                                    .child(t::accounts::advanced_section()),
+                            )
+                            .child(
+                                Button::new("close-advanced-accounts")
+                                    .label(t::common::close())
+                                    .on_click(cx.listener(|page, _, _, cx| {
+                                        page.show_advanced_accounts = false;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(detail_section(
+                        t::providers::telegram(),
+                        telegram_add_account_section(
+                            self.telegram_base_url_input.clone(),
+                            sender.clone(),
+                        ),
+                        cx,
+                    ))
+                    .child(detail_section(
+                        t::providers::elyby(),
+                        elyby_add_account_section(
+                            self.elyby_client_id_input.clone(),
+                            self.elyby_client_secret_input.clone(),
+                            self.elyby_launcher_name_input.clone(),
+                            sender,
+                        ),
+                        cx,
+                    )),
+            )
     }
 
     fn backend_settings_panel(
@@ -2116,6 +2178,14 @@ fn runtime_section(
                     instance.effective_xmx_mb.unwrap_or(4096),
                 )),
         )
+        .when_some(instance.default_xmx_mb, |this, xmx| {
+            this.child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(t::instances::default_memory(xmx)),
+            )
+        })
         .child(
             v_flex().gap_2().child(Input::new(&memory_input)).child(
                 h_flex()
@@ -2669,12 +2739,8 @@ fn accounts_section(
 
 fn add_account_section(
     offline_nickname: gpui::Entity<InputState>,
-    telegram_base_url: gpui::Entity<InputState>,
-    elyby_client_id: gpui::Entity<InputState>,
-    elyby_client_secret: gpui::Entity<InputState>,
-    elyby_launcher_name: gpui::Entity<InputState>,
     sender: BackendSender,
-    _cx: &mut Context<InstancesPage>,
+    cx: &mut Context<InstancesPage>,
 ) -> gpui::Div {
     v_flex()
         .gap_3()
@@ -2699,64 +2765,76 @@ fn add_account_section(
             ),
         )
         .child(
-            h_flex()
-                .gap_2()
-                .child(Input::new(&telegram_base_url))
-                .child(
-                    Button::new("settings-add-telegram")
-                        .label(t::accounts::add_telegram())
-                        .on_click({
-                            let input = telegram_base_url.clone();
-                            let sender = sender.clone();
-                            move |_, _, cx| {
-                                let auth_base_url = input.read(cx).value().trim().to_string();
-                                if !auth_base_url.is_empty() {
-                                    sender.send(MessageToBackend::StartAddAccount(
-                                        AuthProviderConfig::Telegram(TGAuthProvider {
-                                            auth_base_url,
-                                        }),
-                                    ));
-                                }
-                            }
-                        }),
-                ),
+            Button::new("settings-add-account-advanced")
+                .label(t::accounts::advanced())
+                .on_click(cx.listener(|page, _, _, cx| {
+                    page.show_advanced_accounts = true;
+                    cx.notify();
+                })),
         )
+}
+
+fn telegram_add_account_section(
+    telegram_base_url: gpui::Entity<InputState>,
+    sender: BackendSender,
+) -> gpui::Div {
+    v_flex()
+        .gap_2()
+        .child(Input::new(&telegram_base_url))
         .child(
-            v_flex()
-                .gap_2()
-                .child(Input::new(&elyby_client_id))
-                .child(Input::new(&elyby_client_secret))
-                .child(Input::new(&elyby_launcher_name))
-                .child(
-                    Button::new("settings-add-elyby")
-                        .label(t::accounts::add_elyby())
-                        .on_click({
-                            let client_id_input = elyby_client_id.clone();
-                            let client_secret_input = elyby_client_secret.clone();
-                            let launcher_name_input = elyby_launcher_name.clone();
-                            let sender = sender.clone();
-                            move |_, _, cx| {
-                                let client_id = client_id_input.read(cx).value().trim().to_string();
-                                let client_secret =
-                                    client_secret_input.read(cx).value().trim().to_string();
-                                let launcher_name =
-                                    launcher_name_input.read(cx).value().trim().to_string();
-                                if !client_id.is_empty() && !client_secret.is_empty() {
-                                    sender.send(MessageToBackend::StartAddAccount(
-                                        AuthProviderConfig::ElyBy(ElyByAuthProvider::new(
-                                            client_id,
-                                            client_secret,
-                                            if launcher_name.is_empty() {
-                                                t::auth::default_launcher_name().to_string()
-                                            } else {
-                                                launcher_name
-                                            },
-                                        )),
-                                    ));
-                                }
-                            }
-                        }),
-                ),
+            Button::new("settings-add-telegram")
+                .label(t::accounts::add_telegram())
+                .on_click({
+                    let input = telegram_base_url;
+                    move |_, _, cx| {
+                        let auth_base_url = input.read(cx).value().trim().to_string();
+                        if !auth_base_url.is_empty() {
+                            sender.send(MessageToBackend::StartAddAccount(
+                                AuthProviderConfig::Telegram(TGAuthProvider { auth_base_url }),
+                            ));
+                        }
+                    }
+                }),
+        )
+}
+
+fn elyby_add_account_section(
+    elyby_client_id: gpui::Entity<InputState>,
+    elyby_client_secret: gpui::Entity<InputState>,
+    elyby_launcher_name: gpui::Entity<InputState>,
+    sender: BackendSender,
+) -> gpui::Div {
+    v_flex()
+        .gap_2()
+        .child(Input::new(&elyby_client_id))
+        .child(Input::new(&elyby_client_secret))
+        .child(Input::new(&elyby_launcher_name))
+        .child(
+            Button::new("settings-add-elyby")
+                .label(t::accounts::add_elyby())
+                .on_click({
+                    let client_id_input = elyby_client_id;
+                    let client_secret_input = elyby_client_secret;
+                    let launcher_name_input = elyby_launcher_name;
+                    move |_, _, cx| {
+                        let client_id = client_id_input.read(cx).value().trim().to_string();
+                        let client_secret = client_secret_input.read(cx).value().trim().to_string();
+                        let launcher_name = launcher_name_input.read(cx).value().trim().to_string();
+                        if !client_id.is_empty() && !client_secret.is_empty() {
+                            sender.send(MessageToBackend::StartAddAccount(
+                                AuthProviderConfig::ElyBy(ElyByAuthProvider::new(
+                                    client_id,
+                                    client_secret,
+                                    if launcher_name.is_empty() {
+                                        t::auth::default_launcher_name().to_string()
+                                    } else {
+                                        launcher_name
+                                    },
+                                )),
+                            ));
+                        }
+                    }
+                }),
         )
 }
 
@@ -3056,14 +3134,6 @@ fn action_section(
                 )
             },
         )
-        .when_some(instance.default_xmx_mb, |this, xmx| {
-            this.child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(t::instances::recommended_memory(xmx)),
-            )
-        })
 }
 
 fn status_error(status: &InstanceLiveStatus) -> Option<String> {

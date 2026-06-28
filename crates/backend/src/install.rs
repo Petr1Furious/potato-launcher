@@ -1083,11 +1083,11 @@ mod tests {
 
     #[test]
     fn resolves_remote_install_plan_from_fetched_catalog() {
-        let url = Url::parse("https://example.com/manifest.json").unwrap();
+        let url = Url::parse("https://example.com/data/instance_manifest.json").unwrap();
         let entry = InstanceManifestEntry {
             id: "vanilla".to_string(),
             display_name: None,
-            url: Url::parse("https://example.com/vanilla/meta.json").unwrap(),
+            url: Url::parse("https://example.com/data/instances/vanilla/meta.json").unwrap(),
             sha1: "abc".to_string(),
             auth_backend: None,
             required_java_version: "8".to_string(),
@@ -1231,7 +1231,7 @@ mod tests {
 
     #[test]
     fn resolves_existing_remote_instance_for_update() {
-        let url = Url::parse("https://example.com/manifest.json").unwrap();
+        let url = Url::parse("https://example.com/data/instance_manifest.json").unwrap();
         let local = LocalInstance::new_remote(
             remote_entry_handle(&url, "vanilla"),
             "vanilla".to_string(),
@@ -1244,7 +1244,7 @@ mod tests {
         let entry = InstanceManifestEntry {
             id: "vanilla".to_string(),
             display_name: None,
-            url: Url::parse("https://example.com/vanilla/meta.json").unwrap(),
+            url: Url::parse("https://example.com/data/instances/vanilla/meta.json").unwrap(),
             sha1: "new".to_string(),
             auth_backend: None,
             required_java_version: "8".to_string(),
