@@ -401,6 +401,51 @@ fn mirror_optional_set_removes_stale_path_when_filename_changes() {
 }
 
 #[test]
+fn mirror_preserves_non_jar_mod_files() {
+    let dirs = TestDirs::new();
+    let notes_path = dirs.mods_dir.join("file.txt");
+    std::fs::write(&notes_path, "keep me").unwrap();
+
+    let result = plan(
+        &[],
+        &default_settings(ModSyncMode::Mirror),
+        &dirs.install_params(InstallCause::Run),
+    );
+
+    assert!(
+        !result
+            .tasks
+            .delete_tasks
+            .iter()
+            .any(|task| task.path == notes_path)
+    );
+}
+
+#[test]
+fn force_overwrite_deletes_non_jar_mod_files() {
+    let dirs = TestDirs::new();
+    let notes_path = dirs.mods_dir.join("file.txt");
+    std::fs::write(&notes_path, "remove me").unwrap();
+
+    let result = plan(
+        &[],
+        &default_settings(ModSyncMode::Mirror),
+        &InstallParams {
+            force_overwrite: true,
+            ..dirs.install_params(InstallCause::Update)
+        },
+    );
+
+    assert!(
+        result
+            .tasks
+            .delete_tasks
+            .iter()
+            .any(|task| task.path == notes_path)
+    );
+}
+
+#[test]
 fn force_overwrite_uses_mirror_behavior_in_delta_mode() {
     let dirs = TestDirs::new();
     let extra_path = dirs.mods_dir.join("extra.jar");
@@ -416,10 +461,26 @@ fn force_overwrite_uses_mirror_behavior_in_delta_mode() {
     );
 
     assert_eq!(result.tasks.delete_tasks[0].path, extra_path);
-    assert!(matches!(
-        result.warnings[0],
-        ModSyncWarning::ModRemoved { .. }
-    ));
+    assert!(result.warnings.is_empty());
+}
+
+#[test]
+fn force_overwrite_restores_missing_mod_without_warning() {
+    let dirs = TestDirs::new();
+    let entry = mod_entry("fabric-api", "fabric-api.jar", "aaa");
+
+    let result = plan(
+        std::slice::from_ref(&entry),
+        &default_settings(ModSyncMode::Delta),
+        &InstallParams {
+            previous_mod_entries: vec![entry.clone()],
+            force_overwrite: true,
+            ..dirs.install_params(InstallCause::Update)
+        },
+    );
+
+    assert_eq!(result.tasks.check_tasks.len(), 1);
+    assert!(result.warnings.is_empty());
 }
 
 #[test]

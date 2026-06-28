@@ -90,6 +90,7 @@ struct ModSyncPlanner<'a> {
     settings: &'a ModSyncSettings,
     params: &'a InstallParams,
     local_mods: HashMap<String, Vec<PathBuf>>,
+    local_non_jar_mod_files: Vec<PathBuf>,
     previous: HashMap<&'a str, &'a ModEntry>,
     required: HashSet<&'a str>,
     blocked: HashSet<&'a str>,
@@ -104,11 +105,13 @@ impl<'a> ModSyncPlanner<'a> {
         settings: &'a ModSyncSettings,
         params: &'a InstallParams,
     ) -> Result<Self, ModSyncError> {
+        let scan = scan_mods_dir(&params.instance_dir.mods_dir())?;
         Ok(Self {
             new_entries,
             settings,
             params,
-            local_mods: scan_local_mods(&params.instance_dir.mods_dir())?,
+            local_mods: scan.mods,
+            local_non_jar_mod_files: scan.non_jar_files,
             previous: params
                 .previous_mod_entries
                 .iter()
@@ -216,7 +219,16 @@ impl<'a> ModSyncPlanner<'a> {
         }
 
         self.delete_unallowed_local_mods(&allowed_paths, &active_mod_ids);
+        if self.params.force_overwrite {
+            self.delete_non_jar_mod_files();
+        }
         Ok(())
+    }
+
+    fn delete_non_jar_mod_files(&mut self) {
+        for path in self.local_non_jar_mod_files.clone() {
+            self.push_delete(path);
+        }
     }
 
     fn plan_delta_normal_entry(&mut self, entry: &ModEntry) {
@@ -365,13 +377,14 @@ impl<'a> ModSyncPlanner<'a> {
     }
 
     fn should_warn_added(&self, mod_id: &str) -> bool {
-        self.previous.contains_key(mod_id)
+        !self.params.force_overwrite
+            && self.previous.contains_key(mod_id)
             && !self.local_mods.contains_key(mod_id)
             && !self.optional_mod_to_set.contains_key(mod_id)
     }
 
     fn should_warn_removed(&self, mod_id: &str) -> bool {
-        !self.previous.contains_key(mod_id)
+        !self.params.force_overwrite && !self.previous.contains_key(mod_id)
     }
 
     fn optional_set_enabled(&self, mod_id: &str) -> bool {
@@ -416,16 +429,26 @@ fn optional_mod_to_set(settings: &ModSyncSettings) -> HashMap<&str, &OptionalMod
     map
 }
 
-/// Iterate over `*.jar` files and index them by extracted mod id
-fn scan_local_mods(mods_dir: &Path) -> Result<HashMap<String, Vec<PathBuf>>, ModSyncError> {
+struct LocalModsScan {
+    // mod id -> paths
+    mods: HashMap<String, Vec<PathBuf>>,
+    non_jar_files: Vec<PathBuf>,
+}
+
+fn scan_mods_dir(mods_dir: &Path) -> Result<LocalModsScan, ModSyncError> {
     let mut mods = HashMap::<String, Vec<PathBuf>>::new();
+    let mut non_jar_files = Vec::new();
 
     if !mods_dir.is_dir() {
-        return Ok(mods);
+        return Ok(LocalModsScan {
+            mods,
+            non_jar_files,
+        });
     }
 
     for path in utils::files::get_files_in_dir(mods_dir)? {
         if path.extension().and_then(|ext| ext.to_str()) != Some("jar") {
+            non_jar_files.push(path);
             continue;
         }
         match utils::mod_id::extract_mod_id(&path) {
@@ -441,7 +464,10 @@ fn scan_local_mods(mods_dir: &Path) -> Result<HashMap<String, Vec<PathBuf>>, Mod
         }
     }
 
-    Ok(mods)
+    Ok(LocalModsScan {
+        mods,
+        non_jar_files,
+    })
 }
 
 #[cfg(test)]
