@@ -3498,6 +3498,7 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures",
  "generate",
  "indicatif",
  "instance",

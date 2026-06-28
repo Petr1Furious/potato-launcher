@@ -19,6 +19,7 @@ use utils::{
     progress::ProgressStage,
 };
 
+use crate::java_mirror::mirror_java_runtimes;
 use crate::progress::TerminalProgress;
 
 const INSTANCE_MANIFEST_FILENAME: &str = "instance_manifest.json";
@@ -147,9 +148,28 @@ impl Spec {
 
         let authlib_injector_library =
             mirror_authlib_injector_library(&data_dir, &download_server_base).await?;
+
+        let java_runtimes_by_version = if self.replace_download_urls {
+            let java_versions = all_metadata
+                .iter()
+                .map(|metadata| metadata.get_java_version())
+                .collect::<HashSet<_>>();
+            let mirror_result =
+                mirror_java_runtimes(&client, &data_dir, &download_server_base, &java_versions)
+                    .await?;
+            keep_files.extend(mirror_result.archive_paths);
+            mirror_result.runtimes_by_version
+        } else {
+            std::collections::HashMap::new()
+        };
+
         for metadata in &mut all_metadata {
             if self.replace_download_urls {
                 metadata.authlib_injector = authlib_injector_library.clone();
+                metadata.java_runtimes = java_runtimes_by_version
+                    .get(&metadata.get_java_version())
+                    .cloned()
+                    .unwrap_or_default();
             }
             let instance_dir = InstancesDir::root()
                 .instance_dir(metadata.get_id())

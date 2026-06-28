@@ -25,6 +25,57 @@ pub struct JavaInstallation {
     pub path: PathBuf,
 }
 
+/// Launcher-facing platform identity for Java runtime selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JavaPlatform {
+    pub os: String,
+    pub arch: String,
+}
+
+/// Azul API query target for a specific platform archive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JavaPlatformTarget {
+    /// Azul API `os` query value (e.g. `linux-glibc`).
+    pub azul_os: &'static str,
+    /// Launcher/metadata `os` value (e.g. `linux`).
+    pub launcher_os: &'static str,
+    pub arch: &'static str,
+    pub archive_type: &'static str,
+}
+
+pub const MIRROR_PLATFORM_TARGETS: &[JavaPlatformTarget] = &[
+    JavaPlatformTarget {
+        azul_os: "windows",
+        launcher_os: "windows",
+        arch: "x64",
+        archive_type: "zip",
+    },
+    JavaPlatformTarget {
+        azul_os: "linux-glibc",
+        launcher_os: "linux",
+        arch: "x64",
+        archive_type: "tar.gz",
+    },
+    JavaPlatformTarget {
+        azul_os: "macos",
+        launcher_os: "macos",
+        arch: "x64",
+        archive_type: "tar.gz",
+    },
+    JavaPlatformTarget {
+        azul_os: "macos",
+        launcher_os: "macos",
+        arch: "aarch64",
+        archive_type: "tar.gz",
+    },
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZuluPackage {
+    pub name: String,
+    pub download_url: Url,
+}
+
 lazy_static::lazy_static! {
     static ref JAVA_VERSION_RGX: Regex = Regex::new(r#""(.*)?""#).unwrap();
 }
@@ -34,6 +85,18 @@ const JAVA_BINARY_NAME: &str = "java.exe";
 
 #[cfg(not(target_os = "windows"))]
 const JAVA_BINARY_NAME: &str = "java";
+
+pub fn current_platform() -> JavaPlatform {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" | "amd64" => "x64".to_string(),
+        "aarch64" => "aarch64".to_string(),
+        arch => arch.to_string(),
+    };
+
+    let os = std::env::consts::OS.to_string();
+
+    JavaPlatform { os, arch }
+}
 
 pub async fn get_installation_pub(path: &Path) -> Option<JavaInstallation> {
     get_installation(path).await
@@ -232,29 +295,21 @@ async fn find_java_installations() -> Vec<JavaInstallation> {
 }
 
 #[derive(thiserror::Error, Debug)]
-pub enum JavaParamsError {
-    #[error("unsupported architecture")]
-    UnsupportedArchitecture,
-    #[error("unsupported operating system")]
-    UnsupportedOS,
-}
-
-#[derive(thiserror::Error, Debug)]
 pub enum JavaDownloadError {
-    #[error("failed to build Java download query params: {0}")]
-    Params(#[from] JavaParamsError),
     #[error("no Java versions available")]
     NoJavaVersionsAvailable,
     #[error("downloaded Java installation did not pass validation")]
     InvalidDownloadedJava,
     #[error("Java metadata response does not contain a versions array")]
     NoVersionsArray,
+    #[error("Java metadata response is missing package name")]
+    NoPackageName,
     #[error("Java metadata response is missing download URL")]
     NoDownloadURL,
     #[error("download URL does not contain a file name")]
     NoFileNameInURL,
-    #[error("download URL does not have the expected file extension")]
-    NoFileExtensionInURL,
+    #[error("archive name does not have the expected file extension")]
+    NoFileExtensionInName,
     #[error("network request failed while downloading Java: {0}")]
     Reqwest(#[from] reqwest::Error),
     #[error("failed to parse Java metadata JSON: {0}")]
@@ -267,28 +322,47 @@ pub enum JavaDownloadError {
     Zip(#[from] zip::result::ZipError),
 }
 
-fn get_java_download_params(
+fn get_java_download_params_for_target(
     required_version: &str,
-    archive_type: &str,
-) -> Result<String, JavaParamsError> {
-    let arch = match std::env::consts::ARCH {
-        "x86_64" | "amd64" => "x64",
-        "aarch64" => "aarch64",
-        _ => return Err(JavaParamsError::UnsupportedArchitecture),
+    target: &JavaPlatformTarget,
+) -> String {
+    format!(
+        "java_version={required_version}&os={}&arch={}&archive_type={}&java_package_type=jre&javafx_bundled=false&latest=true&release_status=ga",
+        target.azul_os, target.arch, target.archive_type
+    )
+}
+
+pub async fn query_zulu_package(
+    client: &Client,
+    required_version: &str,
+    target: &JavaPlatformTarget,
+) -> Result<Option<ZuluPackage>, JavaDownloadError> {
+    let query_str = get_java_download_params_for_target(required_version, target);
+    let versions_url = format!("https://api.azul.com/metadata/v1/zulu/packages/?{query_str}");
+
+    let response = client.get(&versions_url).send().await?;
+    let body = response.text().await?;
+    let versions: Value = serde_json::from_str(&body)?;
+
+    let Some(entries) = versions.as_array() else {
+        return Err(JavaDownloadError::NoVersionsArray);
     };
+    if entries.is_empty() {
+        return Ok(None);
+    }
 
-    let os = match std::env::consts::OS {
-        "windows" => "windows",
-        "linux" => "linux-glibc",
-        "macos" => "macos",
-        _ => return Err(JavaParamsError::UnsupportedOS),
-    };
-
-    let params = format!(
-        "java_version={required_version}&os={os}&arch={arch}&archive_type={archive_type}&java_package_type=jre&javafx_bundled=false&latest=true&release_status=ga"
-    );
-
-    Ok(params)
+    let entry = &entries[0];
+    let name = entry["name"]
+        .as_str()
+        .ok_or(JavaDownloadError::NoPackageName)?
+        .to_string();
+    let download_url = entry["download_url"]
+        .as_str()
+        .ok_or(JavaDownloadError::NoDownloadURL)?;
+    Ok(Some(ZuluPackage {
+        name,
+        download_url: Url::parse(download_url)?,
+    }))
 }
 
 pub fn get_temp_dir() -> PathBuf {
@@ -332,84 +406,128 @@ fn install_extracted_java(
     Ok(())
 }
 
+fn archive_root_name<'a>(name: &'a str, archive_type: &str) -> Result<&'a str, JavaDownloadError> {
+    name.strip_suffix(&format!(".{archive_type}"))
+        .ok_or(JavaDownloadError::NoFileExtensionInName)
+}
+
+async fn write_response_to_file(
+    response: reqwest::Response,
+    path: &Path,
+    progress_tracker: &impl ProgressTracker,
+) -> Result<(), JavaDownloadError> {
+    let mut file = fs::File::create(path)?;
+    let total_size = response.content_length().unwrap_or(0);
+    progress_tracker.set_length(total_size);
+
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk)?;
+        progress_tracker.inc(chunk.len() as u64);
+    }
+    progress_tracker.finish();
+    Ok(())
+}
+
+async fn install_java_from_archive(
+    archive_path: &Path,
+    archive_type: &str,
+    archive_name: &str,
+    required_version: &str,
+    data_dir: &DataDir,
+) -> Result<JavaInstallation, JavaDownloadError> {
+    let java_dir = JavaDir::root().to_fs(data_dir);
+    let filename = archive_root_name(archive_name, archive_type)?;
+
+    let target_dir = JavaDir::root()
+        .java_version_dir(required_version)
+        .to_fs(data_dir);
+    if target_dir.exists() {
+        fs::remove_dir_all(&target_dir)?;
+    }
+
+    let archive = fs::File::open(archive_path)?;
+    if archive_type == "tar.gz" {
+        let tar = GzDecoder::new(archive);
+        let mut archive = Archive::new(tar);
+        archive.unpack(&java_dir)?;
+    } else {
+        let mut archive = zip::ZipArchive::new(archive)?;
+        archive.extract(&java_dir)?;
+    }
+
+    install_extracted_java(&java_dir, filename, &target_dir)?;
+
+    let java_path = JavaDir::root()
+        .java_version_dir(required_version)
+        .bin_path(JAVA_BINARY_NAME)
+        .to_fs(data_dir);
+    if !check_java(required_version, &java_path).await {
+        return Err(JavaDownloadError::InvalidDownloadedJava);
+    }
+    get_installation(&java_path)
+        .await
+        .ok_or(JavaDownloadError::InvalidDownloadedJava)
+}
+
+pub async fn download_java_from_runtime(
+    client: &Client,
+    url: &Url,
+    archive_type: &str,
+    archive_name: &str,
+    required_version: &str,
+    data_dir: &DataDir,
+    progress_tracker: impl ProgressTracker,
+) -> Result<JavaInstallation, JavaDownloadError> {
+    let response = client.get(url.clone()).send().await?;
+    let java_download_path = get_temp_dir().join(format!("java_download.{archive_type}"));
+    write_response_to_file(response, &java_download_path, &progress_tracker).await?;
+    install_java_from_archive(
+        &java_download_path,
+        archive_type,
+        archive_name,
+        required_version,
+        data_dir,
+    )
+    .await
+}
+
 pub async fn download_java(
     client: &Client,
     required_version: &str,
     data_dir: &DataDir,
     progress_tracker: impl ProgressTracker,
 ) -> Result<JavaInstallation, JavaDownloadError> {
-    let java_dir = JavaDir::root().to_fs(data_dir);
+    let platform = current_platform();
+    let archive_types = ["tar.gz", "zip"];
 
-    for archive_type in ["tar.gz", "zip"] {
-        let query_str = get_java_download_params(required_version, archive_type)?;
-
-        let versions_url = format!("https://api.azul.com/metadata/v1/zulu/packages/?{query_str}");
-
-        let response = client.get(&versions_url).send().await?;
-        let body = response.text().await?;
-        let versions: Value = serde_json::from_str(&body)?;
-
-        if versions
-            .as_array()
-            .ok_or(JavaDownloadError::NoVersionsArray)?
-            .is_empty()
-        {
+    for archive_type in archive_types {
+        let Some(target) = MIRROR_PLATFORM_TARGETS.iter().find(|target| {
+            target.launcher_os == platform.os
+                && target.arch == platform.arch
+                && target.archive_type == archive_type
+        }) else {
             continue;
-        }
+        };
 
-        let version_url = versions[0]["download_url"]
-            .as_str()
-            .ok_or(JavaDownloadError::NoDownloadURL)?;
-        let response = client.get(version_url).send().await?;
+        let Some(package) = query_zulu_package(client, required_version, target).await? else {
+            continue;
+        };
 
+        let response = client.get(package.download_url.clone()).send().await?;
         let java_download_path = get_temp_dir().join(format!("java_download.{archive_type}"));
-        let mut file = fs::File::create(&java_download_path)?;
+        write_response_to_file(response, &java_download_path, &progress_tracker).await?;
 
-        let total_size = response.content_length().unwrap_or(0);
-        progress_tracker.set_length(total_size);
-
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk)?;
-            progress_tracker.inc(chunk.len() as u64);
-        }
-        progress_tracker.finish();
-
-        let target_dir = JavaDir::root()
-            .java_version_dir(required_version)
-            .to_fs(data_dir);
-        if target_dir.exists() {
-            fs::remove_dir_all(&target_dir)?;
-        }
-
-        let archive = fs::File::open(&java_download_path)?;
-        if archive_type == "tar.gz" {
-            let tar = GzDecoder::new(archive);
-            let mut archive = Archive::new(tar);
-            archive.unpack(&java_dir)?;
-        } else {
-            let mut archive = zip::ZipArchive::new(archive)?;
-            archive.extract(&java_dir)?;
-        }
-
-        let url = Url::parse(version_url)?;
-        let filename = url
-            .path_segments()
-            .and_then(|mut segments| segments.next_back())
-            .ok_or(JavaDownloadError::NoFileNameInURL)?
-            .strip_suffix(&format!(".{archive_type}"))
-            .ok_or(JavaDownloadError::NoFileExtensionInURL)?;
-        install_extracted_java(&java_dir, filename, &target_dir)?;
-
-        let java_path = JavaDir::root()
-            .java_version_dir(required_version)
-            .bin_path(JAVA_BINARY_NAME)
-            .to_fs(data_dir);
-        if !check_java(required_version, &java_path).await {
-            return Err(JavaDownloadError::InvalidDownloadedJava);
-        }
-        if let Some(installation) = get_installation(&java_path).await {
+        if let Ok(installation) = install_java_from_archive(
+            &java_download_path,
+            archive_type,
+            &package.name,
+            required_version,
+            data_dir,
+        )
+        .await
+        {
             return Ok(installation);
         }
     }

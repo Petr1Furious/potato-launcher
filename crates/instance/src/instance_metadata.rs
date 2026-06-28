@@ -17,6 +17,7 @@ use utils::{
 
 use crate::{
     assets::{AssetIndex, AssetsMetadata},
+    java_runtime::JavaRuntime,
     localized::LocalizedString,
     mod_sync::{ModSyncError, build_mod_sync_plan},
     os::{get_os_name, get_system_arch},
@@ -207,6 +208,10 @@ pub struct InstanceMetadata {
     #[serde(default = "crate::authlib::default_authlib_injector_library")]
     pub authlib_injector: Library,
 
+    /// Mirrored Zulu JRE archives for each supported platform (populated by instance-builder).
+    #[serde(default)]
+    pub java_runtimes: Vec<JavaRuntime>,
+
     /// default JVM RAM limit (`-Xmx`) for this version
     /// e.g. "8192M"
     pub default_xmx: Option<String>,
@@ -348,6 +353,12 @@ impl InstanceMetadata {
             .and_then(|metadata| metadata.java_version.as_ref())
             .map(|x| x.major_version.to_string())
             .unwrap_or_else(|| "8".to_string())
+    }
+
+    pub fn find_java_runtime(&self, version: &str, os: &str, arch: &str) -> Option<&JavaRuntime> {
+        self.java_runtimes
+            .iter()
+            .find(|runtime| runtime.matches_platform(version, os, arch))
     }
 
     pub fn get_id(&self) -> &str {
@@ -734,6 +745,7 @@ mod tests {
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: Vec::new(),
             authlib_injector: crate::authlib::default_authlib_injector_library(),
+            java_runtimes: Vec::new(),
             default_xmx: None,
             versions: Vec::new(),
             overrides_applied: true,

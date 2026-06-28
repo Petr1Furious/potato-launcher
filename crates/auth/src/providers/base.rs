@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::warn;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    flow::{AuthMessageProvider, AuthState},
-    providers::elyby::elyby_default_launcher_name,
-};
+use crate::flow::{AuthMessageProvider, AuthState};
 
 use super::{
     elyby::{ElyByAuthError, ElyByAuthProvider},
@@ -123,48 +119,6 @@ impl Default for AuthProviderConfig {
 }
 
 impl AuthProviderConfig {
-    pub fn legacy_from_id(id: &str) -> Self {
-        let mut iter = id.split('_');
-        let provider_name = iter.next().unwrap_or("");
-        let args: Vec<&str> = iter.collect();
-        match provider_name {
-            "telegram" => {
-                if args.len() == 1 {
-                    AuthProviderConfig::Telegram(TGAuthProvider {
-                        auth_base_url: args[0].to_string(),
-                    })
-                } else {
-                    warn!("Invalid arguments for telegram provider: {args:?}");
-                    AuthProviderConfig::default()
-                }
-            }
-            "elyby" => {
-                if args.len() == 3 {
-                    AuthProviderConfig::ElyBy(ElyByAuthProvider {
-                        client_id: args[0].to_string(),
-                        client_secret: args[1].to_string(),
-                        launcher_name: args[2].to_string(),
-                    })
-                } else if args.len() == 2 {
-                    AuthProviderConfig::ElyBy(ElyByAuthProvider {
-                        client_id: args[0].to_string(),
-                        client_secret: args[1].to_string(),
-                        launcher_name: elyby_default_launcher_name(),
-                    })
-                } else {
-                    warn!("Invalid arguments for elyby provider: {args:?}");
-                    AuthProviderConfig::default()
-                }
-            }
-            "microsoft" => AuthProviderConfig::Microsoft(MicrosoftAuthProvider {}),
-            "offline" => AuthProviderConfig::Offline(OfflineAuthProvider {}),
-            _ => {
-                warn!("Unknown auth backend id: {id}");
-                AuthProviderConfig::default()
-            }
-        }
-    }
-
     pub fn get_type(&self) -> AuthProviderType {
         match self {
             AuthProviderConfig::Microsoft(_) => AuthProviderType::Microsoft,

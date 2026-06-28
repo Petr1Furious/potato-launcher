@@ -131,7 +131,7 @@ You can keep common settings in `scripts/remote-instance.json`. See [`scripts/re
 ## Root fields
 
 - **download_server_base** (required): Base URL where generated files are deployed. Files must be reachable at `<download_server_base>/<relative-path>`. Typically `https://your.domain/data`.
-- **replace_download_urls**: If `true`, libraries, assets, and included files are served from your server. If `false`, Mojang/upstream URLs are kept where possible; only metadata, content rules, and Forge patched jars come from your server. Default: `false`.
+- **replace_download_urls**: If `true`, libraries, assets, included files, and Zulu JRE runtimes are served from your server. If `false`, Mojang/upstream URLs are kept where possible; only metadata, content rules, and Forge patched jars come from your server. Default: `false`.
 - **resources_url_base**: Optional override for the assets base URL. When omitted, assets follow `replace_download_urls` (Mojang servers if `false`, your `download_server_base` if `true`). The backend can also set this from the `RESOURCES_URL_BASE` environment variable.
 - **instances** (required): Array of instance specs (see below).
 

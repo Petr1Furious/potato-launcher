@@ -696,6 +696,7 @@ impl InstanceGenerator {
                 resources_url_base,
                 extra_forge_libs,
                 authlib_injector,
+                java_runtimes: vec![],
                 default_xmx: self.spec.default_xmx,
                 versions: metadata,
                 overrides_applied: true,

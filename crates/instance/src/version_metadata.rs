@@ -744,6 +744,7 @@ impl VersionMetadata {
             resources_url_base: ResourcesUrlBase::default(),
             extra_forge_libs: vec![],
             authlib_injector: default_authlib_injector_library(),
+            java_runtimes: vec![],
             default_xmx: None,
             versions: vec![self],
             overrides_applied: false,

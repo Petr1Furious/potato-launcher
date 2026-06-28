@@ -18,6 +18,7 @@ const LOCAL_INSTANCE_FILE_NAME: &str = "local_instance.json";
 const INSTANCE_SETTINGS_FILE_NAME: &str = "settings.json";
 const AUTH_DATA_FILE_NAME: &str = "auth_data.json";
 const JAVA_DIR_NAME: &str = "java";
+const JAVA_MIRROR_DIR_NAME: &str = "java_mirror";
 const LOGS_DIR_NAME: &str = "logs";
 const LIBRARIES_DIR_NAME: &str = "libraries";
 const NATIVES_DIR_NAME: &str = "natives";
@@ -159,6 +160,9 @@ path_type!(OptionalModsDir, dir);
 path_type!(InstanceMetaPath, file);
 path_type!(LocalInstanceDescriptorPath, file);
 path_type!(InstanceSettingsPath, file);
+path_type!(JavaMirrorDir, dir);
+path_type!(JavaMirrorVersionDir, dir);
+path_type!(JavaMirrorArchivePath, file);
 path_type!(JavaBinPath, file);
 path_type!(AuthDataPath, file);
 path_type!(MetadataPath, file);
@@ -355,6 +359,22 @@ impl JavaDir {
 impl JavaVersionDir {
     pub fn bin_path(&self, binary_name: &str) -> JavaBinPath {
         JavaBinPath(self.0.join("bin").join(binary_name))
+    }
+}
+
+impl JavaMirrorDir {
+    pub fn root() -> Self {
+        Self(Rel::new(JAVA_MIRROR_DIR_NAME))
+    }
+
+    pub fn version_dir(&self, version: &str) -> JavaMirrorVersionDir {
+        JavaMirrorVersionDir(self.0.join(version))
+    }
+}
+
+impl JavaMirrorVersionDir {
+    pub fn archive_path(&self, name: &str) -> JavaMirrorArchivePath {
+        JavaMirrorArchivePath(self.0.join(name))
     }
 }
 

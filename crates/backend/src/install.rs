@@ -982,7 +982,21 @@ pub(crate) async fn resolve_java(
     java_progress.set_message(launcher_i18n::progress::installing_java_version(
         java_version.clone(),
     ));
-    java::download_java(client, &java_version, data_dir, java_progress).await?;
+    let platform = utils::java::current_platform();
+    if let Some(runtime) = metadata.find_java_runtime(&java_version, &platform.os, &platform.arch) {
+        java::download_java_from_runtime(
+            client,
+            &runtime.url,
+            &runtime.archive_type,
+            &runtime.name,
+            &java_version,
+            data_dir,
+            java_progress,
+        )
+        .await?;
+    } else {
+        java::download_java(client, &java_version, data_dir, java_progress).await?;
+    }
     java::get_java(&java_version, data_dir)
         .await
         .ok_or_else(|| anyhow::anyhow!("Java {java_version} is still missing after download"))

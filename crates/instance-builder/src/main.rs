@@ -1,3 +1,4 @@
+mod java_mirror;
 mod progress;
 mod spec;
 

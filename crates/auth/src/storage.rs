@@ -20,7 +20,6 @@ pub struct StorageAccountEntry {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AuthStorageData {
-    version: u32,
     providers: HashMap<AuthProviderId, AuthProviderConfig>,
     accounts: Vec<StorageAccountEntry>,
 }
@@ -29,8 +28,6 @@ pub struct AuthStorage {
     disk_path: PathBuf,
     storage: AuthStorageData,
 }
-
-const LATEST_STORAGE_VERSION: u32 = 1;
 
 #[derive(thiserror::Error, Debug)]
 pub enum AuthStorageError {
@@ -49,7 +46,6 @@ impl AuthStorage {
         Self {
             disk_path: auth_data_path,
             storage: AuthStorageData {
-                version: LATEST_STORAGE_VERSION,
                 providers: HashMap::new(),
                 accounts: Vec::new(),
             },
@@ -68,37 +64,11 @@ impl AuthStorage {
             json!({})
         };
         let value_object = value.as_object().ok_or(AuthStorageError::InvalidRootType)?;
-        let storage = if !value_object.is_empty()
-            && value_object
-                .get("version")
-                .and_then(|v| v.as_number())
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                < LATEST_STORAGE_VERSION.into()
-        {
-            let legacy_storage: HashMap<String, HashMap<String, AccountData>> =
-                serde_json::from_value(value)?;
-            let mut res = AuthStorageData {
-                version: LATEST_STORAGE_VERSION,
+        let storage = if value_object.is_empty() {
+            AuthStorageData {
                 providers: HashMap::new(),
                 accounts: Vec::new(),
-            };
-            let mut provider_map = HashMap::new();
-            for (provider_id, users) in legacy_storage {
-                let provider_uuid = provider_map
-                    .entry(provider_id.clone())
-                    .or_insert(Uuid::new_v4());
-                res.providers
-                    .entry(*provider_uuid)
-                    .or_insert(AuthProviderConfig::legacy_from_id(&provider_id));
-                for (_, auth_data) in users {
-                    res.accounts.push(StorageAccountEntry {
-                        auth_data,
-                        provider_id: *provider_uuid,
-                    });
-                }
             }
-            res
         } else {
             serde_json::from_value(value)?
         };
