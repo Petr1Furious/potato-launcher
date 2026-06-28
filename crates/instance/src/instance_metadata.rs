@@ -92,8 +92,44 @@ pub struct ContentRule {
     pub path: RelativePathBuf,
     #[serde(default)]
     pub apply_on: ApplyOn,
+    /// If set, the rule will be skipped if the client has already
+    /// recorded a version >= this one for the same path and kind.
+    /// This allows one-time rules and is useful for config_options
+    /// patches that should be applied once and then leave the value
+    /// alone, even if the player later changes it.
+    ///
+    /// If not set, the rule will be applied on every sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
     #[serde(flatten)]
     pub kind: RuleKind,
+}
+
+impl ContentRule {
+    fn kind_tag(&self) -> &'static str {
+        match self.kind {
+            RuleKind::File(_) => "file",
+            RuleKind::ConfigOptions(_) => "config_options",
+            RuleKind::Directory(_) => "directory",
+        }
+    }
+
+    fn version_key(&self) -> (String, &'static str) {
+        (self.path.normalize().into_string(), self.kind_tag())
+    }
+}
+
+fn previous_rule_versions(rules: &[ContentRule]) -> HashMap<(String, &'static str), u32> {
+    let mut versions: HashMap<(String, &'static str), u32> = HashMap::new();
+    for rule in rules {
+        if let Some(version) = rule.version {
+            versions
+                .entry(rule.version_key())
+                .and_modify(|current| *current = (*current).max(version))
+                .or_insert(version);
+        }
+    }
+    versions
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -484,6 +520,8 @@ impl InstanceMetadata {
         let mut tasks = TaskSet::default();
         let mut seen_paths: HashSet<PathBuf> = HashSet::new();
 
+        let previous_versions = previous_rule_versions(&params.previous_content_rules);
+
         let mut include_file = |object: &Object, path: PathBuf, overwrite: bool| {
             if overwrite || !path.exists() {
                 tasks.check_tasks.push(CheckTask {
@@ -503,6 +541,17 @@ impl InstanceMetadata {
             if entry.apply_on == ApplyOn::Update && params.cause != InstallCause::Update {
                 continue;
             }
+
+            let apply_versioned = match entry.version {
+                None => true,
+                Some(required) => {
+                    params.force_overwrite
+                        || previous_versions
+                            .get(&entry.version_key())
+                            .is_none_or(|applied| *applied < required)
+                }
+            };
+
             match &entry.kind {
                 RuleKind::File(action) => {
                     let object = action.object.as_ref().ok_or_else(|| {
@@ -511,29 +560,44 @@ impl InstanceMetadata {
                     if entry.path != object.path {
                         return Err(InstanceMetadataError::PathMismatch(entry.path.to_string()));
                     }
-                    include_file(object, entry_path.clone(), action.overwrite);
+                    if apply_versioned {
+                        include_file(object, entry_path.clone(), action.overwrite);
+                    }
                     seen_paths.insert(entry_path);
                 }
                 RuleKind::ConfigOptions(action) => {
-                    tasks.config_option_tasks.push(ConfigOptionTask {
-                        path: entry_path,
-                        config_type: action.config_type,
-                        options: action.options.clone(),
-                    });
+                    if apply_versioned {
+                        tasks.config_option_tasks.push(ConfigOptionTask {
+                            path: entry_path,
+                            config_type: action.config_type,
+                            options: action.options.clone(),
+                        });
+                    }
                 }
                 RuleKind::Directory(action) => {
-                    if action.skip_if_dir_exists
+                    if !apply_versioned {
+                        // record managed paths so a less-specific delete_extra does not
+                        // remove them while this rule is skipped for this version
+                        seen_paths.extend(action.objects.iter().map(|object| {
+                            object.path.to_path(params.instance_dir.minecraft_dir())
+                        }));
+                        continue;
+                    }
+                    if !params.force_overwrite
+                        && action.skip_if_dir_exists
                         && entry_path.exists()
                         && entry_path.join(COMPLETION_MARKER_FILE).exists()
                     {
                         continue;
                     }
+                    let overwrite = params.force_overwrite || action.overwrite;
+                    let delete_extra = params.force_overwrite || action.delete_extra;
                     for object in action.objects.iter() {
                         let path = object.path.to_path(params.instance_dir.minecraft_dir());
-                        include_file(object, path.clone(), action.overwrite);
+                        include_file(object, path.clone(), overwrite);
                         seen_paths.insert(path);
                     }
-                    if action.delete_extra || params.force_overwrite {
+                    if delete_extra {
                         let dir_path = entry.path.to_path(params.instance_dir.minecraft_dir());
                         for file in files::get_files_ignore_paths(&dir_path, &seen_paths) {
                             tasks.delete_tasks.push(DeleteTask { path: file.clone() });

@@ -204,10 +204,14 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     )
     .await?;
 
-    let previous_mod_entries = InstanceMetadata::read_local(&instance_dir)
-        .await
-        .ok()
-        .map(|metadata| metadata.mod_entries)
+    let previous_metadata = InstanceMetadata::read_local(&instance_dir).await.ok();
+    let previous_mod_entries = previous_metadata
+        .as_ref()
+        .map(|metadata| metadata.mod_entries.clone())
+        .unwrap_or_default();
+    let previous_content_rules = previous_metadata
+        .as_ref()
+        .map(|metadata| metadata.content_rules.clone())
         .unwrap_or_default();
     let optional_sets_enabled = mod_sync::resolve_optional_set_enabled(
         &metadata.mod_sync,
@@ -218,6 +222,7 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
         cause: request.cause,
         force_overwrite: request.force_overwrite,
         previous_mod_entries,
+        previous_content_rules,
         optional_sets_enabled,
     };
     install_game_files(
@@ -303,6 +308,7 @@ async fn install_local_only_instance(
         .await
         .map_err(|err| anyhow!("failed to read local instance metadata: {err}"))?;
     let previous_mod_entries = metadata.mod_entries.clone();
+    let previous_content_rules = metadata.content_rules.clone();
     let optional_sets_enabled = mod_sync::resolve_optional_set_enabled(
         &metadata.mod_sync,
         &request.optional_mod_preferences,
@@ -312,6 +318,7 @@ async fn install_local_only_instance(
         cause: InstallCause::Run,
         force_overwrite: request.force_overwrite,
         previous_mod_entries,
+        previous_content_rules,
         optional_sets_enabled,
     };
 

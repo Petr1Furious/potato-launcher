@@ -64,66 +64,67 @@ You can keep common settings in `scripts/remote-instance.json`. See [`scripts/re
 
 ```json
 {
-    "download_server_base": "string",
-    "replace_download_urls": "boolean",
-    "resources_url_base": "string",
-    "instances": [
+  "download_server_base": "string",
+  "replace_download_urls": "boolean",
+  "resources_url_base": "string",
+  "instances": [
+    {
+      "id": "string",
+      "display_name": {
+        "en": "Minigames",
+        "ru": "Миниигры"
+      },
+      "minecraft_version": "string",
+      "mod_loader": "string",
+      "loader_version": "string",
+      "source_root": "string",
+      "content_rules": [
         {
+          "path": "string",
+          "apply_on": "update | always",
+          "type": "file",
+          "overwrite": "boolean"
+        },
+        {
+          "path": "string",
+          "apply_on": "update | always",
+          "type": "directory",
+          "overwrite": "boolean",
+          "delete_extra": "boolean",
+          "skip_if_dir_exists": "boolean"
+        },
+        {
+          "path": "string",
+          "apply_on": "update | always",
+          "version": "number",
+          "type": "config_options",
+          "config_type": "json | yaml | toml | properties",
+          "options": []
+        }
+      ],
+      "mod_sync": {
+        "mode": "delta | mirror | mirror_fast",
+        "required": ["string (mod-id)"],
+        "blocked": ["string (mod-id)"],
+        "optional_sets": [
+          {
             "id": "string",
             "display_name": {
-                "en": "Minigames",
-                "ru": "Миниигры"
+              "en": "Extras",
+              "ru": "Дополнительные"
             },
-            "minecraft_version": "string",
-            "mod_loader": "string",
-            "loader_version": "string",
-            "source_root": "string",
-            "content_rules": [
-                {
-                    "path": "string",
-                    "apply_on": "update | always",
-                    "type": "file",
-                    "overwrite": "boolean"
-                },
-                {
-                    "path": "string",
-                    "apply_on": "update | always",
-                    "type": "directory",
-                    "overwrite": "boolean",
-                    "delete_extra": "boolean",
-                    "skip_if_dir_exists": "boolean"
-                },
-                {
-                    "path": "string",
-                    "apply_on": "update | always",
-                    "type": "config_options",
-                    "config_type": "json | yaml | toml | properties",
-                    "options": []
-                }
-            ],
-            "mod_sync": {
-                "mode": "delta | mirror | mirror_fast",
-                "required": ["string (mod-id)"],
-                "blocked": ["string (mod-id)"],
-                "optional_sets": [
-                    {
-                        "id": "string",
-                        "display_name": {
-                            "en": "Extras",
-                            "ru": "Дополнительные"
-                        },
-                        "enabled_by_default": "boolean",
-                        "mod_ids": ["string (mod-id)"]
-                    }
-                ]
-            },
-            "resource_sync": "on_update | always | always_fast",
-            "auth_backend": {
-                "type": "string"
-            },
-            "default_xmx": "string"
-        }
-    ]
+            "enabled_by_default": "boolean",
+            "mod_ids": ["string (mod-id)"]
+          }
+        ]
+      },
+      "resource_sync": "on_update | always | always_fast",
+      "auth_backend": {
+        "type": "string"
+      },
+      "default_xmx": "string"
+    }
+  ]
 }
 ```
 
@@ -152,11 +153,21 @@ You can keep common settings in `scripts/remote-instance.json`. See [`scripts/re
 
 Each rule is a tagged object. Shared fields:
 
-| Field      | Applies to | Default  | Description                                                   |
-| ---------- | ---------- | -------- | ------------------------------------------------------------- |
-| `path`     | all        | —        | Path relative to `source_root`                                |
-| `type`     | all        | —        | `file`, `directory`, or `config_options`                      |
-| `apply_on` | all        | `update` | `update` = only on instance update; `always` = on each launch |
+| Field      | Applies to | Default          | Description                                                                                         |
+| ---------- | ---------- | ---------------- | --------------------------------------------------------------------------------------------------- |
+| `path`     | all        | —                | Path relative to `source_root`                                                                      |
+| `type`     | all        | —                | `file`, `directory`, or `config_options`                                                            |
+| `apply_on` | all        | `update`         | `update` = only on instance update; `always` = on each launch                                       |
+| `version`  | all        | — (always apply) | Optional integer. Apply the rule only once per value, re-applying after you increase it (see below) |
+
+### Versioned (one-time) rules
+
+By default a rule is applied on every sync. Set `version` to an integer to make it a one-time rule instead: the launcher records the applied version per rule (matched by `path` + `type`) and re-applies the rule only after you increase `version` in the pack. This is mainly useful for `config_options` patches that should be applied once and then leave the value alone, even if the player later changes it.
+
+- First install, or a higher `version` than the client has recorded: the rule runs, then the new version is recorded.
+- Same `version` the client already recorded: the rule is skipped.
+
+Omit `version` to keep the default behavior of applying the rule on every sync.
 
 ### `type: "file"`
 
@@ -170,13 +181,13 @@ Sync a single file. The builder hashes the file and records download metadata.
 
 Sync a directory tree.
 
-| Field                | Default | Description                                                    |
-| -------------------- | ------- | -------------------------------------------------------------- |
-| `overwrite`          | `true`  | Re-check/download per-file even if it exists locally           |
-| `delete_extra`       | `true`  | Delete local directory files not in the remote manifest        |
-| `skip_if_dir_exists` | `false` | Skip rule if directory exists with `.download_complete` marker |
+| Field                | Default | Description                                                                     |
+| -------------------- | ------- | ------------------------------------------------------------------------------- |
+| `overwrite`          | `true`  | Re-check/download per-file even if it exists locally                            |
+| `delete_extra`       | `true`  | Delete local directory files not in the remote manifest                         |
+| `skip_if_dir_exists` | `false` | Skip the entire rule if the directory exists with a `.download_complete` marker |
 
-`overwrite: true` still forces per-file re-check regardless of `skip_if_dir_exists`.
+When `skip_if_dir_exists` is true and the marker is present, the rule does not run: no per-file checks and no deletions, regardless of `overwrite` or `delete_extra`.
 
 ### `type: "config_options"`
 
@@ -195,11 +206,11 @@ Example:
 
 ```json
 {
-    "path": "config/zoomify.json",
-    "apply_on": "update",
-    "type": "config_options",
-    "config_type": "json",
-    "options": [{ "key": ["initialZoom"], "value": 4 }]
+  "path": "config/zoomify.json",
+  "apply_on": "update",
+  "type": "config_options",
+  "config_type": "json",
+  "options": [{ "key": ["initialZoom"], "value": 4 }]
 }
 ```
 

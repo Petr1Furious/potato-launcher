@@ -79,6 +79,7 @@ impl TestDirs {
             cause,
             force_overwrite: false,
             previous_mod_entries: Vec::new(),
+            previous_content_rules: Vec::new(),
             optional_sets_enabled: HashMap::new(),
         }
     }

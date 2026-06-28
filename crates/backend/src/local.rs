@@ -199,6 +199,7 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
             cause: InstallCause::Update,
             force_overwrite: false,
             previous_mod_entries: Vec::new(),
+            previous_content_rules: Vec::new(),
             optional_sets_enabled: HashMap::new(),
         },
         &progress,
