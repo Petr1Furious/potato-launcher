@@ -30,9 +30,8 @@ pub enum FabricGeneratorError {
 }
 
 impl FabricVersionsMeta {
-    pub async fn fetch(game_version: &str) -> Result<Self, FabricGeneratorError> {
+    pub async fn fetch(client: &Client, game_version: &str) -> Result<Self, FabricGeneratorError> {
         let fabric_manifest_url = format!("{FABRIC_META_BASE_URL}{game_version}");
-        let client = Client::new();
         let response = client
             .get(&fabric_manifest_url)
             .send()
@@ -91,7 +90,7 @@ impl FabricGenerator {
         let fabric_version = match &self.loader_version {
             Some(loader_version) => loader_version.clone(),
             None => {
-                let meta = FabricVersionsMeta::fetch(&self.minecraft_version).await?;
+                let meta = FabricVersionsMeta::fetch(client, &self.minecraft_version).await?;
                 let version =
                     meta.get_latest_version()
                         .ok_or(FabricGeneratorError::NoVersionsFound(

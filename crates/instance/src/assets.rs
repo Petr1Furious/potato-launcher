@@ -58,9 +58,14 @@ pub enum AssetsMetadataError {
 }
 
 impl AssetsMetadata {
-    pub async fn fetch(url: &str) -> Result<Self, AssetsMetadataError> {
-        let client = Client::new();
-        let response = client.get(url).send().await?.json().await?;
+    pub async fn fetch(client: &Client, url: &str) -> Result<Self, AssetsMetadataError> {
+        let response = client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
         Ok(response)
     }
 

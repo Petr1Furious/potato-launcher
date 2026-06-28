@@ -240,6 +240,7 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
 
     if request.cause == InstallCause::Update {
         let installation = resolve_java(
+            &request.client,
             &metadata,
             &request.launcher_dir,
             request.java_path.as_deref(),
@@ -947,6 +948,7 @@ pub(crate) fn persist_java_installation(
 }
 
 pub(crate) async fn resolve_java(
+    client: &reqwest::Client,
     metadata: &InstanceMetadata,
     data_dir: &DataDir,
     stored_path: Option<&str>,
@@ -980,7 +982,7 @@ pub(crate) async fn resolve_java(
     java_progress.set_message(launcher_i18n::progress::installing_java_version(
         java_version.clone(),
     ));
-    java::download_java(&java_version, data_dir, java_progress).await?;
+    java::download_java(client, &java_version, data_dir, java_progress).await?;
     java::get_java(&java_version, data_dir)
         .await
         .ok_or_else(|| anyhow::anyhow!("Java {java_version} is still missing after download"))

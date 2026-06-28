@@ -333,12 +333,12 @@ fn install_extracted_java(
 }
 
 pub async fn download_java(
+    client: &Client,
     required_version: &str,
     data_dir: &DataDir,
     progress_tracker: impl ProgressTracker,
 ) -> Result<JavaInstallation, JavaDownloadError> {
     let java_dir = JavaDir::root().to_fs(data_dir);
-    let client = Client::new();
 
     for archive_type in ["tar.gz", "zip"] {
         let query_str = get_java_download_params(required_version, archive_type)?;

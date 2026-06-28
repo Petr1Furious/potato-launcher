@@ -67,7 +67,7 @@ async fn fetch_loader_versions(
 ) -> Result<Vec<String>, String> {
     match loader {
         LocalLoader::Vanilla => Ok(vec![]),
-        LocalLoader::Fabric => FabricVersionsMeta::fetch(minecraft_version)
+        LocalLoader::Fabric => FabricVersionsMeta::fetch(client, minecraft_version)
             .await
             .map(|meta| {
                 meta.get_versions()

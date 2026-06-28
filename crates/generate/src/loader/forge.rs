@@ -237,6 +237,7 @@ const NEOFORGE_INSTALLER_BASE_URL: &str =
     "https://maven.neoforged.net/releases/net/neoforged/neoforge/";
 
 async fn download_forge_installer(
+    client: &Client,
     full_version: &str,
     work_dir: &Path,
     loader: &Loader,
@@ -248,7 +249,6 @@ async fn download_forge_installer(
     };
     let forge_installer_path = work_dir.join(filename);
 
-    let client = Client::new();
     let response = client
         .get(&forge_installer_url)
         .send()
@@ -471,6 +471,7 @@ async fn run_forge_command(
 }
 
 pub async fn install_forge(
+    client: &Client,
     forge_work_dir: &Path,
     launcher_data_dir: &DataDir,
     forge_version: &str,
@@ -501,6 +502,7 @@ pub async fn install_forge(
             info!("Java installation not found, downloading");
 
             java_installation = download_java(
+                client,
                 &java_version,
                 launcher_data_dir,
                 progress::no_progress_bar(),
@@ -514,7 +516,7 @@ pub async fn install_forge(
             Loader::Neoforge => forge_version.to_string(),
         };
         let forge_installer_path =
-            download_forge_installer(&full_version, forge_work_dir, loader).await?;
+            download_forge_installer(client, &full_version, forge_work_dir, loader).await?;
 
         trick_forge(forge_work_dir, minecraft_version)?;
 
@@ -666,6 +668,7 @@ impl<'a> ForgeGenerator<'a> {
             .join(get_full_version(&minecraft_version, &forge_version));
         let launcher_data_dir = DataDir::new(work_dir.to_path_buf());
         let id = install_forge(
+            client,
             &installer_work_dir,
             &launcher_data_dir,
             &forge_version,

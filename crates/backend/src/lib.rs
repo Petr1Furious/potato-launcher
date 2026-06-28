@@ -1689,6 +1689,7 @@ impl BackendState {
         };
         let stored_java_path = self.load_settings_for_id(&instance).java_path.clone();
         let launcher_dir = self.launcher_dir.clone();
+        let client = self.client.clone();
 
         tokio::spawn(async move {
             let data_dir = utils::paths::DataDir::new(launcher_dir);
@@ -1711,6 +1712,7 @@ impl BackendState {
             let progress =
                 install::BackendProgressReporter::new(instance.clone(), internal.clone());
             match install::resolve_java(
+                &client,
                 &metadata,
                 &data_dir,
                 stored_java_path.as_deref(),
@@ -1845,9 +1847,14 @@ impl BackendState {
                 let metadata = launch::read_metadata(&instance_dir).await?;
                 let progress =
                     install::BackendProgressReporter::new(launch_handle.clone(), internal.clone());
-                let java =
-                    install::resolve_java(&metadata, &data_dir, java_path.as_deref(), &progress)
-                        .await?;
+                let java = install::resolve_java(
+                    &client,
+                    &metadata,
+                    &data_dir,
+                    java_path.as_deref(),
+                    &progress,
+                )
+                .await?;
                 install::persist_java_installation(launch_handle.clone(), &java, &internal);
                 let _ = internal.send(BackendEvent::LaunchPrepFinished {
                     handle: launch_handle.clone(),

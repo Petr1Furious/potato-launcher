@@ -207,7 +207,7 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     )
     .await?;
 
-    let installation = resolve_java(&metadata, &data_dir, None, &progress).await?;
+    let installation = resolve_java(&request.client, &metadata, &data_dir, None, &progress).await?;
     persist_java_installation(request.handle.clone(), &installation, &internal);
 
     let instance = LocalInstance::new_local_with_handle(request.handle, request.dir_name);
