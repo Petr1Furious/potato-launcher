@@ -189,6 +189,7 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         (account_data != original_account_data).then(|| (provider.clone(), account_data.clone()));
     let java = request.java;
     let minecraft_dir_short = instance_dir.minecraft_dir();
+    tokio::fs::create_dir_all(&minecraft_dir_short).await?;
     let minecraft_dir_game = game_directory_for_launch(&minecraft_dir_short)?;
     let args = build_launch_arguments(&LaunchBuildContext {
         metadata: &metadata,
@@ -203,8 +204,6 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         data_dir: &data_dir,
         game_directory: &minecraft_dir_game,
     })?;
-
-    tokio::fs::create_dir_all(&minecraft_dir_short).await?;
 
     let logs_dir = LogsDir::root().to_fs(&data_dir);
     tokio::fs::create_dir_all(&logs_dir).await?;
