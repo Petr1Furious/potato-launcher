@@ -8,6 +8,7 @@ anyhow.workspace = true
 open.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
+gpui-component-assets.workspace = true
 gpui_platform.workspace = true
 launcher-build-config = { path = "../build-config" }
 launcher-bridge = { path = "../bridge" }

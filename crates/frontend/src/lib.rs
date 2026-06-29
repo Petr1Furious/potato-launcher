@@ -31,75 +31,77 @@ pub fn start(
     backend_sender: BackendSender,
     mut receiver: FrontendReceiver,
 ) -> anyhow::Result<()> {
-    gpui_platform::application().run(move |cx: &mut App| {
-        gpui_component::init(cx);
-        gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
-        cx.bind_keys([
-            #[cfg(target_os = "macos")]
-            KeyBinding::new("cmd-q", Quit, None),
-            #[cfg(not(target_os = "macos"))]
-            KeyBinding::new("alt-f4", Quit, None),
-        ]);
-        cx.on_action(|_: &Quit, cx: &mut App| {
-            cx.quit();
-        });
+    gpui_platform::application()
+        .with_assets(gpui_component_assets::Assets)
+        .run(move |cx: &mut App| {
+            gpui_component::init(cx);
+            gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+            cx.bind_keys([
+                #[cfg(target_os = "macos")]
+                KeyBinding::new("cmd-q", Quit, None),
+                #[cfg(not(target_os = "macos"))]
+                KeyBinding::new("alt-f4", Quit, None),
+            ]);
+            cx.on_action(|_: &Quit, cx: &mut App| {
+                cx.quit();
+            });
 
-        let instances = cx.new(|_| InstanceEntries::default());
-        let backends = cx.new(|_| BackendList::default());
-        let accounts = cx.new(|_| AccountEntries::default());
-        let auth = cx.new(|_| AuthSession::default());
-        let notifications = cx.new(|_| NotificationEntries::default());
-        let settings = cx.new(|_| LauncherSettingsEntries::default());
-        let local_create = cx.new(|_| LocalCreateEntries::default());
-        let update = cx.new(|_| UpdateEntries::default());
-        let java_resolve = cx.new(|_| JavaResolveCache::default());
-        let data = DataEntities {
-            instances,
-            backends,
-            accounts,
-            auth,
-            notifications,
-            settings,
-            local_create,
-            update,
-            java_resolve,
-            backend_sender,
-            launcher_dir,
-        };
+            let instances = cx.new(|_| InstanceEntries::default());
+            let backends = cx.new(|_| BackendList::default());
+            let accounts = cx.new(|_| AccountEntries::default());
+            let auth = cx.new(|_| AuthSession::default());
+            let notifications = cx.new(|_| NotificationEntries::default());
+            let settings = cx.new(|_| LauncherSettingsEntries::default());
+            let local_create = cx.new(|_| LocalCreateEntries::default());
+            let update = cx.new(|_| UpdateEntries::default());
+            let java_resolve = cx.new(|_| JavaResolveCache::default());
+            let data = DataEntities {
+                instances,
+                backends,
+                accounts,
+                auth,
+                notifications,
+                settings,
+                local_create,
+                update,
+                java_resolve,
+                backend_sender,
+                launcher_dir,
+            };
 
-        let window_data = data.clone();
-        cx.open_window(
-            WindowOptions {
-                app_id: Some(launcher_app_id().into()),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(launcher_name().into()),
-                    appears_transparent: false,
+            let window_data = data.clone();
+            cx.open_window(
+                WindowOptions {
+                    app_id: Some(launcher_app_id().into()),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some(launcher_name().into()),
+                        appears_transparent: false,
+                        ..Default::default()
+                    }),
+                    window_bounds: Some(initial_window_bounds(cx)),
+                    window_min_size: Some(gpui::size(gpui::px(720.0), gpui::px(420.0))),
                     ..Default::default()
-                }),
-                window_bounds: Some(initial_window_bounds(cx)),
-                window_min_size: Some(gpui::size(gpui::px(720.0), gpui::px(420.0))),
-                ..Default::default()
-            },
-            move |window, cx| {
-                let root = cx.new(|cx| LauncherRoot::new(&window_data, window, cx));
-                cx.new(|cx| Root::new(root, window, cx))
-            },
-        )
-        .expect("failed to open main window");
-        cx.activate(true);
+                },
+                move |window, cx| {
+                    let root = cx.new(|cx| LauncherRoot::new(&window_data, window, cx));
+                    cx.new(|cx| Root::new(root, window, cx))
+                },
+            )
+            .expect("failed to open main window");
+            cx.activate(true);
 
-        let mut processor = Processor::new(data);
-        while let Some(message) = receiver.try_recv() {
-            processor.process(message, cx);
-        }
-
-        cx.spawn(async move |cx| {
-            while let Some(message) = receiver.recv().await {
-                cx.update(|cx| processor.process(message, cx));
+            let mut processor = Processor::new(data);
+            while let Some(message) = receiver.try_recv() {
+                processor.process(message, cx);
             }
-        })
-        .detach();
-    });
+
+            cx.spawn(async move |cx| {
+                while let Some(message) = receiver.recv().await {
+                    cx.update(|cx| processor.process(message, cx));
+                }
+            })
+            .detach();
+        });
 
     Ok(())
 }
