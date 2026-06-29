@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-indicatif = "0.18.4"
+indicatif = "0.18.5"
 log.workspace = true
 rand.workspace = true
 reqwest.workspace = true
