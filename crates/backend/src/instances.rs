@@ -11,23 +11,27 @@ use instance::{
 };
 use launcher_auth::{providers::AuthProviderConfig, storage::AccountKey};
 use launcher_bridge::{
-    AccountView, InstanceLiveStatus, InstanceOrigin, InstanceView, OptionalModSetView,
-    ProgressStage,
+    AccountView, InstanceLiveStatus, InstanceOrigin, InstanceTaskView, InstanceView,
+    OptionalModSetView,
 };
 use url::Url;
 
 use crate::catalog::BackendCatalogEntry;
 
-#[derive(Clone, Debug)]
-pub struct InstallProgressView {
-    pub stage: ProgressStage,
-    pub current: u64,
-    pub total: u64,
-    pub message: Arc<str>,
-    pub show_bar: bool,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivityKind {
+    Install,
+    LaunchPrep,
+    Running,
 }
 
-pub type ProgressMap = HashMap<InstanceHandle, InstallProgressView>;
+#[derive(Clone, Debug)]
+pub struct ActivitySnapshot {
+    pub kind: ActivityKind,
+    pub tasks: Arc<[InstanceTaskView]>,
+}
+
+pub type ActivityMap = HashMap<InstanceHandle, ActivitySnapshot>;
 
 #[derive(Clone, Debug, Default)]
 pub struct LocalMetadataView {
@@ -78,11 +82,9 @@ pub struct InstanceUserSettingsView {
 }
 
 pub struct InstanceLiveState<'a> {
-    pub installing: &'a ProgressMap,
+    pub activities: &'a ActivityMap,
     pub creating_local: &'a HashMap<InstanceHandle, Arc<str>>,
     pub install_errors: &'a HashMap<InstanceHandle, Arc<str>>,
-    pub launching: &'a HashSet<InstanceHandle>,
-    pub running: &'a HashSet<InstanceHandle>,
     pub launch_errors: &'a HashMap<InstanceHandle, Arc<str>>,
 }
 
@@ -109,11 +111,9 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
         launch_after_install,
     } = input;
     let InstanceLiveState {
-        installing,
+        activities,
         creating_local,
         install_errors,
-        launching,
-        running,
         launch_errors,
     } = live_state;
     let mut views = Vec::new();
@@ -121,14 +121,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
     let mut covered_remote_keys = HashSet::new();
 
     for local in *local_instances {
-        let mut status = base_local_status(
-            local,
-            installing,
-            install_errors,
-            launching,
-            running,
-            launch_errors,
-        );
+        let mut status = base_local_status(local, activities, install_errors, launch_errors);
         if !local.is_installed() && status == InstanceLiveStatus::Installed {
             status = InstanceLiveStatus::NotInstalled;
         }
@@ -273,23 +266,13 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
         if local_instances.iter().any(|local| &local.handle == handle) {
             continue;
         }
-        let status = if let Some(progress) = installing.get(handle) {
-            InstanceLiveStatus::Installing {
-                stage: progress.stage,
-                current: progress.current,
-                total: progress.total,
-                message: progress.message.clone(),
-                show_bar: progress.show_bar,
-            }
+        let status = if let Some(activity) = activities.get(handle) {
+            activity_status(activity)
         } else if let Some(error) = install_errors.get(handle) {
             InstanceLiveStatus::InstallFailed(error.clone())
         } else {
             InstanceLiveStatus::Installing {
-                stage: launcher_bridge::ProgressStage::Metadata,
-                current: 0,
-                total: 0,
-                message: Arc::from(launcher_i18n::notifications::preparing_local_instance()),
-                show_bar: false,
+                tasks: Arc::from([]),
             }
         };
         let launch_after = view_launch_after_install(handle, &status, launch_after_install);
@@ -326,14 +309,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             }
 
             let id = remote_entry_handle(url, &entry.id);
-            let status = if let Some(progress) = installing.get(&id) {
-                InstanceLiveStatus::Installing {
-                    stage: progress.stage,
-                    current: progress.current,
-                    total: progress.total,
-                    message: progress.message.clone(),
-                    show_bar: progress.show_bar,
-                }
+            let status = if let Some(activity) = activities.get(&id) {
+                activity_status(activity)
             } else if let Some(error) = install_errors.get(&id) {
                 InstanceLiveStatus::InstallFailed(error.clone())
             } else {
@@ -425,30 +402,30 @@ fn fetched_manifests(
 
 fn base_local_status(
     local: &LocalInstance,
-    installing: &ProgressMap,
+    activities: &ActivityMap,
     install_errors: &HashMap<InstanceHandle, Arc<str>>,
-    launching: &HashSet<InstanceHandle>,
-    running: &HashSet<InstanceHandle>,
     launch_errors: &HashMap<InstanceHandle, Arc<str>>,
 ) -> InstanceLiveStatus {
-    if let Some(progress) = installing.get(&local.handle) {
-        InstanceLiveStatus::Installing {
-            stage: progress.stage,
-            current: progress.current,
-            total: progress.total,
-            message: progress.message.clone(),
-            show_bar: progress.show_bar,
-        }
-    } else if launching.contains(&local.handle) {
-        InstanceLiveStatus::Launching
-    } else if running.contains(&local.handle) {
-        InstanceLiveStatus::Running
+    if let Some(activity) = activities.get(&local.handle) {
+        activity_status(activity)
     } else if let Some(error) = install_errors.get(&local.handle) {
         InstanceLiveStatus::InstallFailed(error.clone())
     } else if let Some(error) = launch_errors.get(&local.handle) {
         InstanceLiveStatus::LaunchFailed(error.clone())
     } else {
         InstanceLiveStatus::Installed
+    }
+}
+
+fn activity_status(activity: &ActivitySnapshot) -> InstanceLiveStatus {
+    match activity.kind {
+        ActivityKind::Install => InstanceLiveStatus::Installing {
+            tasks: activity.tasks.clone(),
+        },
+        ActivityKind::LaunchPrep => InstanceLiveStatus::LaunchPreparing {
+            tasks: activity.tasks.clone(),
+        },
+        ActivityKind::Running => InstanceLiveStatus::Running,
     }
 }
 
@@ -565,11 +542,9 @@ mod tests {
 
     #[derive(Default)]
     struct TestBuildFixture {
-        installing: ProgressMap,
+        activities: ActivityMap,
         creating_local: HashMap<InstanceHandle, Arc<str>>,
         install_errors: HashMap<InstanceHandle, Arc<str>>,
-        launching: HashSet<InstanceHandle>,
-        running: HashSet<InstanceHandle>,
         launch_errors: HashMap<InstanceHandle, Arc<str>>,
         local_metadata: HashMap<InstanceHandle, LocalMetadataView>,
         user_settings: HashMap<InstanceHandle, InstanceUserSettingsView>,
@@ -598,11 +573,9 @@ mod tests {
                 local_instances,
                 catalogs,
                 live_state: InstanceLiveState {
-                    installing: &self.installing,
+                    activities: &self.activities,
                     creating_local: &self.creating_local,
                     install_errors: &self.install_errors,
-                    launching: &self.launching,
-                    running: &self.running,
                     launch_errors: &self.launch_errors,
                 },
                 local_metadata: &self.local_metadata,
@@ -763,19 +736,16 @@ mod tests {
             last_synced_sha1: Some("old".to_string()),
         }];
         let catalogs = HashMap::from([(url, ok_catalog(manifest([("new-pack", "new")])))]);
-        let progress = HashMap::from([(
+        let activities = HashMap::from([(
             id.clone(),
-            InstallProgressView {
-                stage: ProgressStage::Files,
-                current: 1,
-                total: 10,
-                message: Arc::<str>::from(launcher_i18n::progress::downloading_files()),
-                show_bar: true,
+            ActivitySnapshot {
+                kind: ActivityKind::Install,
+                tasks: Arc::from([download_task_view(1, 10)]),
             },
         )]);
 
         let fixture = TestBuildFixture {
-            installing: progress,
+            activities,
             ..Default::default()
         };
         let views = fixture.build(&locals, &catalogs, &[]);
@@ -783,6 +753,18 @@ mod tests {
 
         assert!(view.orphaned);
         assert!(matches!(view.status, InstanceLiveStatus::Installing { .. }));
+    }
+
+    fn download_task_view(current: u64, total: u64) -> InstanceTaskView {
+        InstanceTaskView {
+            id: 0,
+            kind: launcher_bridge::TaskKind::Download,
+            message: Arc::<str>::from(launcher_i18n::progress::downloading_files()),
+            current,
+            total,
+            unit: launcher_bridge::ProgressUnit::Items,
+            finished: false,
+        }
     }
 
     #[test]
@@ -1076,31 +1058,66 @@ mod tests {
     }
 
     #[test]
-    fn progress_view_preserves_message_and_bar_visibility() {
+    fn activity_tasks_flow_into_status() {
         let local = LocalInstance::new_local("local".to_string());
         let handle = local.handle.clone();
-        let progress = HashMap::from([(
+        let activities = HashMap::from([(
             handle.clone(),
-            InstallProgressView {
-                stage: ProgressStage::Metadata,
-                current: 1,
-                total: 1,
-                message: Arc::<str>::from(launcher_i18n::progress::fetching_metadata()),
-                show_bar: false,
+            ActivitySnapshot {
+                kind: ActivityKind::Install,
+                tasks: Arc::from([download_task_view(3, 10)]),
             },
         )]);
 
         let fixture = TestBuildFixture {
-            installing: progress,
+            activities,
             ..Default::default()
         };
         let views = fixture.build(&[local], &HashMap::new(), &[]);
 
         assert!(matches!(
             &views[0].status,
-            InstanceLiveStatus::Installing { message, show_bar: false, .. }
-                if message.as_ref() == launcher_i18n::progress::fetching_metadata()
+            InstanceLiveStatus::Installing { tasks }
+                if tasks.len() == 1 && tasks[0].current == 3 && tasks[0].total == 10
         ));
+    }
+
+    #[test]
+    fn launch_prep_activity_maps_to_launch_preparing_status() {
+        let local = LocalInstance::new_local("local".to_string());
+        let handle = local.handle.clone();
+        let activities = HashMap::from([(
+            handle.clone(),
+            ActivitySnapshot {
+                kind: ActivityKind::LaunchPrep,
+                tasks: Arc::from([download_task_view(0, 0)]),
+            },
+        )]);
+
+        let fixture = TestBuildFixture {
+            activities,
+            ..Default::default()
+        };
+        let views = fixture.build(std::slice::from_ref(&local), &HashMap::new(), &[]);
+
+        assert!(matches!(
+            &views[0].status,
+            InstanceLiveStatus::LaunchPreparing { .. }
+        ));
+
+        let running = HashMap::from([(
+            handle,
+            ActivitySnapshot {
+                kind: ActivityKind::Running,
+                tasks: Arc::from([]),
+            },
+        )]);
+        let fixture = TestBuildFixture {
+            activities: running,
+            ..Default::default()
+        };
+        let views = fixture.build(&[local], &HashMap::new(), &[]);
+        assert_eq!(views[0].status, InstanceLiveStatus::Running);
     }
 
     fn assert_status(views: &[InstanceView], handle: InstanceHandle, expected: InstanceLiveStatus) {

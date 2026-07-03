@@ -7,7 +7,7 @@ use std::{
 
 use gpui::{
     App, Context, ImageSource, IntoElement, ObjectFit, Render, SharedString, Window, div, img,
-    prelude::*, px, relative, rems,
+    prelude::*, px, rems,
 };
 use gpui_component::{
     ActiveTheme, Disableable, IndexPath, StyledExt,
@@ -274,7 +274,7 @@ impl Render for InstancesPage {
         if launcher_settings.hide_window_after_launch
             && let Some(instance) = instances
                 .iter()
-                .find(|instance| matches!(instance.status, InstanceLiveStatus::Launching))
+                .find(|instance| matches!(instance.status, InstanceLiveStatus::Running))
             && self.hidden_launches.insert(instance.handle.clone())
         {
             window.minimize_window();
@@ -287,7 +287,8 @@ impl Render for InstancesPage {
                     &instance.handle == *handle
                         && matches!(
                             instance.status,
-                            InstanceLiveStatus::Launching | InstanceLiveStatus::Running
+                            InstanceLiveStatus::LaunchPreparing { .. }
+                                | InstanceLiveStatus::Running
                         )
                 })
             })
@@ -298,7 +299,7 @@ impl Render for InstancesPage {
                 &instance.handle == handle
                     && matches!(
                         instance.status,
-                        InstanceLiveStatus::Launching | InstanceLiveStatus::Running
+                        InstanceLiveStatus::LaunchPreparing { .. } | InstanceLiveStatus::Running
                     )
             })
         });
@@ -847,11 +848,11 @@ impl InstancesPage {
         };
         let context_hint = auth_session.context.as_ref().map(|context| match context {
             AuthPromptContext::AddAccount => t::accounts::add_account_section().to_string(),
-            AuthPromptContext::Launch { instance } => instances
+            AuthPromptContext::Instance { handle } => instances
                 .iter()
-                .find(|entry| &entry.handle == instance)
+                .find(|entry| &entry.handle == handle)
                 .map(|entry| t::auth::launch_context(entry.display_name.to_string()))
-                .unwrap_or_else(|| t::auth::launch_context(instance.to_string())),
+                .unwrap_or_else(|| t::auth::launch_context(handle.to_string())),
         });
 
         div()
@@ -997,8 +998,8 @@ impl InstancesPage {
                     .when_some(status_error(&instance.status), |this, error| {
                         this.child(error_alert(t::common::details(), error, cx))
                     })
-                    .when_some(progress_ratio(&instance.status), |this, value| {
-                        this.child(progress_bar(value, cx))
+                    .when_some(instance.status.active_tasks(), |this, tasks| {
+                        this.child(crate::component::progress::task_progress_rows(tasks, cx))
                     }),
                 cx,
             ))
@@ -1729,51 +1730,23 @@ fn status_badge(
     let color = status_badge_color(instance, orphaned, cx);
     let radius = cx.theme().radius;
 
-    let Some(fill) = status_progress_fill(&instance.status) else {
-        return status_badge_solid(status, color, radius);
-    };
+    let active_tasks = instance
+        .status
+        .active_tasks()
+        .filter(|tasks| tasks.iter().any(|task| !task.finished));
+    // While installing, the live progress bars already demonstrate
+    // that the installation is in progress.
+    let hide_badge = matches!(instance.status, InstanceLiveStatus::Installing { .. });
 
-    if fill >= 1.0 {
-        return status_badge_solid(status, color, radius);
+    match active_tasks {
+        Some(tasks) if hide_badge => crate::component::progress::task_progress_rows(tasks, cx),
+        Some(tasks) => v_flex()
+            .w_full()
+            .gap_2()
+            .child(status_badge_solid(status, color, radius))
+            .child(crate::component::progress::task_progress_rows(tasks, cx)),
+        None => status_badge_solid(status, color, radius),
     }
-
-    div()
-        .w_full()
-        .min_h_8()
-        .relative()
-        .overflow_hidden()
-        .flex()
-        .items_center()
-        .justify_center()
-        .px_2()
-        .py_1()
-        .rounded(radius)
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .h_full()
-                .w(relative(fill))
-                .rounded(radius)
-                .bg(color),
-        )
-        .child(
-            div()
-                .absolute()
-                .inset_0()
-                .rounded(radius)
-                .border_1()
-                .border_color(color),
-        )
-        .child(
-            div()
-                .relative()
-                .text_xs()
-                .text_center()
-                .line_clamp(2)
-                .child(status),
-        )
 }
 
 fn start_add_required_account(
@@ -1819,6 +1792,20 @@ fn action_button(
                 Button::new(format!("local-unavailable-{handle}"))
                     .label(t::instances::install())
                     .disabled(true)
+            } else if instance.launch_blocked_reason.is_some() {
+                let provider = instance.auth_provider.clone();
+                Button::new(format!("add-account-install-{handle}"))
+                    .label(t::accounts::add_account_section())
+                    .on_click(cx.listener(move |page, _, _, cx| {
+                        if let Some(provider) = provider.clone() {
+                            start_add_required_account(
+                                &provider,
+                                &sender,
+                                &page.offline_nickname_input,
+                                cx,
+                            );
+                        }
+                    }))
             } else {
                 Button::new(format!("install-{handle}"))
                     .label(if matches!(instance.status, InstanceLiveStatus::Outdated) {
@@ -1835,9 +1822,13 @@ fn action_button(
                     })
             }
         }
-        InstanceLiveStatus::Launching => Button::new(format!("launching-{handle}"))
-            .label(t::instances::launching())
-            .disabled(true),
+        InstanceLiveStatus::LaunchPreparing { .. } => {
+            Button::new(format!("cancel-launch-{handle}"))
+                .label(t::common::cancel())
+                .on_click(move |_, _, _| {
+                    sender.send(MessageToBackend::KillInstance(handle.clone()))
+                })
+        }
         InstanceLiveStatus::Running => Button::new(format!("kill-{handle}"))
             .label(t::instances::kill())
             .on_click(move |_, _, _| sender.send(MessageToBackend::KillInstance(handle.clone()))),
@@ -1913,25 +1904,6 @@ fn action_button(
                 })
             }),
     }
-}
-
-fn progress_bar(value: f32, cx: &mut Context<InstancesPage>) -> gpui::Div {
-    div()
-        .w_full()
-        .relative()
-        .h(px(6.0))
-        .rounded(px(4.0))
-        .bg(cx.theme().muted)
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .h_full()
-                .w(relative(value))
-                .rounded(px(4.0))
-                .bg(cx.theme().progress_bar),
-        )
 }
 
 fn detail_section(title: &str, content: gpui::Div, cx: &mut Context<InstancesPage>) -> gpui::Div {
@@ -2426,7 +2398,7 @@ fn optional_mods_section(
     let mods_locked = matches!(
         instance.status,
         InstanceLiveStatus::Installing { .. }
-            | InstanceLiveStatus::Launching
+            | InstanceLiveStatus::LaunchPreparing { .. }
             | InstanceLiveStatus::Running
     );
     v_flex()
@@ -3242,21 +3214,9 @@ fn status_label(instance: &InstanceView) -> String {
         InstanceLiveStatus::NotInstalled => t::instances::status_available().to_string(),
         InstanceLiveStatus::Installed => t::instances::status_installed().to_string(),
         InstanceLiveStatus::Outdated => t::instances::status_outdated().to_string(),
-        InstanceLiveStatus::Installing {
-            current,
-            total,
-            message,
-            show_bar,
-            ..
-        } => {
-            if !*show_bar || *total <= 1 {
-                message.to_string()
-            } else {
-                format!("{message} {}%", current.saturating_mul(100) / total)
-            }
-        }
+        InstanceLiveStatus::Installing { .. } => t::progress::installing().to_string(),
         InstanceLiveStatus::InstallFailed(_) => t::instances::status_failed().to_string(),
-        InstanceLiveStatus::Launching => t::instances::launching().to_string(),
+        InstanceLiveStatus::LaunchPreparing { .. } => t::instances::launching().to_string(),
         InstanceLiveStatus::Running => t::instances::status_running().to_string(),
         InstanceLiveStatus::LaunchFailed(error) => error.to_string(),
         InstanceLiveStatus::OrphanedFromBackend => t::instances::status_orphaned().to_string(),
@@ -3276,30 +3236,6 @@ fn status_label(instance: &InstanceView) -> String {
     }
 }
 
-fn status_progress_fill(status: &InstanceLiveStatus) -> Option<f32> {
-    match status {
-        InstanceLiveStatus::Launching => Some(0.0),
-        InstanceLiveStatus::Installing {
-            current,
-            total,
-            show_bar,
-            ..
-        } => {
-            if !*show_bar || *total <= 1 {
-                Some(0.0)
-            } else {
-                let current = (*current).min(*total);
-                Some((current as f32 / *total as f32).clamp(0.0, 1.0))
-            }
-        }
-        _ => None,
-    }
-}
-
-fn progress_ratio(status: &InstanceLiveStatus) -> Option<f32> {
-    status_progress_fill(status).filter(|&fill| fill > 0.0)
-}
-
 #[allow(dead_code)]
 fn _url_key(url: &Url) -> String {
     url.as_str().to_string()
@@ -3309,7 +3245,7 @@ fn instance_delete_blocked(status: &InstanceLiveStatus) -> bool {
     matches!(
         status,
         InstanceLiveStatus::Running
-            | InstanceLiveStatus::Launching
+            | InstanceLiveStatus::LaunchPreparing { .. }
             | InstanceLiveStatus::Installing { .. }
     )
 }

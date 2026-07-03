@@ -594,6 +594,10 @@ ru = "Загрузка метаданных"
 en = "Installing Java"
 ru = "Установка Java"
 
+[progress.unpacking_java]
+en = "Unpacking Java"
+ru = "Распаковка Java"
+
 [progress.installing]
 en = "Installing"
 ru = "Установка"
@@ -625,6 +629,10 @@ ru = "Java уже установлена"
 [progress.checking_java]
 en = "Checking Java"
 ru = "Проверка Java"
+
+[progress.authenticating]
+en = "Signing in"
+ru = "Вход в аккаунт"
 
 [progress.installing_java_version]
 en = "Installing Java ${version: String}"

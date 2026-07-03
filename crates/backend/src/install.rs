@@ -14,7 +14,9 @@ use instance::{
     mod_sync,
     storage::{self, InstanceHandle, InstanceState, LocalInstance, RemoteSource},
 };
-use launcher_bridge::{FrontendSender, MessageToFrontend, NotificationLevel};
+use launcher_bridge::{
+    FrontendSender, MessageToFrontend, NotificationLevel, ProgressUnit, TaskKind,
+};
 use tokio::sync::mpsc;
 use url::Url;
 use utils::{
@@ -22,13 +24,18 @@ use utils::{
     files::{self, ConfigOptionTask, ConfigType},
     java,
     paths::{DataDir, InstanceDirFS, InstancesDir, NativesDir},
-    progress::{
-        ProgressBar, ProgressEvent, ProgressHandle, ProgressReporter, ProgressStage,
-        ProgressTracker, Unit,
-    },
+    progress::ProgressTracker,
 };
 
-use crate::{BackendEvent, catalog::BackendCatalogEntry, instances::remote_entry_handle};
+use launcher_auth::{AccountData, providers::AuthProviderConfig};
+
+use crate::{
+    BackendEvent,
+    catalog::BackendCatalogEntry,
+    instances::remote_entry_handle,
+    launch::{InstanceAuthMessages, authenticate_account},
+    tasks::{InstanceTaskList, TaskHandle},
+};
 
 #[derive(Clone)]
 pub(crate) struct InstallRequest {
@@ -45,11 +52,16 @@ pub(crate) struct InstallRequest {
     pub(crate) frontend: FrontendSender,
     pub(crate) internal: mpsc::UnboundedSender<BackendEvent>,
     pub(crate) java_path: Option<String>,
+    pub(crate) tasks: InstanceTaskList,
+    /// When set, the account is validated/refreshed before any file sync
+    /// starts (instances that declare a required auth provider).
+    pub(crate) auth: Option<(AuthProviderConfig, AccountData)>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct InstallOutput {
     pub(crate) instance: LocalInstance,
+    pub(crate) java: java::JavaInstallation,
 }
 
 #[derive(Clone)]
@@ -59,86 +71,6 @@ struct InstallPlan {
     source: RemoteSource,
     entry: InstanceManifestEntry,
     existing: Option<LocalInstance>,
-}
-
-#[derive(Clone)]
-pub(crate) struct BackendProgressReporter {
-    handle: InstanceHandle,
-    internal: mpsc::UnboundedSender<BackendEvent>,
-}
-
-impl BackendProgressReporter {
-    pub fn new(handle: InstanceHandle, internal: mpsc::UnboundedSender<BackendEvent>) -> Self {
-        Self { handle, internal }
-    }
-
-    pub fn handle(&self, stage: ProgressStage, message: impl Into<String>) -> ProgressHandle<Self> {
-        ProgressHandle::new(self.clone(), stage)
-            .with_message(message)
-            .with_unit(Unit {
-                name: "items".to_string(),
-                size: 1,
-            })
-    }
-
-    pub fn set_status(&self, stage: ProgressStage, message: impl Into<String>) {
-        self.event(ProgressEvent {
-            stage,
-            message: Some(message.into()),
-            current: 0,
-            total: 0,
-            unit: None,
-            finished: false,
-        });
-    }
-}
-
-impl ProgressReporter for BackendProgressReporter {
-    fn event(&self, event: ProgressEvent) {
-        let stage = bridge_stage(&event.stage);
-        let message = event
-            .message
-            .clone()
-            .unwrap_or_else(|| stage_message(&event.stage).to_string());
-        let current = if event.total > 0 {
-            event.current.min(event.total)
-        } else {
-            event.current
-        };
-
-        let _ = self.internal.send(BackendEvent::InstallProgress {
-            handle: self.handle.clone(),
-            stage,
-            current,
-            total: event.total,
-            message: Arc::<str>::from(message),
-            show_bar: event.total > 1,
-        });
-    }
-}
-
-pub(crate) fn bridge_stage(stage: &ProgressStage) -> launcher_bridge::ProgressStage {
-    match stage {
-        ProgressStage::Metadata => launcher_bridge::ProgressStage::Metadata,
-        ProgressStage::Java => launcher_bridge::ProgressStage::Java,
-        ProgressStage::Checking
-        | ProgressStage::Downloading
-        | ProgressStage::Copying
-        | ProgressStage::Extracting
-        | ProgressStage::Other(_) => launcher_bridge::ProgressStage::Files,
-    }
-}
-
-fn stage_message(stage: &ProgressStage) -> String {
-    match stage {
-        ProgressStage::Checking => launcher_i18n::progress::checking_files().to_string(),
-        ProgressStage::Downloading => launcher_i18n::progress::downloading_files().to_string(),
-        ProgressStage::Copying => launcher_i18n::progress::copying_files().to_string(),
-        ProgressStage::Extracting => launcher_i18n::progress::extracting_files().to_string(),
-        ProgressStage::Metadata => launcher_i18n::progress::downloading_metadata().to_string(),
-        ProgressStage::Java => launcher_i18n::progress::installing_java().to_string(),
-        ProgressStage::Other(_) => launcher_i18n::progress::installing().to_string(),
-    }
 }
 
 fn install_action_label(cause: InstallCause, force_overwrite: bool) -> &'static str {
@@ -191,14 +123,17 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     instance_dir.ensure_dir();
 
     let internal = request.internal.clone();
-    let progress = BackendProgressReporter::new(plan.view_handle.clone(), request.internal);
+    let tasks = request.tasks.clone();
+
+    authenticate_install_account(&request).await?;
 
     let metadata = install_metadata(
         &request.client,
         &plan.entry,
         &instance_dir,
-        progress.handle(
-            ProgressStage::Metadata,
+        tasks.task(
+            TaskKind::Metadata,
+            ProgressUnit::Items,
             launcher_i18n::progress::downloading_metadata(),
         ),
     )
@@ -225,30 +160,30 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
         previous_content_rules,
         optional_sets_enabled,
     };
-    install_game_files(
-        &request.client,
-        &metadata,
-        &install_params,
-        &progress,
-        &request.frontend,
-    )
-    .await?;
-
-    // it is important to save metadata after install_game_files
-    // because mod_sync looks at the delta between old and new metadata
-    metadata.save(&instance_dir).await?;
-
-    if request.cause == InstallCause::Update {
-        let installation = resolve_java(
+    // file sync and Java resolution are independent once metadata is known
+    let (files_result, java_result) = tokio::join!(
+        install_game_files(
+            &request.client,
+            &metadata,
+            &install_params,
+            &tasks,
+            &request.frontend,
+        ),
+        resolve_java(
             &request.client,
             &metadata,
             &request.launcher_dir,
             request.java_path.as_deref(),
-            &progress,
-        )
-        .await?;
-        persist_java_installation(request.handle.clone(), &installation, &internal);
-    }
+            &tasks,
+        ),
+    );
+    files_result?;
+    let java = java_result?;
+    persist_java_installation(request.handle.clone(), &java, &internal);
+
+    // it is important to save metadata after install_game_files
+    // because mod_sync looks at the delta between old and new metadata
+    metadata.save(&instance_dir).await?;
 
     let instance = if let Some(mut existing) = plan.existing {
         if request.cause == InstallCause::Run && !existing.is_installed() {
@@ -274,7 +209,39 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
         )
     };
 
-    Ok(InstallOutput { instance })
+    Ok(InstallOutput { instance, java })
+}
+
+async fn authenticate_install_account(request: &InstallRequest) -> anyhow::Result<()> {
+    let Some((provider, account_data)) = request.auth.clone() else {
+        return Ok(());
+    };
+    let auth_task = request.tasks.task(
+        TaskKind::Auth,
+        ProgressUnit::Items,
+        launcher_i18n::progress::authenticating(),
+    );
+    let messages = Arc::new(InstanceAuthMessages::new(
+        request.frontend.clone(),
+        request.handle.clone(),
+        request.internal.clone(),
+    ));
+    let authenticated = authenticate_account(
+        &request.client,
+        provider,
+        account_data,
+        messages,
+        &request.frontend,
+    )
+    .await?;
+    if let Some(refreshed) = authenticated.refreshed {
+        let _ = request.internal.send(BackendEvent::AccountUpdated {
+            provider: authenticated.provider,
+            account: refreshed,
+        });
+    }
+    auth_task.finish();
+    Ok(())
 }
 
 async fn install_local_only_instance(
@@ -303,7 +270,10 @@ async fn install_local_only_instance(
         .instance_dir(&local.dir_name)
         .with_data_dir(request.launcher_dir.clone());
 
-    let progress = BackendProgressReporter::new(local.handle.clone(), request.internal);
+    let internal = request.internal.clone();
+    let tasks = request.tasks.clone();
+
+    authenticate_install_account(&request).await?;
 
     let metadata = InstanceMetadata::read_local(&instance_dir)
         .await
@@ -323,17 +293,31 @@ async fn install_local_only_instance(
         optional_sets_enabled,
     };
 
-    install_game_files(
-        &request.client,
-        &metadata,
-        &install_params,
-        &progress,
-        &request.frontend,
-    )
-    .await?;
+    let (files_result, java_result) = tokio::join!(
+        install_game_files(
+            &request.client,
+            &metadata,
+            &install_params,
+            &tasks,
+            &request.frontend,
+        ),
+        resolve_java(
+            &request.client,
+            &metadata,
+            &request.launcher_dir,
+            request.java_path.as_deref(),
+            &tasks,
+        ),
+    );
+    files_result?;
+    let java = java_result?;
+    persist_java_installation(local.handle.clone(), &java, &internal);
     metadata.save(&instance_dir).await?;
 
-    Ok(InstallOutput { instance: local })
+    Ok(InstallOutput {
+        instance: local,
+        java,
+    })
 }
 
 fn resolve_install_plan(
@@ -414,13 +398,14 @@ async fn install_metadata(
     client: &reqwest::Client,
     entry: &InstanceManifestEntry,
     instance_dir: &InstanceDirFS,
-    progress: ProgressHandle<BackendProgressReporter>,
+    progress: TaskHandle,
 ) -> anyhow::Result<InstanceMetadata> {
     progress.set_length(1);
     // do not save metadata to disk yet
     // save only after install_game_files
     let metadata = InstanceMetadata::read_or_fetch(client, entry, instance_dir).await?;
     progress.inc(1);
+    progress.finish();
     Ok(metadata)
 }
 
@@ -781,13 +766,14 @@ pub(crate) async fn install_game_files(
     client: &reqwest::Client,
     metadata: &InstanceMetadata,
     params: &InstallParams,
-    progress: &BackendProgressReporter,
+    tasks: &InstanceTaskList,
     frontend: &FrontendSender,
 ) -> anyhow::Result<()> {
     let action = install_action_label(params.cause, params.force_overwrite);
     let instance = instance_dir_name(&params.instance_dir);
-    progress.set_status(
-        ProgressStage::Checking,
+    let check_progress = tasks.task(
+        TaskKind::CheckFiles,
+        ProgressUnit::Items,
         launcher_i18n::progress::collecting_install_tasks(),
     );
     let install_tasks = metadata.get_all_install_tasks(client, params).await?;
@@ -809,23 +795,34 @@ pub(crate) async fn install_game_files(
     }
 
     let check_count = install_tasks.tasks.check_tasks.len();
-    let check_progress = progress.handle(
-        ProgressStage::Checking,
-        launcher_i18n::progress::checking_install_files(),
-    );
+    check_progress.set_message(launcher_i18n::progress::checking_install_files());
     let download_tasks =
-        files::get_download_tasks(install_tasks.tasks.check_tasks, check_progress).await?;
+        files::get_download_tasks(install_tasks.tasks.check_tasks, check_progress.clone()).await?;
     files::log_download_tasks(action, &instance, check_count, &download_tasks);
+    check_progress.finish();
 
-    let download_progress = if download_tasks.is_empty() {
-        ProgressHandle::new(progress.clone(), ProgressStage::Downloading)
-    } else {
-        progress.handle(
-            ProgressStage::Downloading,
+    let downloaded_paths = download_tasks
+        .iter()
+        .map(|task| task.path.clone())
+        .collect::<HashSet<_>>();
+    if !download_tasks.is_empty() {
+        let unit = match files::total_download_size(&download_tasks) {
+            Some(_) => ProgressUnit::Bytes,
+            None => ProgressUnit::Items,
+        };
+        let download_progress = tasks.task(
+            TaskKind::Download,
+            unit,
             launcher_i18n::progress::downloading_install_files(),
+        );
+        adaptive_download::download_files(
+            download_tasks,
+            &params.instance_dir.data_dir().tmp_dir(),
+            download_progress.clone(),
         )
-    };
-    adaptive_download::download_files(download_tasks, download_progress).await?;
+        .await?;
+        download_progress.finish();
+    }
 
     enable_optional_mods(install_tasks.tasks.enable_optional_mod_tasks).await?;
 
@@ -837,13 +834,14 @@ pub(crate) async fn install_game_files(
         .mark_include_downloads_complete(&params.instance_dir.minecraft_dir())
         .await?;
 
-    if params.cause == InstallCause::Update {
-        let extract_progress = progress.handle(
-            ProgressStage::Extracting,
-            launcher_i18n::progress::extracting_native_libraries(),
-        );
-        extract_natives(metadata, params.instance_dir.data_dir(), extract_progress).await?;
-    }
+    extract_natives_if_needed(
+        metadata,
+        params.instance_dir.data_dir(),
+        &downloaded_paths,
+        params.force_overwrite,
+        tasks,
+    )
+    .await?;
 
     Ok(())
 }
@@ -952,11 +950,12 @@ pub(crate) async fn resolve_java(
     metadata: &InstanceMetadata,
     data_dir: &DataDir,
     stored_path: Option<&str>,
-    progress: &BackendProgressReporter,
+    tasks: &InstanceTaskList,
 ) -> anyhow::Result<java::JavaInstallation> {
     let java_version = metadata.get_java_version();
-    let java_progress = progress.handle(
-        ProgressStage::Java,
+    let java_progress = tasks.task(
+        TaskKind::Java,
+        ProgressUnit::Bytes,
         launcher_i18n::progress::checking_java(),
     );
 
@@ -983,6 +982,7 @@ pub(crate) async fn resolve_java(
         java_version.clone(),
     ));
     let platform = utils::java::current_platform();
+    let unpacking_message = launcher_i18n::progress::unpacking_java();
     if let Some(runtime) = metadata.find_java_runtime(&java_version, &platform.os, &platform.arch) {
         java::download_java_from_runtime(
             client,
@@ -991,34 +991,82 @@ pub(crate) async fn resolve_java(
             &runtime.name,
             &java_version,
             data_dir,
-            java_progress,
+            java_progress.clone(),
+            unpacking_message,
         )
         .await?;
     } else {
-        java::download_java(client, &java_version, data_dir, java_progress).await?;
+        java::download_java(
+            client,
+            &java_version,
+            data_dir,
+            java_progress.clone(),
+            Some(unpacking_message),
+        )
+        .await?;
     }
+    java_progress.finish();
     java::get_java(&java_version, data_dir)
         .await
         .ok_or_else(|| anyhow::anyhow!("Java {java_version} is still missing after download"))
 }
 
-async fn extract_natives(
+const NATIVES_EXTRACTED_MARKER: &str = ".extracted";
+
+fn natives_fingerprint(native_paths: &[std::path::PathBuf]) -> String {
+    let mut lines = native_paths
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    lines.sort();
+    lines.join("\n")
+}
+
+async fn extract_natives_if_needed(
     metadata: &InstanceMetadata,
     data_dir: &DataDir,
-    progress: ProgressHandle<BackendProgressReporter>,
+    downloaded_paths: &HashSet<std::path::PathBuf>,
+    force_overwrite: bool,
+    tasks: &InstanceTaskList,
 ) -> anyhow::Result<()> {
     let native_paths = metadata.get_native_library_paths(data_dir)?;
-    progress.set_length(native_paths.len() as u64);
     let natives_dir = NativesDir::for_id(metadata.get_parent_version_id()?).to_fs(data_dir);
+    let marker_path = natives_dir.join(NATIVES_EXTRACTED_MARKER);
+    let fingerprint = natives_fingerprint(&native_paths);
+
+    let jars_changed = native_paths
+        .iter()
+        .any(|path| downloaded_paths.contains(path));
+    let marker_matches = matches!(
+        tokio::fs::read_to_string(&marker_path).await,
+        Ok(existing) if existing == fingerprint
+    );
+    if !force_overwrite && !jars_changed && marker_matches {
+        log::debug!(
+            "Skipping natives extraction for {}: up to date",
+            natives_dir.display()
+        );
+        return Ok(());
+    }
+
+    let progress = tasks.task(
+        TaskKind::Extract,
+        ProgressUnit::Items,
+        launcher_i18n::progress::extracting_native_libraries(),
+    );
+    progress.set_length(native_paths.len() as u64);
     if natives_dir.exists() {
         tokio::fs::remove_dir_all(&natives_dir).await?;
     }
     tokio::fs::create_dir_all(&natives_dir).await?;
 
-    for native_path in native_paths {
-        extract_zip(&native_path, &natives_dir)?;
+    for native_path in &native_paths {
+        extract_zip(native_path, &natives_dir)?;
         progress.inc(1);
     }
+
+    // marker last: an interrupted extraction must not look complete
+    tokio::fs::write(&marker_path, fingerprint).await?;
     progress.finish();
     Ok(())
 }
@@ -1067,29 +1115,8 @@ fn allocate_dir_name(
 mod tests {
     use super::*;
     use instance::manifest::InstanceManifest;
-    use launcher_bridge::ProgressStage as BridgeProgressStage;
     use serde_json::json;
     use utils::files::ConfigOption;
-
-    #[test]
-    fn maps_worker_progress_to_bridge_stage() {
-        assert_eq!(
-            bridge_stage(&ProgressStage::Metadata),
-            BridgeProgressStage::Metadata
-        );
-        assert_eq!(
-            bridge_stage(&ProgressStage::Java),
-            BridgeProgressStage::Java
-        );
-        assert_eq!(
-            bridge_stage(&ProgressStage::Checking),
-            BridgeProgressStage::Files
-        );
-        assert_eq!(
-            bridge_stage(&ProgressStage::Extracting),
-            BridgeProgressStage::Files
-        );
-    }
 
     use crate::catalog::{BackendCatalogEntry, BackendFetchStatus};
 

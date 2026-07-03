@@ -2,15 +2,16 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use log::{debug, warn};
 use reqwest::Client;
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use crate::files::{self, DownloadTask};
+use crate::files::{self, DownloadTask, TempFileGuard};
 use crate::progress::ProgressTracker;
 
 const MAX_CONCURRENCY: usize = 50;
@@ -113,7 +114,55 @@ pub enum DownloadFileError {
     MissingTempFile { path: String },
 }
 
-async fn download_file(client: &Client, task: &DownloadTask) -> Result<u128, DownloadFileError> {
+fn unique_temp_path(tmp_dir: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
+    tmp_dir.join(format!("dl-{}-{nonce}", std::process::id()))
+}
+
+struct ChunkProgress<'a> {
+    tracker: &'a dyn ProgressTracker,
+    counted: AtomicU64,
+}
+
+impl<'a> ChunkProgress<'a> {
+    fn new(tracker: &'a dyn ProgressTracker) -> Self {
+        Self {
+            tracker,
+            counted: AtomicU64::new(0),
+        }
+    }
+
+    fn inc(&self, amount: u64) {
+        self.counted.fetch_add(amount, Ordering::Relaxed);
+        self.tracker.inc(amount);
+    }
+
+    fn roll_back(&self) {
+        let counted = self.counted.swap(0, Ordering::Relaxed);
+        self.tracker.dec(counted);
+    }
+
+    /// Align this file's counted bytes with its expected size if the download succeeded
+    fn reconcile(&self, expected: Option<u64>) {
+        let Some(expected) = expected else {
+            return;
+        };
+        let counted = self.counted.load(Ordering::Relaxed);
+        if expected > counted {
+            self.tracker.inc(expected - counted);
+        } else if counted > expected {
+            self.tracker.dec(counted - expected);
+        }
+    }
+}
+
+async fn download_file(
+    client: &Client,
+    task: &DownloadTask,
+    tmp_dir: &Path,
+    chunk_progress: Option<&ChunkProgress<'_>>,
+) -> Result<u128, DownloadFileError> {
     let start = Instant::now();
 
     let response = client
@@ -140,10 +189,8 @@ async fn download_file(client: &Client, task: &DownloadTask) -> Result<u128, Dow
             })?;
     }
 
-    // write to a temporary file first
-    let mut tmp_path = task.path.as_os_str().to_owned();
-    tmp_path.push(".tmp");
-    let tmp_path = std::path::PathBuf::from(tmp_path);
+    let tmp_path = unique_temp_path(tmp_dir);
+    let mut guard = TempFileGuard::new(tmp_path.clone());
 
     {
         let mut file =
@@ -172,6 +219,9 @@ async fn download_file(client: &Client, task: &DownloadTask) -> Result<u128, Dow
                     path: tmp_path.display().to_string(),
                     source,
                 })?;
+            if let Some(progress) = chunk_progress {
+                progress.inc(chunk.len() as u64);
+            }
         }
         file.flush().await.map_err(|source| DownloadFileError::Io {
             path: tmp_path.display().to_string(),
@@ -201,6 +251,7 @@ async fn download_file(client: &Client, task: &DownloadTask) -> Result<u128, Dow
             path: format!("{} -> {}", tmp_path.display(), task.path.display()),
             source,
         })?;
+    guard.disarm();
 
     let latency_ms = start.elapsed().as_millis();
 
@@ -240,10 +291,21 @@ enum DownloadOutcome {
 async fn do_download(
     client: &Client,
     task: &DownloadTask,
+    tmp_dir: &Path,
+    byte_progress: Option<&dyn ProgressTracker>,
 ) -> Result<DownloadOutcome, DownloadFileError> {
-    let latency_ms = match download_file(client, task).await {
-        Ok(r) => r,
+    let chunk_progress = byte_progress.map(ChunkProgress::new);
+    let latency_ms = match download_file(client, task, tmp_dir, chunk_progress.as_ref()).await {
+        Ok(r) => {
+            if let Some(progress) = &chunk_progress {
+                progress.reconcile(task.size);
+            }
+            r
+        }
         Err(e) => {
+            if let Some(progress) = &chunk_progress {
+                progress.roll_back();
+            }
             if is_transient_network_error(&e) {
                 debug!("Transient error downloading {}: {:?}", task.url, e);
                 return Ok(DownloadOutcome::TransientFailure(e));
@@ -265,19 +327,38 @@ pub enum AdaptiveDownloadError {
     ConnectionTimeoutWithoutSource,
     #[error("failed to build HTTP client for adaptive downloader: {0}")]
     ClientBuild(reqwest::Error),
+    #[error("failed to create temp dir {path}: {source}")]
+    TmpDir {
+        path: String,
+        source: std::io::Error,
+    },
     #[error("download failed: {0}")]
     Download(DownloadFileError),
 }
 
 pub async fn download_files(
     download_tasks: Vec<DownloadTask>,
+    tmp_dir: &Path,
     progress_bar: impl ProgressTracker,
 ) -> Result<(), AdaptiveDownloadError> {
     if download_tasks.is_empty() {
         return Ok(());
     }
 
-    progress_bar.set_length(download_tasks.len() as u64);
+    tokio::fs::create_dir_all(tmp_dir)
+        .await
+        .map_err(|source| AdaptiveDownloadError::TmpDir {
+            path: tmp_dir.display().to_string(),
+            source,
+        })?;
+
+    // when every file size is known, report byte progress
+    // otherwise fall back to counting completed files
+    let byte_total = files::total_download_size(&download_tasks);
+    match byte_total {
+        Some(total) => progress_bar.set_length(total),
+        None => progress_bar.set_length(download_tasks.len() as u64),
+    }
 
     let client = Client::builder()
         .connect_timeout(REQUEST_TIMEOUT)
@@ -288,6 +369,8 @@ pub async fn download_files(
 
     let sliding_window = Arc::new(Mutex::new(SlidingWindow::new()));
 
+    let byte_progress: Option<&dyn ProgressTracker> =
+        byte_total.is_some().then_some(&progress_bar as _);
     let mut cur_tasks = download_tasks;
     let mut active = FuturesUnordered::new();
     let mut last_transient_error = None;
@@ -300,7 +383,7 @@ pub async fn download_files(
         while can_spawn_more(active.len(), &desired_concurrency) {
             if let Some(task) = cur_tasks.pop() {
                 let fut = async {
-                    let result = do_download(&client, &task).await;
+                    let result = do_download(&client, &task, tmp_dir, byte_progress).await;
                     (result, task)
                 };
                 active.push(fut);
@@ -322,7 +405,9 @@ pub async fn download_files(
 
         let (success, latency_ms) = match result {
             Ok(DownloadOutcome::Success(latency_ms)) => {
-                progress_bar.inc(1);
+                if byte_total.is_none() {
+                    progress_bar.inc(1);
+                }
                 (true, latency_ms)
             }
             Ok(DownloadOutcome::TransientFailure(error)) => {

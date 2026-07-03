@@ -55,23 +55,79 @@ const JAVA_21_GC_OPTIONS: &[&str] = &[
 #[derive(Clone)]
 pub(crate) struct LaunchRequest {
     pub(crate) handle: InstanceHandle,
-    pub(crate) account: Option<AccountKey>,
-    pub(crate) bypass_required_provider: bool,
+    pub(crate) provider: AuthProviderConfig,
+    pub(crate) account_data: AccountData,
+    pub(crate) online: bool,
     pub(crate) xmx_mb: Option<u64>,
     pub(crate) jvm_flags: Option<String>,
     pub(crate) java: java::JavaInstallation,
     pub(crate) use_native_glfw: Option<bool>,
     pub(crate) launcher_dir: PathBuf,
-    pub(crate) client: reqwest::Client,
     pub(crate) local_instances: Vec<LocalInstance>,
-    pub(crate) account_entries: Vec<(AccountKey, AuthProviderConfig, AccountData)>,
-    pub(crate) frontend: FrontendSender,
-    pub(crate) internal: mpsc::UnboundedSender<crate::BackendEvent>,
 }
 
 pub(crate) struct LaunchStart {
     pub(crate) child: Child,
-    pub(crate) refreshed_account: Option<(AuthProviderConfig, AccountData)>,
+}
+
+pub(crate) struct AuthenticatedAccount {
+    pub(crate) provider: AuthProviderConfig,
+    pub(crate) data: AccountData,
+    pub(crate) online: bool,
+    /// `Some` when the refresh produced new credentials to save.
+    pub(crate) refreshed: Option<AccountData>,
+}
+
+pub(crate) async fn authenticate_account(
+    client: &reqwest::Client,
+    provider: AuthProviderConfig,
+    account_data: AccountData,
+    auth_messages: Arc<InstanceAuthMessages>,
+    frontend: &FrontendSender,
+) -> Result<AuthenticatedAccount, LaunchError> {
+    if is_offline_provider(&provider) {
+        return Ok(AuthenticatedAccount {
+            provider,
+            data: account_data,
+            online: false,
+            refreshed: None,
+        });
+    }
+    match perform_auth(
+        client,
+        Some(account_data.clone()),
+        provider.clone(),
+        auth_messages.clone(),
+    )
+    .await
+    {
+        Ok(data) => {
+            let refreshed = (data != account_data).then(|| data.clone());
+            Ok(AuthenticatedAccount {
+                provider,
+                data,
+                online: true,
+                refreshed,
+            })
+        }
+        Err(err) if err.is_network_error() => {
+            log::warn!(
+                "Online auth failed due to network error; falling back to stored account data: {err:#}"
+            );
+            auth_messages.clear().await;
+            frontend.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Warning,
+                message: Arc::from(launcher_i18n::notifications::launch_auth_offline_fallback()),
+            });
+            Ok(AuthenticatedAccount {
+                provider,
+                data: account_data,
+                online: false,
+                refreshed: None,
+            })
+        }
+        Err(err) => Err(LaunchError::Auth(err)),
+    }
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -142,60 +198,15 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         .instance_dir(&local.dir_name)
         .with_data_dir(data_dir.clone());
     let metadata = read_metadata(&instance_dir).await?;
-    let required_provider = (!request.bypass_required_provider)
-        .then(|| metadata.get_auth_provider().cloned())
-        .flatten();
-    let (provider, account_data) = resolve_account(
-        request.account,
-        required_provider.as_ref(),
-        &request.account_entries,
-    )?;
-    let original_account_data = account_data.clone();
-    let auth_messages = Arc::new(LaunchAuthMessages::new(
-        request.frontend.clone(),
-        request.handle.clone(),
-        request.internal.clone(),
-    ));
-    let (account_data, online) = if is_offline_provider(&provider) {
-        (account_data, false)
-    } else {
-        match perform_auth(
-            &request.client,
-            Some(account_data),
-            provider.clone(),
-            auth_messages.clone(),
-        )
-        .await
-        {
-            Ok(data) => (data, true),
-            Err(err) if err.is_network_error() => {
-                log::warn!(
-                    "Online auth for instance {} failed due to network error; falling back to stored account data: {err:#}",
-                    request.handle
-                );
-                auth_messages.clear().await;
-                request.frontend.send(MessageToFrontend::Notification {
-                    level: NotificationLevel::Warning,
-                    message: Arc::from(
-                        launcher_i18n::notifications::launch_auth_offline_fallback(),
-                    ),
-                });
-                (original_account_data.clone(), false)
-            }
-            Err(err) => return Err(LaunchError::Auth(err)),
-        }
-    };
-    let refreshed_account =
-        (account_data != original_account_data).then(|| (provider.clone(), account_data.clone()));
     let java = request.java;
     let minecraft_dir_short = instance_dir.minecraft_dir();
     tokio::fs::create_dir_all(&minecraft_dir_short).await?;
     let minecraft_dir_game = game_directory_for_launch(&minecraft_dir_short)?;
     let args = build_launch_arguments(&LaunchBuildContext {
         metadata: &metadata,
-        provider: &provider,
-        account: &account_data,
-        online,
+        provider: &request.provider,
+        account: &request.account_data,
+        online: request.online,
         xmx_mb: request.xmx_mb,
         jvm_flags: request.jvm_flags.as_deref(),
         use_native_glfw: request
@@ -236,7 +247,6 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
 
     Ok(LaunchStart {
         child: command.spawn()?,
-        refreshed_account,
     })
 }
 
@@ -473,7 +483,7 @@ pub(crate) fn stored_account_if_valid(
     })
 }
 
-fn resolve_account(
+pub(crate) fn resolve_account(
     requested: Option<AccountKey>,
     required_provider: Option<&AuthProviderConfig>,
     accounts: &[(AccountKey, AuthProviderConfig, AccountData)],
@@ -528,7 +538,7 @@ fn path_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
-struct LaunchAuthMessages {
+pub(crate) struct InstanceAuthMessages {
     frontend: FrontendSender,
     instance: InstanceHandle,
     internal: mpsc::UnboundedSender<crate::BackendEvent>,
@@ -536,8 +546,8 @@ struct LaunchAuthMessages {
     message: Mutex<Option<AuthMessage>>,
 }
 
-impl LaunchAuthMessages {
-    fn new(
+impl InstanceAuthMessages {
+    pub(crate) fn new(
         frontend: FrontendSender,
         instance: InstanceHandle,
         internal: mpsc::UnboundedSender<crate::BackendEvent>,
@@ -553,14 +563,14 @@ impl LaunchAuthMessages {
 }
 
 #[async_trait]
-impl AuthMessageProvider for LaunchAuthMessages {
+impl AuthMessageProvider for InstanceAuthMessages {
     async fn set_message(&self, message: AuthMessage) {
         if let Ok(mut stored) = self.message.lock() {
             *stored = Some(message.clone());
         }
         self.frontend.send(MessageToFrontend::AuthPrompt {
-            context: AuthPromptContext::Launch {
-                instance: self.instance.clone(),
+            context: AuthPromptContext::Instance {
+                handle: self.instance.clone(),
             },
             message,
         });
@@ -658,6 +668,33 @@ mod tests {
         assert!(!is_offline_provider(&AuthProviderConfig::Microsoft(
             MicrosoftAuthProvider {}
         )));
+    }
+
+    #[tokio::test]
+    async fn authenticate_account_short_circuits_offline_provider() {
+        let (_, _, frontend_sender, _frontend_receiver) = launcher_bridge::channel();
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let (_, provider, data) = offline_account("Tester");
+        let messages = Arc::new(InstanceAuthMessages::new(
+            frontend_sender.clone(),
+            InstanceHandle::from("test:instance"),
+            internal_tx,
+        ));
+
+        let authenticated = authenticate_account(
+            &reqwest::Client::new(),
+            provider.clone(),
+            data.clone(),
+            messages,
+            &frontend_sender,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(authenticated.provider, provider);
+        assert_eq!(authenticated.data, data);
+        assert!(!authenticated.online);
+        assert!(authenticated.refreshed.is_none());
     }
 
     #[test]

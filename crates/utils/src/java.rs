@@ -4,7 +4,6 @@ use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use tar::Archive;
 use tokio::process::Command;
@@ -365,13 +364,16 @@ pub async fn query_zulu_package(
     }))
 }
 
-pub fn get_temp_dir() -> PathBuf {
-    let temp_dir = std::env::temp_dir();
-    let temp_dir = temp_dir.join("temp_java_download");
-    if !temp_dir.exists() {
-        fs::create_dir_all(&temp_dir).unwrap();
-    }
-    temp_dir
+async fn java_archive_download_path(
+    data_dir: &DataDir,
+    archive_type: &str,
+) -> Result<PathBuf, JavaDownloadError> {
+    let tmp_dir = data_dir.tmp_dir();
+    tokio::fs::create_dir_all(&tmp_dir).await?;
+    Ok(tmp_dir.join(format!(
+        "java_download.{}.{archive_type}",
+        std::process::id()
+    )))
 }
 
 /// Zulu macOS archives ship as .app bundles where the JRE lives under
@@ -416,17 +418,19 @@ async fn write_response_to_file(
     path: &Path,
     progress_tracker: &impl ProgressTracker,
 ) -> Result<(), JavaDownloadError> {
-    let mut file = fs::File::create(path)?;
+    use tokio::io::AsyncWriteExt as _;
+
+    let mut file = tokio::fs::File::create(path).await?;
     let total_size = response.content_length().unwrap_or(0);
     progress_tracker.set_length(total_size);
 
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
-        file.write_all(&chunk)?;
+        file.write_all(&chunk).await?;
         progress_tracker.inc(chunk.len() as u64);
     }
-    progress_tracker.finish();
+    file.flush().await?;
     Ok(())
 }
 
@@ -438,26 +442,34 @@ async fn install_java_from_archive(
     data_dir: &DataDir,
 ) -> Result<JavaInstallation, JavaDownloadError> {
     let java_dir = JavaDir::root().to_fs(data_dir);
-    let filename = archive_root_name(archive_name, archive_type)?;
+    let filename = archive_root_name(archive_name, archive_type)?.to_string();
 
     let target_dir = JavaDir::root()
         .java_version_dir(required_version)
         .to_fs(data_dir);
-    if target_dir.exists() {
-        fs::remove_dir_all(&target_dir)?;
-    }
 
-    let archive = fs::File::open(archive_path)?;
-    if archive_type == "tar.gz" {
-        let tar = GzDecoder::new(archive);
-        let mut archive = Archive::new(tar);
-        archive.unpack(&java_dir)?;
-    } else {
-        let mut archive = zip::ZipArchive::new(archive)?;
-        archive.extract(&java_dir)?;
-    }
+    // TODO: rewrite with async_zip
+    let archive_path = archive_path.to_path_buf();
+    let archive_type = archive_type.to_string();
+    tokio::task::spawn_blocking(move || -> Result<(), JavaDownloadError> {
+        if target_dir.exists() {
+            fs::remove_dir_all(&target_dir)?;
+        }
 
-    install_extracted_java(&java_dir, filename, &target_dir)?;
+        let archive = fs::File::open(&archive_path)?;
+        if archive_type == "tar.gz" {
+            let tar = GzDecoder::new(archive);
+            let mut archive = Archive::new(tar);
+            archive.unpack(&java_dir)?;
+        } else {
+            let mut archive = zip::ZipArchive::new(archive)?;
+            archive.extract(&java_dir)?;
+        }
+
+        install_extracted_java(&java_dir, &filename, &target_dir)
+    })
+    .await
+    .map_err(std::io::Error::other)??;
 
     let java_path = JavaDir::root()
         .java_version_dir(required_version)
@@ -471,6 +483,7 @@ async fn install_java_from_archive(
         .ok_or(JavaDownloadError::InvalidDownloadedJava)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn download_java_from_runtime(
     client: &Client,
     url: &Url,
@@ -479,10 +492,14 @@ pub async fn download_java_from_runtime(
     required_version: &str,
     data_dir: &DataDir,
     progress_tracker: impl ProgressTracker,
+    unpacking_message: &str,
 ) -> Result<JavaInstallation, JavaDownloadError> {
     let response = client.get(url.clone()).send().await?;
-    let java_download_path = get_temp_dir().join(format!("java_download.{archive_type}"));
+    let java_download_path = java_archive_download_path(data_dir, archive_type).await?;
+    let _archive_guard = crate::files::TempFileGuard::new(java_download_path.clone());
     write_response_to_file(response, &java_download_path, &progress_tracker).await?;
+    progress_tracker.set_length(0);
+    progress_tracker.set_message(unpacking_message);
     install_java_from_archive(
         &java_download_path,
         archive_type,
@@ -498,6 +515,7 @@ pub async fn download_java(
     required_version: &str,
     data_dir: &DataDir,
     progress_tracker: impl ProgressTracker,
+    unpacking_message: Option<&str>,
 ) -> Result<JavaInstallation, JavaDownloadError> {
     let platform = current_platform();
     let archive_types = ["tar.gz", "zip"];
@@ -516,8 +534,13 @@ pub async fn download_java(
         };
 
         let response = client.get(package.download_url.clone()).send().await?;
-        let java_download_path = get_temp_dir().join(format!("java_download.{archive_type}"));
+        let java_download_path = java_archive_download_path(data_dir, archive_type).await?;
+        let _archive_guard = crate::files::TempFileGuard::new(java_download_path.clone());
         write_response_to_file(response, &java_download_path, &progress_tracker).await?;
+        if let Some(message) = unpacking_message {
+            progress_tracker.set_length(0);
+            progress_tracker.set_message(message);
+        }
 
         if let Ok(installation) = install_java_from_archive(
             &java_download_path,

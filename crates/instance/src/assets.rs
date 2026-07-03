@@ -34,6 +34,8 @@ impl AssetIndex {
 #[derive(Serialize, Deserialize)]
 pub struct ObjectData {
     pub hash: String,
+    #[serde(default)]
+    pub size: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -102,7 +104,7 @@ impl AssetsMetadata {
                         .map(|url| CheckTask {
                             url,
                             path: rel_path.to_fs(data_dir),
-                            remote_size: None,
+                            remote_size: object.size,
                             remote_sha1: if check_hashes {
                                 Some(object.hash.clone())
                             } else {
@@ -143,6 +145,7 @@ mod tests {
                 "example".to_string(),
                 ObjectData {
                     hash: "e15a8f7fdce4175e05fe4799f5bd28468aedfa8c".to_string(),
+                    size: Some(1024),
                 },
             )]),
         };

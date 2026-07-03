@@ -184,6 +184,10 @@ impl DataDir {
     pub fn as_path(&self) -> &Path {
         &self.0
     }
+
+    pub fn tmp_dir(&self) -> PathBuf {
+        self.0.join(".tmp")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]

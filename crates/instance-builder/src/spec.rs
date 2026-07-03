@@ -16,7 +16,6 @@ use utils::{
     get_unique_name,
     instance_id::validate_instance_id,
     paths::{BaseUrl, DataDir, InstancesDir},
-    progress::ProgressStage,
 };
 
 use crate::java_mirror::mirror_java_runtimes;
@@ -133,17 +132,16 @@ impl Spec {
         keep_files.extend(deduped_copy_tasks.iter().map(|task| task.target.clone()));
         keep_files.insert(manifest_path.clone());
 
-        let check_progress =
-            TerminalProgress::new().handle(ProgressStage::Checking, "Checking files");
+        let check_progress = TerminalProgress::new().handle("Checking files");
         let download_tasks = files::get_download_tasks(deduped_check_tasks, check_progress).await?;
 
         info!("Got {} download tasks", download_tasks.len());
 
-        let download_progress =
-            TerminalProgress::new().handle(ProgressStage::Downloading, "Downloading files");
-        adaptive_download::download_files(download_tasks, download_progress).await?;
+        let download_progress = TerminalProgress::new().handle("Downloading files");
+        adaptive_download::download_files(download_tasks, &data_dir.tmp_dir(), download_progress)
+            .await?;
 
-        let copy_progress = TerminalProgress::new().handle(ProgressStage::Copying, "Copying files");
+        let copy_progress = TerminalProgress::new().handle("Copying files");
         files::copy_files_if_different(deduped_copy_tasks, copy_progress).await?;
 
         let authlib_injector_library =

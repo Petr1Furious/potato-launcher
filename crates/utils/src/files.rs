@@ -172,6 +172,38 @@ pub struct DeleteTask {
 pub struct DownloadTask {
     pub url: Url,
     pub path: PathBuf,
+    /// Expected file size for byte-based download progress
+    pub size: Option<u64>,
+}
+
+/// Total byte size of all tasks, or `None` when empty or any size is unknown.
+pub fn total_download_size(tasks: &[DownloadTask]) -> Option<u64> {
+    if tasks.is_empty() {
+        return None;
+    }
+    tasks.iter().map(|task| task.size).sum()
+}
+
+pub struct TempFileGuard {
+    path: Option<PathBuf>,
+}
+
+impl TempFileGuard {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path: Some(path) }
+    }
+
+    pub fn disarm(&mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -277,21 +309,23 @@ pub enum GetDownloadTasksError {
 pub async fn get_download_task(
     check_task: &CheckTask,
 ) -> Result<Option<DownloadTask>, GetDownloadTasksError> {
+    let download_task = || {
+        Some(DownloadTask {
+            url: check_task.url.clone(),
+            path: check_task.path.clone(),
+            size: check_task.remote_size,
+        })
+    };
+
     let metadata = match fs::metadata(&check_task.path).await {
         Ok(metadata) => {
             if !metadata.is_file() {
-                return Ok(Some(DownloadTask {
-                    url: check_task.url.clone(),
-                    path: check_task.path.clone(),
-                }));
+                return Ok(download_task());
             }
             metadata
         }
         Err(err) if err.kind() == ErrorKind::NotFound => {
-            return Ok(Some(DownloadTask {
-                url: check_task.url.clone(),
-                path: check_task.path.clone(),
-            }));
+            return Ok(download_task());
         }
         Err(err) => return Err(err.into()),
     };
@@ -300,19 +334,13 @@ pub async fn get_download_task(
         .remote_size
         .is_none_or(|remote_size| metadata.len() == remote_size);
     if !size_matches {
-        return Ok(Some(DownloadTask {
-            url: check_task.url.clone(),
-            path: check_task.path.clone(),
-        }));
+        return Ok(download_task());
     }
 
     if let Some(remote_sha1) = &check_task.remote_sha1
         && (remote_sha1.is_empty() || &hash_file(&check_task.path).await? != remote_sha1)
     {
-        return Ok(Some(DownloadTask {
-            url: check_task.url.clone(),
-            path: check_task.path.clone(),
-        }));
+        return Ok(download_task());
     }
 
     Ok(None)
@@ -394,13 +422,13 @@ pub async fn get_download_tasks(
         };
 
         if need_download {
-            download_tasks.insert(path, task.url);
+            download_tasks.insert(path, (task.url, task.remote_size));
         }
     }
 
     Ok(download_tasks
         .into_iter()
-        .map(|(path, url)| DownloadTask { url, path })
+        .map(|(path, (url, size))| DownloadTask { url, path, size })
         .collect())
 }
 
@@ -472,6 +500,7 @@ pub async fn download_file(
         fs::create_dir_all(parent).await?;
     }
     let tmp_path = temp_path_for(&task.path);
+    let mut guard = TempFileGuard::new(tmp_path.clone());
     let response = client
         .get(task.url.as_str())
         .send()
@@ -480,17 +509,12 @@ pub async fn download_file(
     let mut file = fs::File::create(&tmp_path).await?;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(chunk) => file.write_all(&chunk).await?,
-            Err(err) => {
-                let _ = fs::remove_file(&tmp_path).await;
-                return Err(err.into());
-            }
-        }
+        file.write_all(&chunk?).await?;
     }
     file.flush().await?;
     drop(file);
     atomic_replace_file(&tmp_path, &task.path).await?;
+    guard.disarm();
     Ok(())
 }
 

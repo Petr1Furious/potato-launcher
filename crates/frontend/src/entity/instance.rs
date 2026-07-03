@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{Context, EventEmitter};
 use instance::storage::InstanceHandle;
-use launcher_bridge::{InstanceLiveStatus, InstanceView, ProgressStage};
+use launcher_bridge::{InstanceLiveStatus, InstanceTaskView, InstanceView};
 
 #[derive(Clone, Default)]
 pub struct InstanceEntries {
@@ -11,35 +11,6 @@ pub struct InstanceEntries {
 
 #[derive(Clone)]
 pub struct InstancesUpdatedEvent;
-
-#[derive(Clone, Debug)]
-pub struct InstanceProgressUpdate {
-    pub handle: InstanceHandle,
-    pub stage: ProgressStage,
-    pub current: u64,
-    pub total: u64,
-    pub message: Arc<str>,
-    pub show_bar: bool,
-}
-
-impl InstanceProgressUpdate {
-    pub fn new(
-        handle: InstanceHandle,
-        stage: ProgressStage,
-        current: u64,
-        total: u64,
-        message: Arc<str>,
-    ) -> Self {
-        Self {
-            handle,
-            stage,
-            current,
-            total,
-            message,
-            show_bar: total > 1,
-        }
-    }
-}
 
 impl EventEmitter<InstancesUpdatedEvent> for InstanceEntries {}
 
@@ -50,33 +21,23 @@ impl InstanceEntries {
         cx.notify();
     }
 
-    pub fn set_progress(&mut self, update: InstanceProgressUpdate, cx: &mut Context<Self>) {
-        if let Some(instance) = self
-            .entries
-            .iter_mut()
-            .find(|entry| entry.handle == update.handle)
-        {
-            if let InstanceLiveStatus::Installing {
-                stage,
-                current,
-                total,
-                ..
-            } = &instance.status
-                && *stage == update.stage
-                && update.total == *total
-                && update.current < *current
-            {
-                return;
+    pub fn set_tasks(
+        &mut self,
+        handle: InstanceHandle,
+        tasks: Arc<[InstanceTaskView]>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(instance) = self.entries.iter_mut().find(|entry| entry.handle == handle) else {
+            return;
+        };
+        match &mut instance.status {
+            InstanceLiveStatus::Installing { tasks: current }
+            | InstanceLiveStatus::LaunchPreparing { tasks: current } => {
+                *current = tasks;
+                cx.emit(InstancesUpdatedEvent);
+                cx.notify();
             }
-            instance.status = InstanceLiveStatus::Installing {
-                stage: update.stage,
-                current: update.current,
-                total: update.total,
-                message: update.message,
-                show_bar: update.show_bar,
-            };
-            cx.emit(InstancesUpdatedEvent);
-            cx.notify();
+            _ => {}
         }
     }
 }

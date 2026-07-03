@@ -506,6 +506,7 @@ pub async fn install_forge(
                 &java_version,
                 launcher_data_dir,
                 progress::no_progress_bar(),
+                None,
             )
             .await?;
         }

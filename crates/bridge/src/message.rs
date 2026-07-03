@@ -103,10 +103,7 @@ pub enum MessageToFrontend {
     InstancesUpdated(Arc<[InstanceView]>),
     InstanceProgress {
         handle: InstanceHandle,
-        stage: ProgressStage,
-        current: u64,
-        total: u64,
-        message: Arc<str>,
+        tasks: Arc<[InstanceTaskView]>,
     },
     AccountsUpdated(Arc<[AccountView]>),
     BackendsUpdated {
@@ -199,14 +196,13 @@ pub enum InstanceLiveStatus {
     Installed,
     Outdated,
     Installing {
-        stage: ProgressStage,
-        current: u64,
-        total: u64,
-        message: Arc<str>,
-        show_bar: bool,
+        tasks: Arc<[InstanceTaskView]>,
     },
     InstallFailed(Arc<str>),
-    Launching,
+    /// Auth/sync/Java preparation before the game process spawns
+    LaunchPreparing {
+        tasks: Arc<[InstanceTaskView]>,
+    },
     Running,
     LaunchFailed(Arc<str>),
     OrphanedFromBackend,
@@ -217,17 +213,42 @@ impl InstanceLiveStatus {
         matches!(self, Self::OrphanedFromBackend)
     }
 
-    pub fn is_installing(&self) -> bool {
-        matches!(self, Self::Installing { .. })
+    pub fn active_tasks(&self) -> Option<&Arc<[InstanceTaskView]>> {
+        match self {
+            Self::Installing { tasks } | Self::LaunchPreparing { tasks } => Some(tasks),
+            _ => None,
+        }
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstanceTaskView {
+    pub id: u64,
+    pub kind: TaskKind,
+    pub message: Arc<str>,
+    pub current: u64,
+    /// `0` means indeterminate
+    pub total: u64,
+    pub unit: ProgressUnit,
+    pub finished: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProgressStage {
+pub enum TaskKind {
+    Auth,
     Metadata,
-    Files,
+    CheckFiles,
+    Download,
     Java,
-    Launch,
+    Extract,
+    Copy,
+    Generate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgressUnit {
+    Items,
+    Bytes,
 }
 
 #[derive(Clone, Debug)]
@@ -289,7 +310,10 @@ pub enum BackendFetchState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthPromptContext {
     AddAccount,
-    Launch { instance: InstanceHandle },
+    /// Interactive auth needed by an instance install or launch.
+    Instance {
+        handle: InstanceHandle,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

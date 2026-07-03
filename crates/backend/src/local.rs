@@ -11,22 +11,20 @@ use instance::{
     storage::{InstanceHandle, InstanceStorage, LocalInstance, allocate_local_dir_name},
     version_metadata::OsArch,
 };
-use launcher_bridge::LocalLoader;
+use launcher_bridge::{LocalLoader, ProgressUnit, TaskKind};
 use tokio::sync::mpsc;
 use url::Url;
 use utils::{
     adaptive_download, files,
     paths::{DataDir, InstancesDir},
-    progress::{ProgressStage, ProgressTracker},
+    progress::ProgressTracker,
 };
 
 use crate::{
     BackendEvent,
     catalog::BackendCatalogEntry,
-    install::{
-        BackendProgressReporter, InstallOutput, install_game_files, persist_java_installation,
-        resolve_java,
-    },
+    install::{InstallOutput, install_game_files, persist_java_installation, resolve_java},
+    tasks::InstanceTaskList,
 };
 
 #[derive(Clone)]
@@ -47,6 +45,7 @@ pub(crate) struct CreateLocalRequest {
     pub client: reqwest::Client,
     pub frontend: launcher_bridge::FrontendSender,
     pub internal: mpsc::UnboundedSender<BackendEvent>,
+    pub tasks: InstanceTaskList,
 }
 
 pub(crate) fn validate_create_local(
@@ -119,10 +118,11 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
     instance_dir.ensure_dir();
 
     let internal = request.internal.clone();
-    let progress = BackendProgressReporter::new(request.handle.clone(), request.internal);
+    let tasks = request.tasks.clone();
 
-    let generate_progress = progress.handle(
-        ProgressStage::Metadata,
+    let generate_progress = tasks.task(
+        TaskKind::Generate,
+        ProgressUnit::Items,
         launcher_i18n::progress::generating_local_instance(),
     );
 
@@ -161,56 +161,78 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
         request.handle
     );
 
-    let check_progress = progress.handle(
-        ProgressStage::Checking,
-        launcher_i18n::progress::checking_install_files(),
-    );
-    let check_count = result.check_tasks.len();
-    log::info!("local create for instance '{instance_name}': {check_count} check task(s)");
-    files::log_check_tasks("local create", &instance_name, &result.check_tasks);
-    let download_tasks =
-        files::get_download_tasks(result.check_tasks, check_progress.clone()).await?;
-    files::log_download_tasks("local create", &instance_name, check_count, &download_tasks);
-    check_progress.finish();
-
-    let download_progress = progress.handle(
-        ProgressStage::Downloading,
-        launcher_i18n::progress::downloading_install_files(),
-    );
-    adaptive_download::download_files(download_tasks, download_progress).await?;
-
-    if !result.copy_tasks.is_empty() {
-        files::log_copy_tasks("local create", &instance_name, &result.copy_tasks);
-        let copy_progress = progress.handle(
-            ProgressStage::Copying,
-            launcher_i18n::progress::copying_files(),
-        );
-        files::copy_files_if_different(result.copy_tasks, copy_progress).await?;
-    }
-
     let metadata = result.metadata;
-    metadata.save(&instance_dir).await?;
 
-    install_game_files(
-        &request.client,
-        &metadata,
-        &InstallParams {
-            instance_dir: instance_dir.clone(),
-            cause: InstallCause::Update,
-            force_overwrite: false,
-            previous_mod_entries: Vec::new(),
-            previous_content_rules: Vec::new(),
-            optional_sets_enabled: HashMap::new(),
-        },
-        &progress,
-        &request.frontend,
-    )
-    .await?;
+    let files_future = async {
+        let check_progress = tasks.task(
+            TaskKind::CheckFiles,
+            ProgressUnit::Items,
+            launcher_i18n::progress::checking_install_files(),
+        );
+        let check_count = result.check_tasks.len();
+        log::info!("local create for instance '{instance_name}': {check_count} check task(s)");
+        files::log_check_tasks("local create", &instance_name, &result.check_tasks);
+        let download_tasks =
+            files::get_download_tasks(result.check_tasks, check_progress.clone()).await?;
+        files::log_download_tasks("local create", &instance_name, check_count, &download_tasks);
+        check_progress.finish();
 
-    let installation = resolve_java(&request.client, &metadata, &data_dir, None, &progress).await?;
-    persist_java_installation(request.handle.clone(), &installation, &internal);
+        if !download_tasks.is_empty() {
+            let unit = match files::total_download_size(&download_tasks) {
+                Some(_) => ProgressUnit::Bytes,
+                None => ProgressUnit::Items,
+            };
+            let download_progress = tasks.task(
+                TaskKind::Download,
+                unit,
+                launcher_i18n::progress::downloading_install_files(),
+            );
+            adaptive_download::download_files(
+                download_tasks,
+                &data_dir.tmp_dir(),
+                download_progress.clone(),
+            )
+            .await?;
+            download_progress.finish();
+        }
+
+        if !result.copy_tasks.is_empty() {
+            files::log_copy_tasks("local create", &instance_name, &result.copy_tasks);
+            let copy_progress = tasks.task(
+                TaskKind::Copy,
+                ProgressUnit::Items,
+                launcher_i18n::progress::copying_files(),
+            );
+            files::copy_files_if_different(result.copy_tasks, copy_progress).await?;
+        }
+
+        metadata.save(&instance_dir).await?;
+
+        install_game_files(
+            &request.client,
+            &metadata,
+            &InstallParams {
+                instance_dir: instance_dir.clone(),
+                cause: InstallCause::Update,
+                force_overwrite: false,
+                previous_mod_entries: Vec::new(),
+                previous_content_rules: Vec::new(),
+                optional_sets_enabled: HashMap::new(),
+            },
+            &tasks,
+            &request.frontend,
+        )
+        .await
+    };
+    let (files_result, java_result) = tokio::join!(
+        files_future,
+        resolve_java(&request.client, &metadata, &data_dir, None, &tasks),
+    );
+    files_result?;
+    let java = java_result?;
+    persist_java_installation(request.handle.clone(), &java, &internal);
 
     let instance = LocalInstance::new_local_with_handle(request.handle, request.dir_name);
 
-    Ok(InstallOutput { instance })
+    Ok(InstallOutput { instance, java })
 }

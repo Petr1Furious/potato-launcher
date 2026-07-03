@@ -1420,6 +1420,7 @@ pub mod placeholders {
 pub mod progress {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
+            "authenticating" => Some(authenticating()),
             "checking_files" => Some(checking_files()),
             "checking_install_files" => Some(checking_install_files()),
             "checking_java" => Some(checking_java()),
@@ -1436,7 +1437,14 @@ pub mod progress {
             "installing_java" => Some(installing_java()),
             "java_already_installed" => Some(java_already_installed()),
             "syncing_optional_mods" => Some(syncing_optional_mods()),
+            "unpacking_java" => Some(unpacking_java()),
             _ => None,
+        }
+    }
+    pub fn authenticating() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Вход в аккаунт",
+            _ => "Signing in",
         }
     }
     pub fn checking_files() -> &'static str {
@@ -1539,6 +1547,12 @@ pub mod progress {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Синхронизация опциональных модов...",
             _ => "Syncing optional mods...",
+        }
+    }
+    pub fn unpacking_java() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Распаковка Java",
+            _ => "Unpacking Java",
         }
     }
 }

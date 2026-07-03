@@ -1,4 +1,4 @@
-use utils::progress::{ProgressEvent, ProgressHandle, ProgressReporter, ProgressStage};
+use utils::progress::{ProgressEvent, ProgressHandle, ProgressReporter};
 
 #[derive(Clone)]
 pub struct TerminalProgress {
@@ -16,8 +16,8 @@ impl TerminalProgress {
         Self { bar }
     }
 
-    pub fn handle(self, stage: ProgressStage, message: impl Into<String>) -> ProgressHandle<Self> {
-        ProgressHandle::new(self, stage).with_message(message)
+    pub fn handle(self, message: impl Into<String>) -> ProgressHandle<Self> {
+        ProgressHandle::new(self).with_message(message)
     }
 }
 

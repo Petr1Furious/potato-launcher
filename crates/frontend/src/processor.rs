@@ -2,10 +2,7 @@ use gpui::App;
 use launcher_bridge::{ExitOutcome, MessageToFrontend, NotificationLevel};
 use launcher_i18n::set_lang;
 
-use crate::{
-    entity::{DataEntities, instance::InstanceProgressUpdate},
-    notification_text::short_notification_text,
-};
+use crate::{entity::DataEntities, notification_text::short_notification_text};
 
 pub struct Processor {
     data: DataEntities,
@@ -23,18 +20,9 @@ impl Processor {
                     .instances
                     .update(cx, |entries, cx| entries.replace(instances, cx));
             }
-            MessageToFrontend::InstanceProgress {
-                handle,
-                stage,
-                current,
-                total,
-                message,
-            } => {
+            MessageToFrontend::InstanceProgress { handle, tasks } => {
                 self.data.instances.update(cx, |entries, cx| {
-                    entries.set_progress(
-                        InstanceProgressUpdate::new(handle, stage, current, total, message),
-                        cx,
-                    );
+                    entries.set_tasks(handle, tasks, cx);
                 });
             }
             MessageToFrontend::AccountsUpdated(accounts) => {
