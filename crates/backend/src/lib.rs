@@ -48,7 +48,6 @@ use url::Url;
 use utils::{
     files,
     paths::{DataDir, InstanceDirFS, InstancesDir},
-    progress::ProgressTracker as _,
 };
 
 const SETTINGS_FILE: &str = "settings.json";
@@ -1884,13 +1883,9 @@ impl BackendState {
         let frontend = tx.clone();
         let (kill_tx, mut kill_rx) = oneshot::channel();
         let task_handle = handle.clone();
+        let initial_tasks = tasks.snapshot();
         let task = tokio::spawn(async move {
             // 1. authenticate before any sync starts
-            let auth_task = tasks.task(
-                launcher_bridge::TaskKind::Auth,
-                launcher_bridge::ProgressUnit::Items,
-                launcher_i18n::progress::authenticating(),
-            );
             let auth_messages = Arc::new(launch::InstanceAuthMessages::new(
                 frontend.clone(),
                 task_handle.clone(),
@@ -1917,7 +1912,6 @@ impl BackendState {
                     return;
                 }
             };
-            auth_task.finish();
             if let Some(refreshed) = &authenticated.refreshed {
                 let _ = internal.send(BackendEvent::AccountUpdated {
                     provider: authenticated.provider.clone(),
@@ -2035,7 +2029,7 @@ impl BackendState {
                 }
             }
         });
-        let mut activity = Activity::new(instances::ActivityKind::LaunchPrep, Arc::from([]), task);
+        let mut activity = Activity::new(instances::ActivityKind::LaunchPrep, initial_tasks, task);
         activity.kill = Some(kill_tx);
         self.activities.insert(handle, activity);
     }

@@ -1734,9 +1734,12 @@ fn status_badge(
         .status
         .active_tasks()
         .filter(|tasks| tasks.iter().any(|task| !task.finished));
-    // While installing, the live progress bars already demonstrate
-    // that the installation is in progress.
-    let hide_badge = matches!(instance.status, InstanceLiveStatus::Installing { .. });
+    // While installing or preparing to launch, the live progress bars already
+    // demonstrate that work is in progress, so there's no need for the badge.
+    let hide_badge = matches!(
+        instance.status,
+        InstanceLiveStatus::Installing { .. } | InstanceLiveStatus::LaunchPreparing { .. }
+    );
 
     match active_tasks {
         Some(tasks) if hide_badge => crate::component::progress::task_progress_rows(tasks, cx),

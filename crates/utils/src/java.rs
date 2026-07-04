@@ -1,5 +1,7 @@
 use flate2::read::GzDecoder;
 use futures::StreamExt;
+use object::read::macho::{FatArch, MachOFatFile32, MachOFatFile64};
+use object::{Architecture, FileKind, Object};
 use regex::Regex;
 use reqwest::Client;
 use serde::Deserialize;
@@ -101,14 +103,16 @@ pub async fn get_installation_pub(path: &Path) -> Option<JavaInstallation> {
     get_installation(path).await
 }
 
-async fn get_installation(path: &Path) -> Option<JavaInstallation> {
-    let path = if path.is_file() {
-        path.to_path_buf()
+fn resolve_binary_path(path: &Path) -> Option<PathBuf> {
+    if path.is_file() {
+        Some(path.to_path_buf())
     } else {
-        which::which(path).ok()?
-    };
+        which::which(path).ok()
+    }
+}
 
-    let mut cmd = Command::new(&path);
+async fn read_java_version(path: &Path) -> Option<String> {
+    let mut cmd = Command::new(path);
     #[cfg(target_os = "windows")]
     {
         use winapi::um::winbase::CREATE_NO_WINDOW;
@@ -119,53 +123,75 @@ async fn get_installation(path: &Path) -> Option<JavaInstallation> {
 
     let version_result = String::from_utf8_lossy(&output.stderr);
     let captures = JAVA_VERSION_RGX.captures(&version_result)?;
+    Some(captures.get(1)?.as_str().to_string())
+}
 
-    let version = captures.get(1)?.as_str().to_string();
+async fn get_installation(path: &Path) -> Option<JavaInstallation> {
+    let path = resolve_binary_path(path)?;
+    let version = read_java_version(&path).await?;
     Some(JavaInstallation { version, path })
 }
 
-#[cfg(not(target_os = "windows"))]
-fn check_arch(java_version_output: &str) -> bool {
-    let arch = std::env::consts::ARCH;
-    match arch {
-        "x86_64" | "amd64" => java_version_output.contains("x86-64"),
-        "aarch64" => {
-            java_version_output.contains("aarch64") || java_version_output.contains("arm64")
-        }
+fn version_matches(version: &str, required_version: &str) -> bool {
+    version.starts_with(required_version) || version.starts_with(&format!("1.{required_version}"))
+}
+
+fn arch_is_current(architecture: Architecture) -> bool {
+    match std::env::consts::ARCH {
+        "x86_64" | "amd64" => architecture == Architecture::X86_64,
+        "aarch64" => architecture == Architecture::Aarch64,
         _ => false,
     }
 }
 
-#[cfg(target_os = "windows")]
-fn check_arch(_: &str) -> bool {
-    true
+fn binary_data_has_current_arch(data: &[u8]) -> bool {
+    match FileKind::parse(data) {
+        Ok(FileKind::MachOFat32) => MachOFatFile32::parse(data)
+            .map(|fat| {
+                fat.arches()
+                    .iter()
+                    .any(|arch| arch_is_current(arch.architecture()))
+            })
+            .unwrap_or(false),
+        Ok(FileKind::MachOFat64) => MachOFatFile64::parse(data)
+            .map(|fat| {
+                fat.arches()
+                    .iter()
+                    .any(|arch| arch_is_current(arch.architecture()))
+            })
+            .unwrap_or(false),
+        Ok(_) => object::File::parse(data)
+            .map(|file| arch_is_current(file.architecture()))
+            .unwrap_or(false),
+        Err(_) => false,
+    }
 }
 
-async fn does_match(java: &JavaInstallation, required_version: &str) -> bool {
-    if !(java.version.starts_with(&required_version.to_string())
-        || java.version.starts_with(&format!("1.{required_version}")))
-    {
-        return false;
-    }
-
+async fn binary_matches_current_arch(path: &Path) -> bool {
     if std::env::consts::ARCH != "aarch64" {
         return true;
     }
-    let output = Command::new("file").arg(&java.path).output().await;
-    if let Ok(output) = output {
-        let output = String::from_utf8_lossy(&output.stdout);
-        check_arch(&output)
-    } else {
-        false
+    match tokio::fs::read(path).await {
+        Ok(data) => binary_data_has_current_arch(&data),
+        Err(_) => false,
     }
 }
 
+async fn does_match(java: &JavaInstallation, required_version: &str) -> bool {
+    version_matches(&java.version, required_version)
+        && binary_matches_current_arch(&java.path).await
+}
+
 pub async fn check_java(required_version: &str, path: &Path) -> bool {
-    if let Some(installation) = get_installation(path).await {
-        does_match(&installation, required_version).await
-    } else {
-        false
-    }
+    let Some(path) = resolve_binary_path(path) else {
+        return false;
+    };
+    let (version, arch_ok) =
+        futures::join!(read_java_version(&path), binary_matches_current_arch(&path));
+    version
+        .as_deref()
+        .is_some_and(|version| version_matches(version, required_version))
+        && arch_ok
 }
 
 #[cfg(target_os = "windows")]
