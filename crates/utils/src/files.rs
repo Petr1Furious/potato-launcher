@@ -3,51 +3,190 @@ use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::{fs, io};
 use url::Url;
-use walkdir::WalkDir;
 
 use crate::progress::ProgressTracker;
 
 #[derive(thiserror::Error, Debug)]
 pub enum GetFilesInDirError {
     #[error("failed to get files in dir: {0}")]
-    WalkDir(#[from] walkdir::Error),
+    Io(#[from] std::io::Error),
 }
 
-pub fn get_files_in_dir(path: &Path) -> Result<Vec<PathBuf>, GetFilesInDirError> {
-    if path.is_file() {
-        return Ok(vec![path.to_path_buf()]);
+async fn read_dir_into(dir: &Path, out: &mut Vec<(PathBuf, std::fs::FileType)>) -> io::Result<()> {
+    let mut read_dir = fs::read_dir(dir).await?;
+    while let Some(entry) = read_dir.next_entry().await? {
+        out.push((entry.path(), entry.file_type().await?));
+    }
+    Ok(())
+}
+
+// Recursively collects every entry under `root` (excluding `root` itself) in
+// breadth-first order, so a directory always precedes its contents.
+//
+// Symlinks are not followed, which avoids traversal cycles.
+async fn collect_entries_bfs(root: &Path) -> io::Result<Vec<(PathBuf, std::fs::FileType)>> {
+    let mut entries = Vec::new();
+    read_dir_into(root, &mut entries).await?;
+
+    let mut cursor = 0;
+    while cursor < entries.len() {
+        if entries[cursor].1.is_dir() {
+            let dir = entries[cursor].0.clone();
+            read_dir_into(&dir, &mut entries).await?;
+        }
+        cursor += 1;
     }
 
-    if !path.is_dir() {
-        return Ok(Vec::new());
-    }
+    Ok(entries)
+}
 
-    Ok(WalkDir::new(path)
+async fn collect_files_recursive(root: &Path) -> io::Result<Vec<PathBuf>> {
+    Ok(collect_entries_bfs(root)
+        .await?
         .into_iter()
-        .map(|entry| entry.map(|entry| entry.into_path()))
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .filter(|entry| entry.is_file())
+        .filter(|(_, file_type)| file_type.is_file())
+        .map(|(path, _)| path)
         .collect())
 }
 
-pub fn get_files_ignore_paths(path: &Path, ignore_paths: &HashSet<PathBuf>) -> Vec<PathBuf> {
-    if !path.is_dir() {
+async fn collect_entries_contents_first(root: &Path) -> io::Result<Vec<(PathBuf, bool)>> {
+    let mut entries = collect_entries_bfs(root)
+        .await?
+        .into_iter()
+        .map(|(path, file_type)| (path, file_type.is_dir()))
+        .collect::<Vec<_>>();
+
+    entries.reverse();
+    Ok(entries)
+}
+
+pub async fn get_files_in_dir(path: &Path) -> Result<Vec<PathBuf>, GetFilesInDirError> {
+    let Ok(metadata) = fs::metadata(path).await else {
+        return Ok(Vec::new());
+    };
+
+    if metadata.is_file() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    if !metadata.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    Ok(collect_files_recursive(path).await?)
+}
+
+pub async fn list_dir_shallow(
+    path: &Path,
+) -> Result<Vec<(PathBuf, std::fs::FileType)>, GetFilesInDirError> {
+    let mut entries = Vec::new();
+    match read_dir_into(path, &mut entries).await {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.into()),
+    }
+    Ok(entries)
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ExtractZipError {
+    #[error("file I/O failed while extracting zip archive: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("failed to read zip archive: {0}")]
+    Zip(#[from] async_zip::error::ZipError),
+}
+
+pub async fn extract_zip(
+    archive_path: &Path,
+    dest: &Path,
+    skip_meta_inf: bool,
+) -> Result<(), ExtractZipError> {
+    use async_zip::base::read::seek::ZipFileReader;
+    use tokio_util::compat::FuturesAsyncReadCompatExt as _;
+
+    let file = fs::File::open(archive_path).await?;
+    let mut zip = ZipFileReader::with_tokio(io::BufReader::new(file)).await?;
+
+    let entries = zip
+        .file()
+        .entries()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let name = entry.filename().as_str().ok()?.to_owned();
+            let is_dir = entry.dir().unwrap_or(false);
+            Some((index, name, is_dir))
+        })
+        .collect::<Vec<_>>();
+
+    for (index, name, is_dir) in entries {
+        let Some(relative) = sanitize_zip_entry_path(&name) else {
+            continue;
+        };
+        if skip_meta_inf
+            && relative
+                .components()
+                .next()
+                .is_some_and(|component| component.as_os_str() == OsStr::new("META-INF"))
+        {
+            continue;
+        }
+
+        let output_path = dest.join(&relative);
+        if is_dir {
+            fs::create_dir_all(&output_path).await?;
+            continue;
+        }
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+
+        let mut reader = zip.reader_without_entry(index).await?.compat();
+        let mut output = fs::File::create(&output_path).await?;
+        io::copy(&mut reader, &mut output).await?;
+        output.flush().await?;
+    }
+
+    Ok(())
+}
+
+fn sanitize_zip_entry_path(name: &str) -> Option<PathBuf> {
+    use std::path::Component;
+
+    let mut sanitized = PathBuf::new();
+    for component in Path::new(name).components() {
+        match component {
+            Component::Normal(part) => sanitized.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+
+    (!sanitized.as_os_str().is_empty()).then_some(sanitized)
+}
+
+pub async fn get_files_ignore_paths(path: &Path, ignore_paths: &HashSet<PathBuf>) -> Vec<PathBuf> {
+    if !fs::metadata(path)
+        .await
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+    {
         // TODO: return error
         return vec![];
     }
 
-    WalkDir::new(path)
+    collect_files_recursive(path)
+        .await
+        .unwrap_or_default()
         .into_iter()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
-        .map(|entry| entry.path().to_path_buf())
         .filter(|entry_path| !ignore_paths.contains(entry_path))
         .collect()
 }
@@ -751,8 +890,6 @@ pub enum RetainPathsError {
 pub enum RetainOnlyFilesError {
     #[error("invalid retain paths: {0}")]
     RetainPaths(#[from] RetainPathsError),
-    #[error("failed while traversing target directory: {0}")]
-    WalkDir(#[from] walkdir::Error),
     #[error("failed to resolve relative path under target directory: {0}")]
     StripPrefix(#[from] std::path::StripPrefixError),
     #[error("file I/O failed while retaining files: {0}")]
@@ -811,17 +948,11 @@ pub async fn retain_only_files_and_parents(
         }
     }
 
-    for entry in WalkDir::new(target_dir).contents_first(true).into_iter() {
-        let entry = entry?;
-        let path = entry.path();
-        if path == target_dir {
-            continue;
-        }
-
+    for (path, is_dir) in collect_entries_contents_first(target_dir).await? {
         let rel = path.strip_prefix(target_dir)?.to_path_buf();
-        if entry.file_type().is_dir() {
+        if is_dir {
             if !keep_rel_dirs.contains(&rel) {
-                match fs::remove_dir(path).await {
+                match fs::remove_dir(&path).await {
                     Ok(()) => {
                         removed_dirs += 1;
                     }
@@ -830,7 +961,7 @@ pub async fn retain_only_files_and_parents(
                 }
             }
         } else if !keep_rel_files.contains(&rel) {
-            match fs::remove_file(path).await {
+            match fs::remove_file(&path).await {
                 Ok(()) => {
                     removed_files += 1;
                 }

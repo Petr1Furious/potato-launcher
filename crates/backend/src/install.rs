@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    ffi::OsStr,
-    fs, io,
+    io,
     path::Path,
     sync::Arc,
 };
@@ -1061,42 +1060,13 @@ async fn extract_natives_if_needed(
     tokio::fs::create_dir_all(&natives_dir).await?;
 
     for native_path in &native_paths {
-        extract_zip(native_path, &natives_dir)?;
+        files::extract_zip(native_path, &natives_dir, true).await?;
         progress.inc(1);
     }
 
     // marker last: an interrupted extraction must not look complete
     tokio::fs::write(&marker_path, fingerprint).await?;
     progress.finish();
-    Ok(())
-}
-
-fn extract_zip(src: &Path, dest: &Path) -> anyhow::Result<()> {
-    let file = fs::File::open(src)?;
-    let mut zip = zip::ZipArchive::new(file)?;
-    for index in 0..zip.len() {
-        let mut entry = zip.by_index(index)?;
-        let Some(enclosed_name) = entry.enclosed_name() else {
-            continue;
-        };
-        if enclosed_name
-            .components()
-            .next()
-            .is_some_and(|component| component.as_os_str() == OsStr::new("META-INF"))
-        {
-            continue;
-        }
-        let output_path = dest.join(enclosed_name);
-        if entry.is_dir() {
-            fs::create_dir_all(&output_path)?;
-        } else {
-            if let Some(parent) = output_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut output = fs::File::create(output_path)?;
-            io::copy(&mut entry, &mut output)?;
-        }
-    }
     Ok(())
 }
 

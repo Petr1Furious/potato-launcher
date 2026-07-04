@@ -317,8 +317,8 @@ pub enum JavaDownloadError {
     Url(#[from] url::ParseError),
     #[error("file I/O failed while downloading/installing Java: {0}")]
     Io(#[from] std::io::Error),
-    #[error("failed to extract Java ZIP archive: {0}")]
-    Zip(#[from] zip::result::ZipError),
+    #[error("failed to extract Java archive: {0}")]
+    Extract(#[from] crate::files::ExtractZipError),
 }
 
 fn get_java_download_params_for_target(
@@ -378,31 +378,39 @@ async fn java_archive_download_path(
 
 /// Zulu macOS archives ship as .app bundles where the JRE lives under
 /// {archive_root}/Contents/Home, while Linux/Windows archives use a flat layout.
-fn resolve_java_home_dir(extracted_root: &Path) -> PathBuf {
+async fn resolve_java_home_dir(extracted_root: &Path) -> PathBuf {
     let bundle_home = extracted_root.join("Contents").join("Home");
-    if bundle_home.is_dir() {
+    if tokio::fs::metadata(&bundle_home)
+        .await
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+    {
         bundle_home
     } else {
         extracted_root.to_path_buf()
     }
 }
 
-fn install_extracted_java(
+async fn install_extracted_java(
     java_dir: &Path,
     filename: &str,
     target_dir: &Path,
 ) -> Result<(), JavaDownloadError> {
     let extracted_root = java_dir.join(filename);
-    let java_home_src = resolve_java_home_dir(&extracted_root);
+    let java_home_src = resolve_java_home_dir(&extracted_root).await;
 
-    if target_dir.exists() {
-        fs::remove_dir_all(target_dir)?;
+    if tokio::fs::try_exists(target_dir).await.unwrap_or(false) {
+        tokio::fs::remove_dir_all(target_dir).await?;
     }
 
-    fs::rename(&java_home_src, target_dir)?;
+    tokio::fs::rename(&java_home_src, target_dir).await?;
 
-    if java_home_src != extracted_root && extracted_root.exists() {
-        fs::remove_dir_all(&extracted_root)?;
+    if java_home_src != extracted_root
+        && tokio::fs::try_exists(&extracted_root)
+            .await
+            .unwrap_or(false)
+    {
+        tokio::fs::remove_dir_all(&extracted_root).await?;
     }
 
     Ok(())
@@ -448,28 +456,23 @@ async fn install_java_from_archive(
         .java_version_dir(required_version)
         .to_fs(data_dir);
 
-    // TODO: rewrite with async_zip
-    let archive_path = archive_path.to_path_buf();
-    let archive_type = archive_type.to_string();
-    tokio::task::spawn_blocking(move || -> Result<(), JavaDownloadError> {
-        if target_dir.exists() {
-            fs::remove_dir_all(&target_dir)?;
-        }
-
-        let archive = fs::File::open(&archive_path)?;
-        if archive_type == "tar.gz" {
+    if archive_type == "tar.gz" {
+        let archive_path = archive_path.to_path_buf();
+        let java_dir = java_dir.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), JavaDownloadError> {
+            let archive = fs::File::open(&archive_path)?;
             let tar = GzDecoder::new(archive);
             let mut archive = Archive::new(tar);
             archive.unpack(&java_dir)?;
-        } else {
-            let mut archive = zip::ZipArchive::new(archive)?;
-            archive.extract(&java_dir)?;
-        }
+            Ok(())
+        })
+        .await
+        .map_err(std::io::Error::other)??;
+    } else {
+        crate::files::extract_zip(archive_path, &java_dir, false).await?;
+    }
 
-        install_extracted_java(&java_dir, &filename, &target_dir)
-    })
-    .await
-    .map_err(std::io::Error::other)??;
+    install_extracted_java(&java_dir, &filename, &target_dir).await?;
 
     let java_path = JavaDir::root()
         .java_version_dir(required_version)

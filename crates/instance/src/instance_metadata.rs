@@ -426,9 +426,9 @@ impl InstanceMetadata {
             );
         }
 
-        let mod_plan = build_mod_sync_plan(&self.mod_entries, &self.mod_sync, params)?;
+        let mod_plan = build_mod_sync_plan(&self.mod_entries, &self.mod_sync, params).await?;
         tasks += mod_plan.tasks;
-        tasks += self.get_include_tasks(params)?;
+        tasks += self.get_include_tasks(params).await?;
 
         Ok(InstallTasks {
             tasks,
@@ -527,7 +527,10 @@ impl InstanceMetadata {
         Ok(tasks)
     }
 
-    fn get_include_tasks(&self, params: &InstallParams) -> Result<TaskSet, InstanceMetadataError> {
+    async fn get_include_tasks(
+        &self,
+        params: &InstallParams,
+    ) -> Result<TaskSet, InstanceMetadataError> {
         let mut tasks = TaskSet::default();
         let mut seen_paths: HashSet<PathBuf> = HashSet::new();
 
@@ -610,7 +613,7 @@ impl InstanceMetadata {
                     }
                     if delete_extra {
                         let dir_path = entry.path.to_path(params.instance_dir.minecraft_dir());
-                        for file in files::get_files_ignore_paths(&dir_path, &seen_paths) {
+                        for file in files::get_files_ignore_paths(&dir_path, &seen_paths).await {
                             tasks.delete_tasks.push(DeleteTask { path: file.clone() });
                         }
                     }

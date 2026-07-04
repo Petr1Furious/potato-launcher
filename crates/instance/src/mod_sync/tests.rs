@@ -1,13 +1,9 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use relative_path::RelativePathBuf;
 use url::Url;
 use utils::paths::{DataDir, InstanceDirFS, InstancesDir};
-use zip::ZipWriter;
-use zip::write::SimpleFileOptions;
 
 use crate::install_params::{InstallCause, InstallParams};
 use crate::instance_metadata::{ModEntry, Object};
@@ -17,14 +13,28 @@ use crate::mod_sync::{
     resolve_optional_set_enabled,
 };
 
+fn block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(future)
+}
+
+async fn build_single_entry_jar(name: &str, data: &[u8]) -> Vec<u8> {
+    use async_zip::base::write::ZipFileWriter;
+    use async_zip::{Compression, ZipEntryBuilder};
+
+    let mut writer = ZipFileWriter::new(Vec::<u8>::new());
+    let entry = ZipEntryBuilder::new(name.into(), Compression::Deflate);
+    writer.write_entry_whole(entry, data).await.unwrap();
+    writer.close().await.unwrap()
+}
+
 fn write_fabric_mod_jar(path: &Path, mod_id: &str) {
-    let file = File::create(path).unwrap();
-    let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default();
-    zip.start_file("fabric.mod.json", options).unwrap();
-    zip.write_all(format!(r#"{{"schemaVersion":1,"id":"{mod_id}","version":"1.0.0"}}"#).as_bytes())
-        .unwrap();
-    zip.finish().unwrap();
+    let json = format!(r#"{{"schemaVersion":1,"id":"{mod_id}","version":"1.0.0"}}"#);
+    let bytes = block_on(build_single_entry_jar("fabric.mod.json", json.as_bytes()));
+    std::fs::write(path, bytes).unwrap();
 }
 
 fn mod_entry(mod_id: &str, filename: &str, sha1: &str) -> ModEntry {
@@ -96,7 +106,7 @@ fn plan(
     settings: &ModSyncSettings,
     params: &InstallParams,
 ) -> crate::mod_sync::ModSyncPlan {
-    build_mod_sync_plan(new_entries, settings, params).unwrap()
+    block_on(build_mod_sync_plan(new_entries, settings, params)).unwrap()
 }
 
 #[test]
@@ -504,11 +514,8 @@ fn extract_mod_id_tolerates_unescaped_newlines_in_fabric_mod_json() {
     let dir = std::env::temp_dir().join(format!("potato-mod-id-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("some_mod.jar");
-    let file = File::create(&path).unwrap();
-    let mut zip = ZipWriter::new(file);
-    let options = SimpleFileOptions::default();
-    zip.start_file("fabric.mod.json", options).unwrap();
-    zip.write_all(
+    let bytes = block_on(build_single_entry_jar(
+        "fabric.mod.json",
         br#"{
   "schemaVersion": 1,
   "id": "some_mod",
@@ -516,12 +523,11 @@ fn extract_mod_id_tolerates_unescaped_newlines_in_fabric_mod_json() {
   "description": "line one
 line two"
 }"#,
-    )
-    .unwrap();
-    zip.finish().unwrap();
+    ));
+    std::fs::write(&path, bytes).unwrap();
 
     assert_eq!(
-        utils::mod_id::extract_mod_id(&path).unwrap(),
+        block_on(utils::mod_id::extract_mod_id(&path)).unwrap(),
         Some("some_mod".to_string())
     );
     let _ = std::fs::remove_dir_all(&dir);

@@ -24,7 +24,6 @@ launcher-i18n = { path = "../i18n" }
 generate = { path = "../generate" }
 utils = { path = "../utils" }
 sha1.workspace = true
-zip.workspace = true
 futures.workspace = true
 flate2.workspace = true
 tar.workspace = true

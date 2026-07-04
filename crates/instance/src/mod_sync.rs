@@ -1,3 +1,4 @@
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -77,12 +78,14 @@ pub enum ModSyncError {
     OptionalModMissingFilename(String),
 }
 
-pub fn build_mod_sync_plan(
+pub async fn build_mod_sync_plan(
     new_entries: &[ModEntry],
     settings: &ModSyncSettings,
     params: &InstallParams,
 ) -> Result<ModSyncPlan, ModSyncError> {
-    ModSyncPlanner::new(new_entries, settings, params)?.build()
+    ModSyncPlanner::new(new_entries, settings, params)
+        .await?
+        .build()
 }
 
 struct ModSyncPlanner<'a> {
@@ -90,7 +93,7 @@ struct ModSyncPlanner<'a> {
     settings: &'a ModSyncSettings,
     params: &'a InstallParams,
     local_mods: HashMap<String, Vec<PathBuf>>,
-    local_non_jar_mod_files: Vec<PathBuf>,
+    local_other_paths: Vec<PathBuf>,
     previous: HashMap<&'a str, &'a ModEntry>,
     required: HashSet<&'a str>,
     blocked: HashSet<&'a str>,
@@ -100,18 +103,18 @@ struct ModSyncPlanner<'a> {
 }
 
 impl<'a> ModSyncPlanner<'a> {
-    fn new(
+    async fn new(
         new_entries: &'a [ModEntry],
         settings: &'a ModSyncSettings,
         params: &'a InstallParams,
     ) -> Result<Self, ModSyncError> {
-        let scan = scan_mods_dir(&params.instance_dir.mods_dir())?;
+        let scan = scan_mods_dir(&params.instance_dir.mods_dir()).await?;
         Ok(Self {
             new_entries,
             settings,
             params,
             local_mods: scan.mods,
-            local_non_jar_mod_files: scan.non_jar_files,
+            local_other_paths: scan.other_paths,
             previous: params
                 .previous_mod_entries
                 .iter()
@@ -220,13 +223,13 @@ impl<'a> ModSyncPlanner<'a> {
 
         self.delete_unallowed_local_mods(&allowed_paths, &active_mod_ids);
         if self.params.force_overwrite {
-            self.delete_non_jar_mod_files();
+            self.delete_other_paths();
         }
         Ok(())
     }
 
-    fn delete_non_jar_mod_files(&mut self) {
-        for path in self.local_non_jar_mod_files.clone() {
+    fn delete_other_paths(&mut self) {
+        for path in self.local_other_paths.clone() {
             self.push_delete(path);
         }
     }
@@ -432,26 +435,37 @@ fn optional_mod_to_set(settings: &ModSyncSettings) -> HashMap<&str, &OptionalMod
 struct LocalModsScan {
     // mod id -> paths
     mods: HashMap<String, Vec<PathBuf>>,
-    non_jar_files: Vec<PathBuf>,
+    // top-level entries that aren't recognized mod jars (non-jar files and
+    // subdirectories such as `.connector` cache)
+    other_paths: Vec<PathBuf>,
 }
 
-fn scan_mods_dir(mods_dir: &Path) -> Result<LocalModsScan, ModSyncError> {
+async fn scan_mods_dir(mods_dir: &Path) -> Result<LocalModsScan, ModSyncError> {
     let mut mods = HashMap::<String, Vec<PathBuf>>::new();
-    let mut non_jar_files = Vec::new();
+    let mut other_paths = Vec::new();
 
     if !mods_dir.is_dir() {
-        return Ok(LocalModsScan {
-            mods,
-            non_jar_files,
-        });
+        return Ok(LocalModsScan { mods, other_paths });
     }
 
-    for path in utils::files::get_files_in_dir(mods_dir)? {
-        if path.extension().and_then(|ext| ext.to_str()) != Some("jar") {
-            non_jar_files.push(path);
-            continue;
+    let mut jar_paths = Vec::new();
+    for (path, file_type) in utils::files::list_dir_shallow(mods_dir).await? {
+        if file_type.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("jar") {
+            jar_paths.push(path);
+        } else {
+            other_paths.push(path);
         }
-        match utils::mod_id::extract_mod_id(&path) {
+    }
+
+    let max_concurrent = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut extractions = stream::iter(jar_paths.into_iter().map(|path| async move {
+        let result = utils::mod_id::extract_mod_id(&path).await;
+        (path, result)
+    }))
+    .buffer_unordered(max_concurrent);
+
+    while let Some((path, result)) = extractions.next().await {
+        match result {
             Ok(Some(mod_id)) => mods.entry(mod_id).or_default().push(path),
             Ok(None) => log::warn!("Skipping {}, failed to extract mod id", path.display()),
             Err(err) => log::warn!("Failed to read mod id from {}: {err:#}", path.display()),
@@ -460,14 +474,16 @@ fn scan_mods_dir(mods_dir: &Path) -> Result<LocalModsScan, ModSyncError> {
 
     for (mod_id, paths) in &mods {
         if paths.len() > 1 {
-            log::warn!("Duplicate mod id locally: {mod_id}");
+            let paths_str = paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            log::warn!("Duplicate mod id locally: {mod_id} at paths: {paths_str}");
         }
     }
 
-    Ok(LocalModsScan {
-        mods,
-        non_jar_files,
-    })
+    Ok(LocalModsScan { mods, other_paths })
 }
 
 #[cfg(test)]

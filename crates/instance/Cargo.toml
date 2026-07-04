@@ -16,6 +16,7 @@ url.workspace = true
 relative-path.workspace = true
 log.workspace = true
 uuid.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
-zip.workspace = true
+async_zip.workspace = true

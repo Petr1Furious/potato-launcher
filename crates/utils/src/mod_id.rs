@@ -1,13 +1,9 @@
-use std::{
-    collections::HashSet,
-    fs::File,
-    io::{Cursor, Read},
-    path::Path,
-};
+use std::{collections::HashMap, path::Path};
 
+use async_zip::base::read::mem::ZipFileReader;
+use futures::io::AsyncReadExt as _;
 use log::warn;
 use serde_json::Value;
-use zip::ZipArchive;
 
 const FABRIC_MOD_JSON: &str = "fabric.mod.json";
 const NEOFORGE_MODS_TOML: &str = "META-INF/neoforge.mods.toml";
@@ -43,7 +39,7 @@ pub enum ExtractModIdError {
     #[error("file I/O failed while reading mod jar: {0}")]
     Io(#[from] std::io::Error),
     #[error("failed to read mod jar as zip archive: {0}")]
-    Zip(#[from] zip::result::ZipError),
+    Zip(#[from] async_zip::error::ZipError),
     #[error("failed to parse mod metadata JSON: {0}")]
     ParseJson(#[from] serde_json::Error),
     #[error("failed to parse mod metadata TOML: {0}")]
@@ -53,10 +49,9 @@ pub enum ExtractModIdError {
 /// Returns the primary mod ID declared in a mod JAR's metadata files.
 ///
 /// Falls back to deriving an id from the jar filename when metadata is missing.
-pub fn extract_mod_id(path: &Path) -> Result<Option<String>, ExtractModIdError> {
-    let file = File::open(path)?;
-    let mut archive = ZipArchive::new(file)?;
-    if let Some(id) = extract_mod_id_from_archive(&mut archive)? {
+pub async fn extract_mod_id(path: &Path) -> Result<Option<String>, ExtractModIdError> {
+    let bytes = tokio::fs::read(path).await?;
+    if let Some(id) = extract_mod_id_from_bytes(bytes).await? {
         return Ok(Some(id));
     }
 
@@ -71,60 +66,60 @@ pub fn extract_mod_id(path: &Path) -> Result<Option<String>, ExtractModIdError> 
     Ok(None)
 }
 
-fn extract_mod_id_from_archive<R: Read + std::io::Seek>(
-    archive: &mut ZipArchive<R>,
-) -> Result<Option<String>, ExtractModIdError> {
-    let entry_names = archive
-        .file_names()
-        .map(str::to_owned)
-        .collect::<HashSet<_>>();
+async fn extract_mod_id_from_bytes(bytes: Vec<u8>) -> Result<Option<String>, ExtractModIdError> {
+    let reader = ZipFileReader::new(bytes).await?;
 
-    if entry_names.contains(FABRIC_MOD_JSON)
-        && let Some(id) = read_fabric_mod_id(archive)?
+    let entry_indices = reader
+        .file()
+        .entries()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entry)| Some((entry.filename().as_str().ok()?.to_owned(), index)))
+        .collect::<HashMap<String, usize>>();
+
+    if let Some(&index) = entry_indices.get(FABRIC_MOD_JSON)
+        && let Some(id) = read_fabric_mod_id(&reader, index).await?
     {
         return Ok(Some(id));
     }
 
-    if entry_names.contains(NEOFORGE_MODS_TOML)
-        && let Some(id) = read_mods_toml_mod_id(archive, NEOFORGE_MODS_TOML)?
+    if let Some(&index) = entry_indices.get(NEOFORGE_MODS_TOML)
+        && let Some(id) = read_mods_toml_mod_id(&reader, index).await?
     {
         return Ok(Some(id));
     }
 
-    if entry_names.contains(FORGE_MODS_TOML)
-        && let Some(id) = read_mods_toml_mod_id(archive, FORGE_MODS_TOML)?
+    if let Some(&index) = entry_indices.get(FORGE_MODS_TOML)
+        && let Some(id) = read_mods_toml_mod_id(&reader, index).await?
     {
         return Ok(Some(id));
     }
 
     for info_file in LEGACY_INFO_FILES {
-        if entry_names.contains(*info_file)
-            && let Some(id) = read_mcmod_info_mod_id(archive, info_file)?
+        if let Some(&index) = entry_indices.get(*info_file)
+            && let Some(id) = read_mcmod_info_mod_id(&reader, index, info_file).await?
         {
             return Ok(Some(id));
         }
     }
 
-    extract_mod_id_from_jarjar(archive, &entry_names)
+    extract_mod_id_from_jarjar(&reader, &entry_indices).await
 }
 
-fn extract_mod_id_from_jarjar<R: Read + std::io::Seek>(
-    archive: &mut ZipArchive<R>,
-    entry_names: &HashSet<String>,
+async fn extract_mod_id_from_jarjar(
+    reader: &ZipFileReader,
+    entry_indices: &HashMap<String, usize>,
 ) -> Result<Option<String>, ExtractModIdError> {
-    let mut nested_jars = entry_names
+    let mut nested_jars = entry_indices
         .iter()
-        .filter(|name| name.starts_with(JARJAR_PREFIX) && name.ends_with(".jar"))
-        .cloned()
+        .filter(|(name, _)| name.starts_with(JARJAR_PREFIX) && name.ends_with(".jar"))
+        .map(|(name, &index)| (name.clone(), index))
         .collect::<Vec<_>>();
     nested_jars.sort();
 
-    for nested_path in nested_jars {
-        let Some(bytes) = read_zip_entry_bytes(archive, &nested_path)? else {
-            continue;
-        };
-        let mut nested = ZipArchive::new(Cursor::new(bytes))?;
-        if let Some(id) = extract_mod_id_from_archive(&mut nested)? {
+    for (_, index) in nested_jars {
+        let bytes = read_zip_entry_bytes(reader, index).await?;
+        if let Some(id) = Box::pin(extract_mod_id_from_bytes(bytes)).await? {
             return Ok(Some(id));
         }
     }
@@ -231,29 +226,19 @@ fn is_valid_mod_id(id: &str) -> bool {
         && chars.all(|ch| matches!(ch, 'a'..='z' | '0'..='9' | '_' | '-'))
 }
 
-fn read_zip_entry<R: Read + std::io::Seek>(
-    archive: &mut ZipArchive<R>,
-    name: &str,
-) -> Result<Option<String>, ExtractModIdError> {
-    let Some(bytes) = read_zip_entry_bytes(archive, name)? else {
-        return Ok(None);
-    };
-    Ok(Some(strip_bom(&String::from_utf8_lossy(&bytes)).to_owned()))
+async fn read_zip_entry(reader: &ZipFileReader, index: usize) -> Result<String, ExtractModIdError> {
+    let bytes = read_zip_entry_bytes(reader, index).await?;
+    Ok(strip_bom(&String::from_utf8_lossy(&bytes)).to_owned())
 }
 
-fn read_zip_entry_bytes<R: Read + std::io::Seek>(
-    archive: &mut ZipArchive<R>,
-    name: &str,
-) -> Result<Option<Vec<u8>>, ExtractModIdError> {
-    let mut entry = match archive.by_name(name) {
-        Ok(entry) => entry,
-        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(err) => return Err(err.into()),
-    };
-
+async fn read_zip_entry_bytes(
+    reader: &ZipFileReader,
+    index: usize,
+) -> Result<Vec<u8>, ExtractModIdError> {
+    let mut entry = reader.reader_without_entry(index).await?;
     let mut content = Vec::new();
-    entry.read_to_end(&mut content)?;
-    Ok(Some(content))
+    entry.read_to_end(&mut content).await?;
+    Ok(content)
 }
 
 fn strip_bom(content: &str) -> &str {
@@ -272,12 +257,11 @@ fn parse_json_lenient(content: &str) -> Result<Value, serde_json::Error> {
         .or_else(|_| serde_json::from_str(&sanitize_json_control_chars(content)))
 }
 
-fn read_fabric_mod_id<R: Read + std::io::Seek>(
-    archive: &mut ZipArchive<R>,
+async fn read_fabric_mod_id(
+    reader: &ZipFileReader,
+    index: usize,
 ) -> Result<Option<String>, ExtractModIdError> {
-    let Some(content) = read_zip_entry(archive, FABRIC_MOD_JSON)? else {
-        return Ok(None);
-    };
+    let content = read_zip_entry(reader, index).await?;
     let json: Value = parse_json_lenient(&content)?;
     Ok(json
         .get("id")
@@ -286,13 +270,11 @@ fn read_fabric_mod_id<R: Read + std::io::Seek>(
         .map(str::to_owned))
 }
 
-fn read_mods_toml_mod_id<R: Read + std::io::Seek>(
-    archive: &mut ZipArchive<R>,
-    entry_name: &str,
+async fn read_mods_toml_mod_id(
+    reader: &ZipFileReader,
+    index: usize,
 ) -> Result<Option<String>, ExtractModIdError> {
-    let Some(content) = read_zip_entry(archive, entry_name)? else {
-        return Ok(None);
-    };
+    let content = read_zip_entry(reader, index).await?;
     let root: Value = toml::from_str(&content)?;
     Ok(root
         .get("mods")
@@ -308,13 +290,12 @@ fn normalize_legacy_info_json(content: &str) -> String {
     content.replace("\n\n", "\\n").replace('\n', "")
 }
 
-fn read_mcmod_info_mod_id<R: Read + std::io::Seek>(
-    archive: &mut ZipArchive<R>,
+async fn read_mcmod_info_mod_id(
+    reader: &ZipFileReader,
+    index: usize,
     entry_name: &str,
 ) -> Result<Option<String>, ExtractModIdError> {
-    let Some(content) = read_zip_entry(archive, entry_name)? else {
-        return Ok(None);
-    };
+    let content = read_zip_entry(reader, index).await?;
 
     let normalized = if matches!(entry_name, "cccmod.info" | "neimod.info") {
         normalize_legacy_info_json(&content)

@@ -83,7 +83,7 @@ async fn get_directory_objects(
     ignore_paths: &HashSet<PathBuf>,
 ) -> Result<Vec<Object>, GetObjectsError> {
     let full_path = path.to_path(base_path);
-    let files = files::get_files_ignore_paths(&full_path, ignore_paths);
+    let files = files::get_files_ignore_paths(&full_path, ignore_paths).await;
     let hashes = files::hash_files(&files, progress::no_progress_bar()).await?;
 
     let mut objects = Vec::with_capacity(files.len());
@@ -173,7 +173,7 @@ async fn collect_mod_entries(
         if path.extension().and_then(|ext| ext.to_str()) != Some("jar") {
             continue;
         }
-        let mod_id = match utils::mod_id::extract_mod_id(&path) {
+        let mod_id = match utils::mod_id::extract_mod_id(&path).await {
             Ok(Some(mod_id)) => mod_id,
             Ok(None) => {
                 warn!("Skipping {}, failed to extract mod id", path.display());

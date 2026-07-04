@@ -589,6 +589,8 @@ dependencies = [
  "futures-lite 2.6.1",
  "pin-project",
  "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -3482,6 +3484,8 @@ dependencies = [
 name = "instance"
 version = "0.1.0"
 dependencies = [
+ "async_zip",
+ "futures",
  "launcher-auth",
  "lazy_static",
  "log",
@@ -3494,7 +3498,6 @@ dependencies = [
  "url",
  "utils",
  "uuid",
- "zip",
 ]
 
 [[package]]
@@ -3838,7 +3841,6 @@ dependencies = [
  "uuid",
  "winapi",
  "winreg 0.56.0",
- "zip",
 ]
 
 [[package]]
@@ -7355,6 +7357,7 @@ checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",
@@ -7622,12 +7625,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "typed-path"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
-
-[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7864,6 +7861,7 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async_zip",
  "either",
  "fern",
  "flate2",
@@ -7881,17 +7879,15 @@ dependencies = [
  "serde_json",
  "sha1",
  "tar",
- "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "toml 1.1.2+spec-1.1.0",
  "unidecode",
  "url",
- "walkdir",
  "which 8.0.4",
  "winapi",
  "winreg 0.56.0",
- "zip",
 ]
 
 [[package]]
@@ -9590,19 +9586,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "zip"
-version = "8.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
-dependencies = [
- "crc32fast",
- "flate2",
- "indexmap",
- "memchr",
- "typed-path",
 ]
 
 [[package]]

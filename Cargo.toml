@@ -46,9 +46,8 @@ tar = "0.4.46"
 clap = "4.6.1"
 winapi = { version = "0.3.9", features = ["fileapi", "winbase"] }
 winreg = "0.56.0"
-zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
 self-replace = "1.5.0"
-url = "2.5.8"
+url = { version = "2.5.8", features = ["serde"] }
 relative-path = { version = "2.0.1", features = ["serde"] }
 uuid = { version = "1.23.4", features = ["serde", "v4"] }
 toml = "1.1.2"
@@ -58,6 +57,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
 either = { version = "1.16.0", features = ["serde"] }
 unidecode = "0.3.0"
+async_zip = { version = "0.0.18", features = ["tokio", "deflate"] }
 
 [profile.release-lto]
 inherits = "release"

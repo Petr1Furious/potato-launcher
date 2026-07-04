@@ -684,7 +684,8 @@ impl<'a> ForgeGenerator<'a> {
         let forge_metadata = VersionMetadata::read_local(&installer_data_dir, &id).await?;
 
         let installer_libraries_dir = LibrariesDir::root().to_fs(&installer_data_dir);
-        let installer_extra_libs_paths = files::get_files_in_dir(&installer_libraries_dir)?
+        let installer_extra_libs_paths = files::get_files_in_dir(&installer_libraries_dir)
+            .await?
             .into_iter()
             .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jar"))
             .map(|path| {
