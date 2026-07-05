@@ -7,8 +7,9 @@ use std::{
 use async_trait::async_trait;
 use instance::{
     instance_metadata::InstanceMetadata,
+    java::{JvmGc, get_default_gc},
     os,
-    storage::{InstanceHandle, LocalInstance},
+    storage::{InstanceHandle, JvmGcOpts, LocalInstance},
 };
 use launcher_auth::{
     AccountData,
@@ -27,14 +28,13 @@ use utils::{
 use uuid::Uuid;
 
 const DEFAULT_OFFLINE_USERNAME: &str = "Player";
-const DEFAULT_XMX: &str = "4096M";
 
 #[cfg(target_os = "windows")]
 const PATH_SEPARATOR: &str = ";";
 #[cfg(not(target_os = "windows"))]
 const PATH_SEPARATOR: &str = ":";
 
-const LEGACY_GC_OPTIONS: &[&str] = &[
+const G1GC_OPTIONS: &[&str] = &[
     "-XX:+UnlockExperimentalVMOptions",
     "-XX:+UseG1GC",
     "-XX:G1NewSizePercent=20",
@@ -45,8 +45,8 @@ const LEGACY_GC_OPTIONS: &[&str] = &[
     "-XX:+AlwaysPreTouch",
     "-XX:+ParallelRefProcEnabled",
 ];
-const MODERN_GC_OPTIONS: &[&str] = &["-XX:+UseZGC", "-XX:+UseStringDeduplication"];
-const JAVA_21_GC_OPTIONS: &[&str] = &[
+const ZGC_OPTIONS: &[&str] = &["-XX:+UseZGC", "-XX:+UseStringDeduplication"];
+const ZGC_JAVA_21_OPTIONS: &[&str] = &[
     "-XX:+UseZGC",
     "-XX:+ZGenerational",
     "-XX:+UseStringDeduplication",
@@ -59,7 +59,8 @@ pub(crate) struct LaunchRequest {
     pub(crate) account_data: AccountData,
     pub(crate) online: bool,
     pub(crate) xmx_mb: Option<u64>,
-    pub(crate) jvm_flags: Option<String>,
+    pub(crate) jvm_opts: Option<String>,
+    pub(crate) jvm_gc_opts: JvmGcOpts,
     pub(crate) java: java::JavaInstallation,
     pub(crate) use_native_glfw: Option<bool>,
     pub(crate) launcher_dir: PathBuf,
@@ -208,7 +209,8 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
         account: &request.account_data,
         online: request.online,
         xmx_mb: request.xmx_mb,
-        jvm_flags: request.jvm_flags.as_deref(),
+        jvm_opts: request.jvm_opts.as_deref(),
+        jvm_gc_opts: request.jvm_gc_opts,
         use_native_glfw: request
             .use_native_glfw
             .unwrap_or_else(use_native_glfw_default),
@@ -262,7 +264,8 @@ struct LaunchBuildContext<'a> {
     account: &'a AccountData,
     online: bool,
     xmx_mb: Option<u64>,
-    jvm_flags: Option<&'a str>,
+    jvm_opts: Option<&'a str>,
+    jvm_gc_opts: JvmGcOpts,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     use_native_glfw: bool,
     data_dir: &'a DataDir,
@@ -276,7 +279,8 @@ fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArgument
         account,
         online,
         xmx_mb,
-        jvm_flags,
+        jvm_opts,
+        jvm_gc_opts,
         data_dir,
         game_directory,
         ..
@@ -330,23 +334,23 @@ fn build_launch_arguments(ctx: &LaunchBuildContext<'_>) -> Result<LaunchArgument
         ("user_properties".to_string(), "{}".to_string()),
     ]);
 
-    let mut java_args = gc_options(&metadata.get_java_version())
+    let java_version = metadata.get_java_version().parse().unwrap_or(8);
+    let effective_xmx_mb = xmx_mb
+        .or_else(|| crate::parse_xmx_mb(metadata.get_default_xmx()))
+        // TODO: move default XMX to a project-wide constant
+        .unwrap_or(4096);
+    let mut java_args = gc_options(*jvm_gc_opts, java_version, effective_xmx_mb)
         .iter()
         .map(|arg| (*arg).to_string())
         .collect::<Vec<_>>();
     java_args.extend([
         "-Xms512M".to_string(),
-        format!(
-            "-Xmx{}",
-            xmx_mb
-                .map(|mb| format!("{mb}M"))
-                .unwrap_or_else(|| normalize_xmx(metadata.get_default_xmx()))
-        ),
+        format!("-Xmx{effective_xmx_mb}M"),
         "-Duser.language=en".to_string(),
         "-Dfile.encoding=UTF-8".to_string(),
     ]);
-    if let Some(flags) = jvm_flags {
-        java_args.extend(flags.split_whitespace().map(ToString::to_string));
+    if let Some(args) = jvm_opts {
+        java_args.extend(args.split_whitespace().map(ToString::to_string));
     }
 
     #[cfg(target_os = "linux")]
@@ -441,23 +445,23 @@ fn replace_launch_variables(argument: &str, variables: &HashMap<String, String>)
         })
 }
 
-fn gc_options(java_version: &str) -> &'static [&'static str] {
-    let java_major_version = java_version.parse::<u64>().unwrap_or(8);
-    if java_major_version >= 23 {
-        MODERN_GC_OPTIONS
-    } else if java_major_version >= 21 {
-        JAVA_21_GC_OPTIONS
+fn zgc_options(java_version: u64) -> &'static [&'static str] {
+    if java_version > 21 {
+        ZGC_OPTIONS
     } else {
-        LEGACY_GC_OPTIONS
+        ZGC_JAVA_21_OPTIONS
     }
 }
 
-fn normalize_xmx(value: Option<&str>) -> String {
-    let value = value.unwrap_or(DEFAULT_XMX).trim();
-    if value.chars().all(|character| character.is_ascii_digit()) {
-        format!("{value}M")
-    } else {
-        value.to_string()
+fn gc_options(choice: JvmGcOpts, java_version: u64, xmx_mb: u64) -> &'static [&'static str] {
+    match choice {
+        JvmGcOpts::None => &[],
+        JvmGcOpts::ZGC => zgc_options(java_version),
+        JvmGcOpts::G1GC => G1GC_OPTIONS,
+        JvmGcOpts::Default => match get_default_gc(java_version, xmx_mb) {
+            JvmGc::ZGC => zgc_options(java_version),
+            JvmGc::G1GC => G1GC_OPTIONS,
+        },
     }
 }
 

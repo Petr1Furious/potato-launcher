@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use instance::storage::InstanceHandle;
+pub use instance::storage::JvmGcOpts;
 use launcher_auth::{
     AccountData, flow::AuthMessage, providers::AuthProviderConfig, storage::AccountKey,
 };
@@ -52,9 +53,13 @@ pub enum MessageToBackend {
         instance: InstanceHandle,
         xmx_mb: Option<u64>,
     },
-    SetInstanceJvmFlags {
+    SetInstanceJvmOpts {
         instance: InstanceHandle,
-        flags: Option<String>,
+        opts: Option<String>,
+    },
+    SetInstanceJvmGcOpts {
+        instance: InstanceHandle,
+        choice: JvmGcOpts,
     },
     SetInstanceJavaPath {
         instance: InstanceHandle,
@@ -160,9 +165,10 @@ pub struct InstanceView {
     pub effective_account_username: Option<Arc<str>>,
     pub effective_auth_provider: Option<AuthProviderConfig>,
     pub effective_xmx_mb: Option<u64>,
-    pub jvm_flags: Option<Arc<str>>,
+    pub jvm_opts: Option<Arc<str>>,
+    pub jvm_gc_opts: JvmGcOpts,
     pub java_path: Option<Arc<str>>,
-    pub required_java_version: Option<Arc<str>>,
+    pub required_java_version: Option<String>,
     /// `None` uses the launcher build default.
     pub use_native_glfw: Option<bool>,
     pub optional_mod_sets: Arc<[OptionalModSetView]>,

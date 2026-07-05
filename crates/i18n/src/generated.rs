@@ -456,7 +456,9 @@ pub mod instances {
             "java_path_auto_detect" => Some(java_path_auto_detect()),
             "java_resolving" => Some(java_resolving()),
             "java_section" => Some(java_section()),
-            "jvm_flags_default" => Some(jvm_flags_default()),
+            "jvm_gc_opts_none" => Some(jvm_gc_opts_none()),
+            "jvm_gc_opts_title" => Some(jvm_gc_opts_title()),
+            "jvm_opts" => Some(jvm_opts()),
             "kill" => Some(kill()),
             "launch_after_install" => Some(launch_after_install()),
             "launch_blocked" => Some(launch_blocked()),
@@ -477,9 +479,9 @@ pub mod instances {
             "remove" => Some(remove()),
             "resync" => Some(resync()),
             "runtime" => Some(runtime()),
-            "set_flags" => Some(set_flags()),
             "set_java_path" => Some(set_java_path()),
             "set_memory" => Some(set_memory()),
+            "set_opts" => Some(set_opts()),
             "status" => Some(status()),
             "status_available" => Some(status_available()),
             "status_failed" => Some(status_failed()),
@@ -615,16 +617,28 @@ pub mod instances {
             _ => "Java",
         }
     }
-    pub fn jvm_flags(flags: String) -> String {
+    pub fn jvm_gc_opts_default(gc: String) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Флаги JVM: {flags}"),
-            _ => format!("JVM flags: {flags}"),
+            1 => format!("По умолчанию ({gc})"),
+            _ => format!("Default ({gc})"),
         }
     }
-    pub fn jvm_flags_default() -> &'static str {
+    pub fn jvm_gc_opts_none() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "по умолчанию",
-            _ => "default",
+            1 => "Нет",
+            _ => "None",
+        }
+    }
+    pub fn jvm_gc_opts_title() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Пресет опций GC",
+            _ => "GC options preset",
+        }
+    }
+    pub fn jvm_opts() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Дополнительные опции JVM",
+            _ => "Additional JVM options",
         }
     }
     pub fn kill() -> &'static str {
@@ -757,12 +771,6 @@ pub mod instances {
             _ => "Runtime",
         }
     }
-    pub fn set_flags() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Задать флаги",
-            _ => "Set Flags",
-        }
-    }
     pub fn set_java_path() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Задать путь",
@@ -773,6 +781,12 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Задать память",
             _ => "Set Memory",
+        }
+    }
+    pub fn set_opts() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Сохранить",
+            _ => "Save",
         }
     }
     pub fn status() -> &'static str {
@@ -1132,10 +1146,10 @@ pub mod notifications {
             _ => format!("Failed to save Java path: {error}"),
         }
     }
-    pub fn failed_save_jvm_flags(error: String) -> String {
+    pub fn failed_save_jvm_opts(error: String) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Не удалось сохранить флаги JVM: {error}"),
-            _ => format!("Failed to save JVM flags: {error}"),
+            1 => format!("Не удалось сохранить опции JVM: {error}"),
+            _ => format!("Failed to save JVM options: {error}"),
         }
     }
     pub fn failed_save_launcher_settings(error: String) -> String {
@@ -1339,7 +1353,7 @@ pub mod placeholders {
             "client_id" => Some(client_id()),
             "client_secret" => Some(client_secret()),
             "instance_name" => Some(instance_name()),
-            "jvm_flags" => Some(jvm_flags()),
+            "jvm_opts" => Some(jvm_opts()),
             "launcher_name" => Some(launcher_name()),
             "loader_version" => Some(loader_version()),
             "manifest_url" => Some(manifest_url()),
@@ -1368,10 +1382,10 @@ pub mod placeholders {
             _ => "My Instance",
         }
     }
-    pub fn jvm_flags() -> &'static str {
+    pub fn jvm_opts() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Дополнительные флаги JVM",
-            _ => "Extra JVM flags",
+            1 => "Дополнительные опции JVM",
+            _ => "Extra JVM options",
         }
     }
     pub fn launcher_name() -> &'static str {

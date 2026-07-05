@@ -22,8 +22,8 @@ use instance::{
     install_params::InstallCause,
     instance_metadata::InstanceMetadata,
     storage::{
-        InstanceHandle, InstanceStorage, InstanceUserSettings, LocalInstance, RemoteSource,
-        load_instance_settings, save_instance_settings,
+        InstanceHandle, InstanceStorage, InstanceUserSettings, JvmGcOpts, LocalInstance,
+        RemoteSource, load_instance_settings, save_instance_settings,
     },
 };
 use launcher_auth::{
@@ -528,10 +528,11 @@ impl BackendState {
                         selected_account: settings.selected_account.clone(),
                         account_override: settings.account_override.clone(),
                         xmx_mb: settings.xmx_mb,
-                        jvm_flags: settings
-                            .jvm_flags
+                        jvm_opts: settings
+                            .jvm_opts
                             .as_ref()
-                            .map(|flags| Arc::<str>::from(flags.clone())),
+                            .map(|args| Arc::<str>::from(args.clone())),
+                        jvm_gc_opts: settings.jvm_gc_opts,
                         java_path: settings
                             .java_path
                             .as_ref()
@@ -564,7 +565,7 @@ impl BackendState {
                         display_name: metadata.display_name.clone(),
                         auth_provider: metadata.auth_backend.clone(),
                         default_xmx_mb: parse_xmx_mb(metadata.default_xmx.as_deref()),
-                        required_java_version: Some(Arc::from(metadata.get_java_version())),
+                        required_java_version: Some(metadata.get_java_version()),
                         mod_sync: metadata.mod_sync.clone(),
                     },
                 ))
@@ -1546,22 +1547,43 @@ impl BackendState {
         self.emit_snapshot(tx);
     }
 
-    async fn set_instance_jvm_flags(
+    async fn set_instance_jvm_opts(
         &mut self,
         instance: InstanceHandle,
-        flags: Option<String>,
+        opts: Option<String>,
         tx: &FrontendSender,
     ) {
         let normalized =
-            flags.and_then(|flags| (!flags.trim().is_empty()).then(|| flags.trim().to_string()));
+            opts.and_then(|opts| (!opts.trim().is_empty()).then(|| opts.trim().to_string()));
         if let Err(err) = self
-            .update_instance_settings(&instance, |settings| settings.jvm_flags = normalized)
+            .update_instance_settings(&instance, |settings| settings.jvm_opts = normalized)
             .await
         {
-            log::error!("Failed to save JVM flags for instance {instance}: {err:#}");
+            log::error!("Failed to save JVM options for instance {instance}: {err:#}");
             tx.send(MessageToFrontend::Notification {
                 level: NotificationLevel::Error,
-                message: Arc::from(launcher_i18n::notifications::failed_save_jvm_flags(
+                message: Arc::from(launcher_i18n::notifications::failed_save_jvm_opts(
+                    err.to_string(),
+                )),
+            });
+        }
+        self.emit_snapshot(tx);
+    }
+
+    async fn set_instance_jvm_gc_opts(
+        &mut self,
+        instance: InstanceHandle,
+        choice: JvmGcOpts,
+        tx: &FrontendSender,
+    ) {
+        if let Err(err) = self
+            .update_instance_settings(&instance, |settings| settings.jvm_gc_opts = choice)
+            .await
+        {
+            log::error!("Failed to save GC options for instance {instance}: {err:#}");
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::failed_save_jvm_opts(
                     err.to_string(),
                 )),
             });
@@ -1875,7 +1897,8 @@ impl BackendState {
             None,
         );
         let xmx_mb = settings.xmx_mb;
-        let jvm_flags = settings.jvm_flags.clone();
+        let jvm_opts = settings.jvm_opts.clone();
+        let jvm_gc_opts = settings.jvm_gc_opts;
         let use_native_glfw = settings.use_native_glfw;
         let launcher_dir = self.launcher_dir.clone();
         let client = self.client.clone();
@@ -1991,7 +2014,8 @@ impl BackendState {
                 account_data: authenticated.data,
                 online: authenticated.online,
                 xmx_mb,
-                jvm_flags,
+                jvm_opts,
+                jvm_gc_opts,
                 java,
                 use_native_glfw,
                 launcher_dir,
@@ -2293,8 +2317,11 @@ pub async fn run(
                     MessageToBackend::SetInstanceMemory { instance, xmx_mb } => {
                         state.set_instance_memory(instance, xmx_mb, &frontend).await;
                     }
-                    MessageToBackend::SetInstanceJvmFlags { instance, flags } => {
-                        state.set_instance_jvm_flags(instance, flags, &frontend).await;
+                    MessageToBackend::SetInstanceJvmOpts { instance, opts } => {
+                        state.set_instance_jvm_opts(instance, opts, &frontend).await;
+                    }
+                    MessageToBackend::SetInstanceJvmGcOpts { instance, choice } => {
+                        state.set_instance_jvm_gc_opts(instance, choice, &frontend).await;
                     }
                     MessageToBackend::SetInstanceJavaPath { instance, path } => {
                         state.set_instance_java_path(instance, path, &frontend).await;

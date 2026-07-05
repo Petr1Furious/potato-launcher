@@ -21,7 +21,10 @@ use gpui_component::{
     text::TextView,
     v_flex,
 };
-use instance::storage::{InstanceHandle, allocate_local_dir_name};
+use instance::{
+    java::{ZGC_MIN_JVM_VERSION, get_default_gc},
+    storage::{InstanceHandle, allocate_local_dir_name},
+};
 use launcher_auth::{
     flow::AuthMessage,
     providers::{
@@ -31,7 +34,7 @@ use launcher_auth::{
 };
 use launcher_bridge::{
     AccountView, AuthPromptContext, BackendFetchState, BackendSender, BackendStatus,
-    InstanceLiveStatus, InstanceOrigin, InstanceView, LauncherSettingsView, LocalLoader,
+    InstanceLiveStatus, InstanceOrigin, InstanceView, JvmGcOpts, LauncherSettingsView, LocalLoader,
     MessageToBackend, NotificationLevel,
 };
 #[cfg(target_os = "linux")]
@@ -69,7 +72,7 @@ pub struct InstancesPage {
     elyby_client_secret_input: gpui::Entity<InputState>,
     elyby_launcher_name_input: gpui::Entity<InputState>,
     memory_input: gpui::Entity<InputState>,
-    jvm_flags_input: gpui::Entity<InputState>,
+    jvm_opts_input: gpui::Entity<InputState>,
     create_local_name_input: gpui::Entity<InputState>,
     create_local_mc_version_select: gpui::Entity<SelectState<VersionList>>,
     create_local_loader_version_select: gpui::Entity<SelectState<VersionList>>,
@@ -123,8 +126,8 @@ impl InstancesPage {
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::launcher_name()));
         let memory_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::memory_mib()));
-        let jvm_flags_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::jvm_flags()));
+        let jvm_opts_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t::placeholders::jvm_opts()));
         let java_path_input = cx.new(|cx| {
             InputState::new(window, cx).placeholder(t::instances::java_path_auto_detect())
         });
@@ -215,7 +218,7 @@ impl InstancesPage {
             elyby_client_secret_input,
             elyby_launcher_name_input,
             memory_input,
-            jvm_flags_input,
+            jvm_opts_input,
             java_path_input,
             java_path_last_instance: None,
             java_path_last_stored: None,
@@ -1024,7 +1027,7 @@ impl InstancesPage {
                 runtime_section(
                     &instance,
                     self.memory_input.clone(),
-                    self.jvm_flags_input.clone(),
+                    self.jvm_opts_input.clone(),
                     self.java_path_input.clone(),
                     self.data.java_resolve.clone(),
                     sender.clone(),
@@ -2136,7 +2139,7 @@ fn account_select_row(
 fn runtime_section(
     instance: &InstanceView,
     memory_input: gpui::Entity<InputState>,
-    jvm_flags_input: gpui::Entity<InputState>,
+    jvm_opts_input: gpui::Entity<InputState>,
     java_path_input: gpui::Entity<InputState>,
     java_resolve: gpui::Entity<JavaResolveCache>,
     sender: BackendSender,
@@ -2204,44 +2207,71 @@ fn runtime_section(
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(t::instances::jvm_flags(
-                            instance
-                                .jvm_flags
-                                .as_deref()
-                                .unwrap_or(t::instances::jvm_flags_default())
-                                .to_string(),
-                        )),
+                        .child(t::instances::jvm_gc_opts_title()),
                 )
                 .child(
-                    v_flex().gap_2().child(Input::new(&jvm_flags_input)).child(
+                    h_flex()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(jvm_gc_opts_button(
+                            instance,
+                            JvmGcOpts::Default,
+                            sender.clone(),
+                        ))
+                        .when(get_java_version(instance) >= ZGC_MIN_JVM_VERSION, |this| {
+                            this.child(jvm_gc_opts_button(instance, JvmGcOpts::ZGC, sender.clone()))
+                        })
+                        .child(jvm_gc_opts_button(
+                            instance,
+                            JvmGcOpts::G1GC,
+                            sender.clone(),
+                        ))
+                        .child(jvm_gc_opts_button(
+                            instance,
+                            JvmGcOpts::None,
+                            sender.clone(),
+                        )),
+                ),
+        )
+        .child(
+            v_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(t::instances::jvm_opts()),
+                )
+                .child(
+                    v_flex().gap_2().child(Input::new(&jvm_opts_input)).child(
                         h_flex()
                             .gap_2()
                             .child(
-                                Button::new(format!("save-jvm-flags-{handle}"))
-                                    .label(t::instances::set_flags())
+                                Button::new(format!("save-jvm-opts-{handle}"))
+                                    .label(t::instances::set_opts())
                                     .on_click({
-                                        let input = jvm_flags_input.clone();
+                                        let input = jvm_opts_input.clone();
                                         let sender = sender.clone();
                                         let handle = handle.clone();
                                         move |_, _, cx| {
                                             let value = input.read(cx).value().to_string();
-                                            sender.send(MessageToBackend::SetInstanceJvmFlags {
+                                            sender.send(MessageToBackend::SetInstanceJvmOpts {
                                                 instance: handle.clone(),
-                                                flags: Some(value),
+                                                opts: Some(value),
                                             });
                                         }
                                     }),
                             )
                             .child(
-                                Button::new(format!("clear-jvm-flags-{handle}"))
+                                Button::new(format!("clear-jvm-opts-{handle}"))
                                     .label(t::common::default())
                                     .on_click({
                                         let sender = sender.clone();
                                         let handle = handle.clone();
                                         move |_, _, _| {
-                                            sender.send(MessageToBackend::SetInstanceJvmFlags {
+                                            sender.send(MessageToBackend::SetInstanceJvmOpts {
                                                 instance: handle.clone(),
-                                                flags: None,
+                                                opts: None,
                                             });
                                         }
                                     }),
@@ -2256,6 +2286,42 @@ fn runtime_section(
             sender,
             cx,
         ))
+}
+
+fn get_java_version(instance: &InstanceView) -> u64 {
+    instance
+        .required_java_version
+        .as_deref()
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(8)
+}
+
+fn jvm_gc_opts_button(instance: &InstanceView, choice: JvmGcOpts, sender: BackendSender) -> Button {
+    let handle = instance.handle.clone();
+    let (id, label) = match choice {
+        JvmGcOpts::Default => (
+            "default",
+            t::instances::jvm_gc_opts_default(
+                get_default_gc(
+                    get_java_version(instance),
+                    instance.effective_xmx_mb.unwrap_or(4096),
+                )
+                .to_string(),
+            ),
+        ),
+        JvmGcOpts::ZGC => ("zgc", "ZGC".to_string()),
+        JvmGcOpts::G1GC => ("g1gc", "G1GC".to_string()),
+        JvmGcOpts::None => ("none", t::instances::jvm_gc_opts_none().to_string()),
+    };
+    Button::new(format!("jvm-gc-args-{id}-{handle}"))
+        .label(label)
+        .disabled(instance.jvm_gc_opts == choice)
+        .on_click(move |_, _, _| {
+            sender.send(MessageToBackend::SetInstanceJvmGcOpts {
+                instance: handle.clone(),
+                choice,
+            });
+        })
 }
 
 fn java_section(

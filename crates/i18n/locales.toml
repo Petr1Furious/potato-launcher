@@ -234,21 +234,29 @@ ru = "Память по умолчанию: ${xmx: u64} МБ"
 en = "Effective memory: ${xmx: u64} MB"
 ru = "Текущая память: ${xmx: u64} МБ"
 
-[instances.jvm_flags]
-en = "JVM flags: ${flags: String}"
-ru = "Флаги JVM: ${flags: String}"
+[instances.jvm_opts]
+en = "Additional JVM options"
+ru = "Дополнительные опции JVM"
 
-[instances.jvm_flags_default]
-en = "default"
-ru = "по умолчанию"
+[instances.jvm_gc_opts_title]
+en = "GC options preset"
+ru = "Пресет опций GC"
+
+[instances.jvm_gc_opts_default]
+en = "Default (${gc: String})"
+ru = "По умолчанию (${gc: String})"
+
+[instances.jvm_gc_opts_none]
+en = "None"
+ru = "Нет"
+
+[instances.set_opts]
+en = "Save"
+ru = "Сохранить"
 
 [instances.set_memory]
 en = "Set Memory"
 ru = "Задать память"
-
-[instances.set_flags]
-en = "Set Flags"
-ru = "Задать флаги"
 
 [instances.java_section]
 en = "Java"
@@ -550,9 +558,9 @@ ru = "Имя лаунчера"
 en = "Memory MiB"
 ru = "Память (МиБ)"
 
-[placeholders.jvm_flags]
-en = "Extra JVM flags"
-ru = "Дополнительные флаги JVM"
+[placeholders.jvm_opts]
+en = "Extra JVM options"
+ru = "Дополнительные опции JVM"
 
 [placeholders.instance_name]
 en = "My Instance"
@@ -758,9 +766,9 @@ ru = "Не удалось сохранить настройки лаунчера
 en = "Failed to save memory override: ${error: String}"
 ru = "Не удалось сохранить переопределение памяти: ${error: String}"
 
-[notifications.failed_save_jvm_flags]
-en = "Failed to save JVM flags: ${error: String}"
-ru = "Не удалось сохранить флаги JVM: ${error: String}"
+[notifications.failed_save_jvm_opts]
+en = "Failed to save JVM options: ${error: String}"
+ru = "Не удалось сохранить опции JVM: ${error: String}"
 
 [notifications.invalid_java_path]
 en = "Invalid Java installation: the selected file is not a compatible Java executable"

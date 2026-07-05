@@ -102,6 +102,16 @@ pub struct LocalInstance {
     pub last_synced_sha1: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum JvmGcOpts {
+    #[default]
+    Default,
+    ZGC,
+    G1GC,
+    None,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InstanceUserSettings {
     #[serde(default)]
@@ -110,8 +120,10 @@ pub struct InstanceUserSettings {
     pub account_override: Option<AccountKey>,
     #[serde(default)]
     pub xmx_mb: Option<u64>,
+    #[serde(default, alias = "jvm_flags")]
+    pub jvm_opts: Option<String>,
     #[serde(default)]
-    pub jvm_flags: Option<String>,
+    pub jvm_gc_opts: JvmGcOpts,
     #[serde(default)]
     pub java_path: Option<String>,
     #[serde(default)]
