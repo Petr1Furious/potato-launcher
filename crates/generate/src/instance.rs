@@ -641,7 +641,7 @@ impl InstanceGenerator {
 
             if remote_config.replace_download_urls {
                 for metadata in metadata.iter_mut() {
-                    info!("Replacing download URLs in {} metadata", &metadata.id);
+                    info!("Replacing download URLs in {} metadata", metadata.id);
                     *metadata = metadata
                         .with_replaced_download_urls(
                             &remote_config.download_server_base,

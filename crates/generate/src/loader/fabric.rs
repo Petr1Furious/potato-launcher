@@ -105,7 +105,7 @@ impl FabricGenerator {
         let fabric_metadata =
             download_fabric_metadata(client, &self.minecraft_version, &fabric_version).await?;
 
-        info!("Fabric \"{}\" generated", &fabric_version);
+        info!("Fabric \"{}\" generated", fabric_version);
 
         Ok(fabric_metadata)
     }

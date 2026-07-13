@@ -159,7 +159,7 @@ impl ElyByAuthProvider {
     ) {
         let url = format!(
             "https://account.ely.by/oauth2/v1?client_id={}&redirect_uri={}&response_type=code&scope=account_info%20minecraft_server_session&prompt=select_account",
-            &self.client_id, redirect_uri
+            self.client_id, redirect_uri
         );
         let _ = open::that(&url);
         message_provider
@@ -201,7 +201,7 @@ impl ElyByAuthProvider {
                     "Location",
                     format!(
                         "https://account.ely.by/oauth2/code/success?appName={}",
-                        &self.launcher_name,
+                        self.launcher_name,
                     ),
                 )
                 .body(Full::new(Bytes::from("")))?,

@@ -494,7 +494,7 @@ pub async fn install_forge(
                 "8".to_string()
             });
 
-        info!("Getting java {}", &java_version);
+        info!("Getting java {}", java_version);
         let java_installation;
         if let Some(existing_java_installation) = get_java(&java_version, launcher_data_dir).await {
             java_installation = existing_java_installation;
@@ -662,7 +662,7 @@ impl<'a> ForgeGenerator<'a> {
         )
         .await?;
 
-        info!("Using {} version {}", self.loader, &forge_version);
+        info!("Using {} version {}", self.loader, forge_version);
 
         let installer_work_dir = work_dir
             .join(format!(".{:?}", self.loader))
@@ -717,7 +717,7 @@ impl<'a> ForgeGenerator<'a> {
 
         info!(
             "{} {} for {} generated",
-            self.loader, &forge_version, &minecraft_version
+            self.loader, forge_version, minecraft_version
         );
 
         Ok(GeneratorResult {

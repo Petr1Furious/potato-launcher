@@ -114,7 +114,7 @@ impl Spec {
             all_check_tasks.extend(result.check_tasks);
             all_copy_tasks.extend(result.copy_tasks);
 
-            info!("Finished generating instance {}", &unique_name);
+            info!("Finished generating instance {}", unique_name);
         }
 
         let deduped_check_tasks = files::dedup_check_tasks(all_check_tasks);

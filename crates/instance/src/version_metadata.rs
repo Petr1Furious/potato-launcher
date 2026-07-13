@@ -327,8 +327,12 @@ pub enum VersionMetadataError {
     MissingMinecraftArguments,
     #[error("failed to write version metadata JSON file: {0}")]
     WriteFileJson(#[from] files::WriteFileJsonError),
-    #[error("failed to hash local library file: {0}")]
-    HashFileIo(std::io::Error),
+    #[error("failed to hash local library file {}: {source}", path.display())]
+    HashFileIo {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("failed to gather assets metadata check tasks: {0}")]
     AssetsMetadata(#[from] AssetsMetadataError),
 }
@@ -796,15 +800,21 @@ impl VersionMetadata {
                     Some(size) => size,
                     None => path
                         .metadata()
-                        .map_err(VersionMetadataError::HashFileIo)?
+                        .map_err(|source| VersionMetadataError::HashFileIo {
+                            path: path.clone(),
+                            source,
+                        })?
                         .len(),
                 });
                 artifact_sha1 = Some(if let Some(sha1) = &library.sha1 {
                     sha1.clone()
                 } else {
-                    files::hash_file(&path)
-                        .await
-                        .map_err(VersionMetadataError::HashFileIo)?
+                    files::hash_file(&path).await.map_err(|source| {
+                        VersionMetadataError::HashFileIo {
+                            path: path.clone(),
+                            source,
+                        }
+                    })?
                 });
             }
             let library_artifact = artifact_sha1
