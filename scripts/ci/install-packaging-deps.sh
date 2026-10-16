@@ -11,7 +11,7 @@ elif command -v brew >/dev/null 2>&1; then
   brew install imagemagick jq
   venv_dir="${RUNNER_TEMP:-/tmp}/potato-packaging-venv"
   python3 -m venv "$venv_dir"
-  "$venv_dir/bin/pip" install --quiet tomlkit httpx
+  "$venv_dir/bin/pip" install --quiet tomlkit==0.15.2 httpx==0.28.1
   if [ -n "${GITHUB_PATH:-}" ]; then
     echo "$venv_dir/bin" >> "$GITHUB_PATH"
   fi
@@ -19,7 +19,7 @@ elif command -v brew >/dev/null 2>&1; then
 elif command -v choco >/dev/null 2>&1; then
   # ImageMagick is preinstalled on GitHub Windows runners
   choco install jq -y
-  pip install tomlkit httpx
+  pip install tomlkit==0.15.2 httpx==0.28.1
 else
   echo "No supported package manager found (apt-get/dnf/brew/choco)" >&2
   exit 1

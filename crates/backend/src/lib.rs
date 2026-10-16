@@ -13,6 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use anyhow::Context as _;
 use async_trait::async_trait;
 use catalog::{
     BackendCatalogEntry, CatalogFetchResult, backend_status, delete_cached_manifest,
@@ -1080,6 +1081,40 @@ impl BackendState {
             handle,
             Activity::new(instances::ActivityKind::Install, tasks.snapshot(), task),
         );
+    }
+
+    async fn delete_all_launcher_data(&mut self, tx: &FrontendSender) {
+        if !self.activities.is_empty() {
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Warning,
+                message: Arc::from(launcher_i18n::notifications::delete_all_data_busy()),
+            });
+            return;
+        }
+        if let Some(cancel) = self.add_account_cancel.take() {
+            cancel.cancel();
+        }
+        if let Some(task) = self.add_account_task.take() {
+            task.abort();
+        }
+
+        log::warn!(
+            "Deleting all launcher data in {}",
+            self.launcher_dir.display()
+        );
+        let result = match delete_launcher_data(&self.launcher_dir).await {
+            Ok(()) => update::restart_launcher(),
+            Err(err) => Err(err),
+        };
+        if let Err(err) = result {
+            log::error!("Failed to delete all launcher data: {err:#}");
+            tx.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Error,
+                message: Arc::from(launcher_i18n::notifications::failed_delete_all_data(
+                    err.to_string(),
+                )),
+            });
+        }
     }
 
     async fn delete_instance(&mut self, handle: InstanceHandle, tx: &FrontendSender) {
@@ -2166,6 +2201,29 @@ impl BackendState {
     }
 }
 
+/// Removes everything in the launcher directory except `logs`, which holds the
+/// log file this process is still writing to.
+async fn delete_launcher_data(launcher_dir: &Path) -> anyhow::Result<()> {
+    let mut entries = match tokio::fs::read_dir(launcher_dir).await {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    while let Some(entry) = entries.next_entry().await? {
+        if entry.file_name() == "logs" {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type().await?.is_dir() {
+            tokio::fs::remove_dir_all(&path).await
+        } else {
+            tokio::fs::remove_file(&path).await
+        }
+        .with_context(|| format!("failed to delete {}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn exit_outcome(status: std::io::Result<std::process::ExitStatus>) -> launcher_bridge::ExitOutcome {
     match status {
         Ok(status) if status.success() => launcher_bridge::ExitOutcome::Success,
@@ -2199,20 +2257,7 @@ pub async fn run(
     let mut state = BackendState::load(launcher_dir).await?;
     let (internal_sender, mut internal_receiver) = mpsc::unbounded_channel();
 
-    if update::should_check_updates() {
-        frontend.send(MessageToFrontend::UpdateStatus(
-            launcher_bridge::UpdateStatusView::Checking,
-        ));
-        let update_client = state.client.clone();
-        let update_frontend = frontend.clone();
-        tokio::spawn(async move {
-            update::run(update_client, update_frontend).await;
-        });
-    } else {
-        frontend.send(MessageToFrontend::UpdateStatus(
-            launcher_bridge::UpdateStatusView::NotApplicable,
-        ));
-    }
+    update::start(state.client.clone(), frontend.clone());
 
     state.emit_snapshot(&frontend);
     for (level, message) in state.startup_notices.drain(..) {
@@ -2383,6 +2428,9 @@ pub async fn run(
                             minecraft_version,
                             loader,
                         );
+                    }
+                    MessageToBackend::DeleteAllLauncherData => {
+                        state.delete_all_launcher_data(&frontend).await;
                     }
                     MessageToBackend::ProceedAfterUpdateFailure => {
                         frontend.send(MessageToFrontend::UpdateStatus(

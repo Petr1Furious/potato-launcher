@@ -97,6 +97,24 @@ const emit = defineEmits<{
 const isVanillaLoader = computed(
   () => props.formData.mod_loader === LoaderType.VANILLA,
 );
+
+function onModLoaderChange(value: unknown) {
+  emit(
+    "update-field",
+    "mod_loader",
+    (typeof value === "string" && value.length
+      ? value
+      : LoaderType.VANILLA) as LoaderType,
+  );
+}
+
+function onAuthTypeChange(value: unknown) {
+  emit("update-auth-field", "type", (value as AuthType) ?? AuthType.OFFLINE);
+}
+
+function onAuthBaseUrlChange(value: string | number | undefined) {
+  emit("update-auth-field", "auth_base_url", value?.toString() ?? "");
+}
 </script>
 
 <template>
@@ -182,16 +200,7 @@ const isVanillaLoader = computed(
               !props.formData.minecraft_version ||
               props.availableLoaders.length === 0
             "
-            @update:modelValue="
-              (value) =>
-                emit(
-                  'update-field',
-                  'mod_loader',
-                  (typeof value === 'string' && value.length
-                    ? value
-                    : LoaderType.VANILLA) as LoaderType,
-                )
-            "
+            @update:modelValue="onModLoaderChange"
           >
             <SelectTrigger>
               <SelectValue placeholder="Select loader" />
@@ -275,14 +284,7 @@ const isVanillaLoader = computed(
           <Select
             :model-value="props.formData.auth_backend.type"
             :disabled="props.disabled"
-            @update:modelValue="
-              (value) =>
-                emit(
-                  'update-auth-field',
-                  'type',
-                  (value as AuthType) ?? AuthType.OFFLINE,
-                )
-            "
+            @update:modelValue="onAuthTypeChange"
           >
             <SelectTrigger>
               <SelectValue placeholder="Select authentication" />
@@ -332,14 +334,7 @@ const isVanillaLoader = computed(
           :model-value="props.formData.auth_backend.auth_base_url || ''"
           :disabled="props.disabled"
           placeholder="https://your-telegram-auth-server.com"
-          @update:modelValue="
-            (value) =>
-              emit(
-                'update-auth-field',
-                'auth_base_url',
-                value?.toString() ?? '',
-              )
-          "
+          @update:modelValue="onAuthBaseUrlChange"
         />
         <p v-if="props.errors?.auth_base_url" class="text-sm text-destructive">
           {{ props.errors.auth_base_url }}

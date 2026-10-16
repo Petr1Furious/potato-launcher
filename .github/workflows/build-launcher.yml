@@ -38,7 +38,7 @@ jobs:
       BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain from rust-toolchain.toml
         run: rustup toolchain install
@@ -68,7 +68,7 @@ jobs:
         run: ./scripts/ci/upload-launcher.sh
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: launcher-${{ matrix.os }}
           path: build/*
@@ -92,7 +92,7 @@ jobs:
       GPG_PUBLIC_KEY: ${{ vars.GPG_PUBLIC_KEY }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install packaging dependencies
         run: ./scripts/ci/install-packaging-deps.sh
@@ -118,7 +118,7 @@ jobs:
         if: ${{ github.ref == 'refs/heads/master' && env.GPG_PRIVATE_KEY != '' }}
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-        uses: crazy-max/ghaction-import-gpg@v6
+        uses: crazy-max/ghaction-import-gpg@v7
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.GPG_PASSPHRASE }}

@@ -31,7 +31,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set frontend build args
         run: |
@@ -55,7 +55,7 @@ jobs:
           fi
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Compute tags
         id: vars
@@ -75,14 +75,14 @@ jobs:
 
       - name: Login to GHCR
         if: ${{ fromJSON(env.PUSH_IMAGES || 'false') }}
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & (optionally) push backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: backend/Dockerfile
@@ -92,7 +92,7 @@ jobs:
             ghcr.io/${{ steps.vars.outputs.owner }}/potato-launcher-backend:latest
 
       - name: Build & (optionally) push frontend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: frontend
           file: frontend/Dockerfile

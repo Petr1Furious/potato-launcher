@@ -1,8 +1,26 @@
-use std::{env, fs, process::Command, sync::Arc};
+use std::{env, fs, path::Path, process::Command, sync::Arc};
 
 use futures::StreamExt as _;
-use launcher_bridge::{FrontendSender, MessageToFrontend, UpdateStatusView};
+use launcher_bridge::{FrontendSender, MessageToFrontend, NotificationLevel, UpdateStatusView};
 use reqwest::Client;
+
+/// A package manager owns the installed binary, so the launcher must not
+/// replace it and can only tell the user that an update is available.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PackagedInstall {
+    Flatpak,
+    Nix,
+}
+
+fn packaged_install() -> Option<PackagedInstall> {
+    if env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").exists() {
+        return Some(PackagedInstall::Flatpak);
+    }
+    if env::current_exe().is_ok_and(|exe| exe.starts_with("/nix/store")) {
+        return Some(PackagedInstall::Nix);
+    }
+    None
+}
 
 fn update_url() -> Option<String> {
     launcher_build_config::backend_api_base().map(|base| {
@@ -15,11 +33,15 @@ fn update_url() -> Option<String> {
     })
 }
 
-fn version_url() -> Option<String> {
+fn version_url(package: Option<PackagedInstall>) -> Option<String> {
+    if package == Some(PackagedInstall::Flatpak) {
+        return launcher_build_config::backend_api_base()
+            .map(|base| format!("{base}/launchers/linux/flatpak/version"));
+    }
     update_url().map(|url| format!("{url}/version"))
 }
 
-pub fn should_check_updates() -> bool {
+fn should_check_updates() -> bool {
     if env::var("CARGO").is_ok() {
         log::info!("Running from cargo, skipping auto-update");
         return false;
@@ -49,8 +71,12 @@ fn is_read_only_error(e: &anyhow::Error) -> bool {
     false
 }
 
-async fn fetch_new_version(client: &Client) -> anyhow::Result<String> {
-    let version_url = version_url().ok_or_else(|| anyhow::anyhow!("No update URL configured"))?;
+async fn fetch_new_version(
+    client: &Client,
+    package: Option<PackagedInstall>,
+) -> anyhow::Result<String> {
+    let version_url =
+        version_url(package).ok_or_else(|| anyhow::anyhow!("No update URL configured"))?;
     let text = client
         .get(version_url)
         .send()
@@ -61,8 +87,8 @@ async fn fetch_new_version(client: &Client) -> anyhow::Result<String> {
     Ok(text.trim().to_string())
 }
 
-async fn need_update(client: &Client) -> anyhow::Result<bool> {
-    let remote = fetch_new_version(client).await?;
+async fn need_update(client: &Client, package: Option<PackagedInstall>) -> anyhow::Result<bool> {
+    let remote = fetch_new_version(client, package).await?;
     let local = launcher_build_config::version().expect("version checked in should_check_updates");
     Ok(remote != local)
 }
@@ -86,16 +112,20 @@ async fn download(client: &Client, frontend: &FrontendSender) -> anyhow::Result<
     Ok(bytes)
 }
 
+/// Starts a fresh launcher process with the same arguments and exits this one.
+pub fn restart_launcher() -> anyhow::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    Command::new(env::current_exe()?).args(&args[1..]).spawn()?;
+    std::process::exit(0);
+}
+
 #[cfg(not(target_os = "macos"))]
 fn replace_and_restart(new_binary: &[u8]) -> anyhow::Result<()> {
-    let current_exe = env::current_exe()?;
     let temp_exe = env::temp_dir().join("new_launcher_update");
     fs::write(&temp_exe, new_binary)?;
     self_replace::self_replace(&temp_exe)?;
     fs::remove_file(&temp_exe).ok();
-    let args: Vec<String> = env::args().collect();
-    Command::new(&current_exe).args(&args[1..]).spawn()?;
-    std::process::exit(0);
+    restart_launcher()
 }
 
 #[cfg(target_os = "macos")]
@@ -143,13 +173,49 @@ fn replace_and_restart(new_archive: &[u8]) -> anyhow::Result<()> {
     fs::rename(temp_dir.join("update.app"), bundle_dir)?;
     fs::remove_dir_all(&backup_dir).ok();
 
-    let args: Vec<String> = env::args().collect();
-    Command::new(&current_exe).args(&args[1..]).spawn()?;
-    std::process::exit(0);
+    restart_launcher()
 }
 
-pub async fn run(client: Client, frontend: FrontendSender) {
-    match need_update(&client).await {
+/// Starts the update check. Self-updating installs block on the update screen
+/// until it finishes; package-managed installs only get a notification.
+pub fn start(client: Client, frontend: FrontendSender) {
+    if !should_check_updates() {
+        frontend.send(MessageToFrontend::UpdateStatus(
+            UpdateStatusView::NotApplicable,
+        ));
+        return;
+    }
+    if let Some(package) = packaged_install() {
+        log::info!("Installed via {package:?}, only checking for update notifications");
+        frontend.send(MessageToFrontend::UpdateStatus(
+            UpdateStatusView::NotApplicable,
+        ));
+        tokio::spawn(notify_if_outdated(client, frontend, package));
+    } else {
+        frontend.send(MessageToFrontend::UpdateStatus(UpdateStatusView::Checking));
+        tokio::spawn(run(client, frontend));
+    }
+}
+
+async fn notify_if_outdated(client: Client, frontend: FrontendSender, package: PackagedInstall) {
+    match need_update(&client, Some(package)).await {
+        Ok(false) => {}
+        Ok(true) => {
+            let message = match package {
+                PackagedInstall::Flatpak => launcher_i18n::update::available_flatpak(),
+                PackagedInstall::Nix => launcher_i18n::update::available_nix(),
+            };
+            frontend.send(MessageToFrontend::Notification {
+                level: NotificationLevel::Warning,
+                message: Arc::from(message),
+            });
+        }
+        Err(e) => log::warn!("Failed to check for updates: {e:#}"),
+    }
+}
+
+async fn run(client: Client, frontend: FrontendSender) {
+    match need_update(&client, None).await {
         Ok(false) => {
             frontend.send(MessageToFrontend::UpdateStatus(UpdateStatusView::UpToDate));
         }

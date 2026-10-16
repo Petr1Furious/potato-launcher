@@ -1027,6 +1027,7 @@ pub mod notifications {
             "accounts_reset_from_corruption" => Some(accounts_reset_from_corruption()),
             "already_launching_or_running" => Some(already_launching_or_running()),
             "authentication_cancelled" => Some(authentication_cancelled()),
+            "delete_all_data_busy" => Some(delete_all_data_busy()),
             "enter_offline_nickname" => Some(enter_offline_nickname()),
             "install_already_running" => Some(install_already_running()),
             "instance_not_installed_locally" => Some(instance_not_installed_locally()),
@@ -1074,6 +1075,12 @@ pub mod notifications {
             _ => format!("Authentication failed: {error}"),
         }
     }
+    pub fn delete_all_data_busy() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Остановите запущенные игры и установки перед удалением данных лаунчера.",
+            _ => "Stop running games and installs before deleting launcher data.",
+        }
+    }
     pub fn enter_offline_nickname() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Введите офлайн-ник в настройках инстанса",
@@ -1084,6 +1091,12 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Не удалось добавить URL бэкенда: {error}"),
             _ => format!("Failed to add backend URL: {error}"),
+        }
+    }
+    pub fn failed_delete_all_data(error: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Не удалось удалить данные лаунчера: {error}"),
+            _ => format!("Failed to delete launcher data: {error}"),
         }
     }
     pub fn failed_delete_instance(error: String) -> String {
@@ -1614,6 +1627,10 @@ pub mod providers {
 pub mod settings {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
+            "delete_all_data" => Some(delete_all_data()),
+            "delete_all_data_confirm" => Some(delete_all_data_confirm()),
+            "delete_all_data_desc" => Some(delete_all_data_desc()),
+            "delete_all_data_title" => Some(delete_all_data_title()),
             "hide_after_launch_desc" => Some(hide_after_launch_desc()),
             "hide_after_launch_title" => Some(hide_after_launch_title()),
             "hide_usernames_desc" => Some(hide_usernames_desc()),
@@ -1624,6 +1641,34 @@ pub mod settings {
             "language_title" => Some(language_title()),
             "title" => Some(title()),
             _ => None,
+        }
+    }
+    pub fn delete_all_data() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Удалить",
+            _ => "Delete",
+        }
+    }
+    pub fn delete_all_data_confirm() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Нажмите ещё раз, чтобы удалить всё",
+            _ => "Click again to delete everything",
+        }
+    }
+    pub fn delete_all_data_desc() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => {
+                "Удаляет все инстансы, аккаунты, Java, кэш и настройки, затем перезапускает лаунчер."
+            }
+            _ => {
+                "Removes all instances, accounts, Java runtimes, caches and settings, then restarts the launcher."
+            }
+        }
+    }
+    pub fn delete_all_data_title() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Удалить все данные лаунчера",
+            _ => "Delete all launcher data",
         }
     }
     pub fn hide_after_launch_desc() -> &'static str {
@@ -1684,6 +1729,8 @@ pub mod settings {
 pub mod update {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
+            "available_flatpak" => Some(available_flatpak()),
+            "available_nix" => Some(available_nix()),
             "checking" => Some(checking()),
             "downloading" => Some(downloading()),
             "error_offline" => Some(error_offline()),
@@ -1692,6 +1739,18 @@ pub mod update {
             "replacing" => Some(replacing()),
             "up_to_date" => Some(up_to_date()),
             _ => None,
+        }
+    }
+    pub fn available_flatpak() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Доступна новая версия лаунчера. Обновите её командой \"flatpak update\".",
+            _ => "A new launcher version is available. Update it with \"flatpak update\".",
+        }
+    }
+    pub fn available_nix() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Доступна новая версия лаунчера. Обновите её через Nix.",
+            _ => "A new launcher version is available. Update it through Nix.",
         }
     }
     pub fn checking() -> &'static str {

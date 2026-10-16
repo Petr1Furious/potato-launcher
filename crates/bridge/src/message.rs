@@ -92,6 +92,7 @@ pub enum MessageToBackend {
     },
     ProceedAfterUpdateFailure,
     CancelAuth,
+    DeleteAllLauncherData,
     Quit,
 }
 

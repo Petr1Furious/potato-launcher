@@ -10,14 +10,14 @@ use crate::{
     version_metadata::Library,
 };
 
-pub const AUTHLIB_INJECTOR_GAV: &str = "moe.yushi:authlibinjector:1.2.7";
+pub const AUTHLIB_INJECTOR_GAV: &str = "moe.yushi:authlibinjector:1.2.8";
 pub const AUTHLIB_INJECTOR_REL_PATH: &str =
-    "moe/yushi/authlibinjector/1.2.7/authlibinjector-1.2.7.jar";
-pub const AUTHLIB_INJECTOR_UPSTREAM_URL: &str = "https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.7/authlib-injector-1.2.7.jar";
-/// SHA1 of authlib-injector v1.2.7 from the upstream GitHub release.
-pub const AUTHLIB_INJECTOR_UPSTREAM_SHA1: &str = "9a401b2cdb97bf49e5c447dcfb0325979168b672";
-/// Size in bytes of authlib-injector v1.2.7 from the upstream GitHub release.
-pub const AUTHLIB_INJECTOR_UPSTREAM_SIZE: u64 = 344477;
+    "moe/yushi/authlibinjector/1.2.8/authlibinjector-1.2.8.jar";
+pub const AUTHLIB_INJECTOR_UPSTREAM_URL: &str = "https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.8/authlib-injector-1.2.8.jar";
+/// SHA1 of authlib-injector v1.2.8 from the upstream GitHub release.
+pub const AUTHLIB_INJECTOR_UPSTREAM_SHA1: &str = "0e0e66d8a4f91a26f33b9c09f5cdffce4a11f0b8";
+/// Size in bytes of authlib-injector v1.2.8 from the upstream GitHub release.
+pub const AUTHLIB_INJECTOR_UPSTREAM_SIZE: u64 = 349681;
 
 lazy_static::lazy_static! {
     pub static ref DEFAULT_AUTHLIB_INJECTOR_LIBRARY: Library = Library::from_download(

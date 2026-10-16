@@ -9,6 +9,7 @@
 
   outputs =
     {
+      self,
       nixpkgs,
       flake-utils,
       fenix,
@@ -23,7 +24,10 @@
         };
       in
       {
-        packages.default = pkgs.callPackage ./packaging/nix/package.nix { };
+        packages.default = pkgs.callPackage ./packaging/nix/package.nix {
+          # lets the launcher tell when a newer version is published
+          version = self.rev or null;
+        };
         devShells.default = pkgs.mkShell {
           # keep in sync with deps in package.nix
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (

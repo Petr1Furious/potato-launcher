@@ -15,7 +15,7 @@ ENV VITE_LAUNCHER_NAME=${VITE_LAUNCHER_NAME}
 ENV VITE_GITHUB_URL=${VITE_GITHUB_URL}
 RUN yarn build-only
 
-FROM nginx:alpine
+FROM nginx:1.31-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html

@@ -1,6 +1,6 @@
-FROM rust:1.96-slim-bookworm AS chef
+FROM rust:1.99-slim-trixie AS chef
 WORKDIR /src
-RUN cargo install cargo-chef --locked
+RUN cargo install cargo-chef --version 0.1.78 --locked
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
@@ -31,7 +31,7 @@ RUN sed -i \
 RUN cargo build --release --bin instance-builder
 
 
-FROM golang:1.26-bookworm AS backend-builder
+FROM golang:1.27-trixie AS backend-builder
 WORKDIR /src/backend
 
 COPY backend/go.mod backend/go.sum ./
@@ -41,7 +41,7 @@ COPY backend/ .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/server ./cmd/server
 
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 ENV SPEC_FILE=/data/internal/spec.json \
     GENERATED_DIR=/data/generated \
     WORKDIR_DIR=/data/workdir \

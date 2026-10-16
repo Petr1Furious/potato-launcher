@@ -18,6 +18,7 @@
   openal,
   wayland,
   vulkan-loader,
+  version ? null,
 }:
 let
   loadDotenv = import ./loadDotenv.nix { inherit lib; };
@@ -53,6 +54,7 @@ rustPlatform.buildRustPackage {
   cargoHash = "sha256-xR9esX9eLS2q2Ghoynn9KOKm4+JVxgZbUX6GY2+jjz4=";
 
   USE_NATIVE_GLFW_DEFAULT = "true";
+  VERSION = if version == null then "" else version;
   nativeBuildInputs = [ makeWrapper ];
   postFixup = ''
     wrapProgram $out/bin/launcher \

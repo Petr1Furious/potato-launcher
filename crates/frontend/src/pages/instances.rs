@@ -7,7 +7,7 @@ use std::{
 
 use gpui_kit::component::{
     ActiveTheme, Disableable, IndexPath, StyledExt,
-    button::Button,
+    button::{Button, ButtonVariants as _},
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputState},
@@ -64,6 +64,7 @@ pub struct InstancesPage {
     show_create_local_modal: bool,
     create_local_loader: LocalLoader,
     pending_delete: Option<InstanceHandle>,
+    pending_delete_all_data: bool,
     hidden_launches: HashSet<InstanceHandle>,
     backend_url_input: gpui_kit::Entity<InputState>,
     offline_nickname_input: gpui_kit::Entity<InputState>,
@@ -210,6 +211,7 @@ impl InstancesPage {
             create_local_sync_mc_dropdown: false,
             create_local_sync_loader_dropdown: false,
             pending_delete: None,
+            pending_delete_all_data: false,
             hidden_launches: HashSet::new(),
             backend_url_input,
             offline_nickname_input,
@@ -1118,6 +1120,7 @@ impl InstancesPage {
                             .label(t::common::close())
                             .on_click(cx.listener(|page, _, _, cx| {
                                 page.show_global_settings = false;
+                                page.pending_delete_all_data = false;
                                 cx.notify();
                             })),
                     ),
@@ -1125,6 +1128,7 @@ impl InstancesPage {
             .child(
                 launcher_settings_section(
                     settings,
+                    self.pending_delete_all_data,
                     self.data.launcher_dir.clone(),
                     self.data.notifications.clone(),
                     sender,
@@ -2566,6 +2570,7 @@ fn native_glfw_toggle(
 
 fn launcher_settings_section(
     settings: LauncherSettingsView,
+    pending_delete_all_data: bool,
     launcher_dir: PathBuf,
     notifications: gpui_kit::Entity<NotificationEntries>,
     sender: BackendSender,
@@ -2734,6 +2739,44 @@ fn launcher_settings_section(
                         });
                     }
                 }),
+        )
+        .child(
+            h_flex()
+                .justify_between()
+                .items_center()
+                .gap_2()
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .font_semibold()
+                                .child(t::settings::delete_all_data_title()),
+                        )
+                        .child(div().text_xs().map(|this| {
+                            if pending_delete_all_data {
+                                this.text_color(cx.theme().red)
+                                    .child(t::settings::delete_all_data_confirm())
+                            } else {
+                                this.text_color(cx.theme().muted_foreground)
+                                    .child(t::settings::delete_all_data_desc())
+                            }
+                        })),
+                )
+                .child(
+                    Button::new("delete-all-launcher-data")
+                        .danger()
+                        .label(t::settings::delete_all_data())
+                        .on_click(cx.listener(move |page, _, _, cx| {
+                            if page.pending_delete_all_data {
+                                page.pending_delete_all_data = false;
+                                sender.send(MessageToBackend::DeleteAllLauncherData);
+                            } else {
+                                page.pending_delete_all_data = true;
+                            }
+                            cx.notify();
+                        })),
+                ),
         )
 }
 

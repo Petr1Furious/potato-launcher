@@ -506,6 +506,22 @@ ru = "Выберите язык интерфейса лаунчера."
 en = "English"
 ru = "English"
 
+[settings.delete_all_data_title]
+en = "Delete all launcher data"
+ru = "Удалить все данные лаунчера"
+
+[settings.delete_all_data_desc]
+en = "Removes all instances, accounts, Java runtimes, caches and settings, then restarts the launcher."
+ru = "Удаляет все инстансы, аккаунты, Java, кэш и настройки, затем перезапускает лаунчер."
+
+[settings.delete_all_data]
+en = "Delete"
+ru = "Удалить"
+
+[settings.delete_all_data_confirm]
+en = "Click again to delete everything"
+ru = "Нажмите ещё раз, чтобы удалить всё"
+
 [settings.language_russian]
 en = "Русский"
 ru = "Русский"
@@ -709,6 +725,14 @@ ru = "Инстанс не установлен локально"
 [notifications.failed_delete_instance]
 en = "Failed to delete instance: ${error: String}"
 ru = "Не удалось удалить инстанс: ${error: String}"
+
+[notifications.failed_delete_all_data]
+en = "Failed to delete launcher data: ${error: String}"
+ru = "Не удалось удалить данные лаунчера: ${error: String}"
+
+[notifications.delete_all_data_busy]
+en = "Stop running games and installs before deleting launcher data."
+ru = "Остановите запущенные игры и установки перед удалением данных лаунчера."
 
 [notifications.enter_offline_nickname]
 en = "Enter an offline nickname in the instance details"
@@ -953,3 +977,11 @@ ru = "Ошибка обновления: ${message: String}"
 [update.proceed_to_launcher]
 en = "Proceed to launcher"
 ru = "Перейти к лаунчеру"
+
+[update.available_flatpak]
+en = 'A new launcher version is available. Update it with "flatpak update".'
+ru = 'Доступна новая версия лаунчера. Обновите её командой "flatpak update".'
+
+[update.available_nix]
+en = "A new launcher version is available. Update it through Nix."
+ru = "Доступна новая версия лаунчера. Обновите её через Nix."
