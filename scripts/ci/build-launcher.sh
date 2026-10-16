@@ -23,7 +23,7 @@ case "$RUNNER_OS" in
     ;;
 
   macOS)
-    command -v cargo-bundle >/dev/null 2>&1 || cargo install cargo-bundle
+    command -v cargo-bundle >/dev/null 2>&1 || cargo install cargo-bundle --version 0.12.0 --locked
     rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
     MACOSX_DEPLOYMENT_TARGET=10.12 \
