@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use gpui::{Context, EventEmitter, Task};
+use gpui_kit::{Context, EventEmitter, Task};
 use launcher_bridge::NotificationLevel;
 
 #[derive(Clone, Debug)]

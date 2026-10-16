@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::RenderImage;
+use gpui_kit::RenderImage;
 use image::{Frame, ImageBuffer, Luma, Rgba};
 use qrcode::QrCode;
 use smallvec::SmallVec;
@@ -21,7 +21,7 @@ pub fn qr_image_for_url(url: &str) -> Option<Arc<RenderImage>> {
         let value = pixel[0];
         rgba.put_pixel(x, y, Rgba([value, value, value, 255]));
     }
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     Some(Arc::new(RenderImage::new(SmallVec::from_elem(

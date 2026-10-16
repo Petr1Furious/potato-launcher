@@ -1,5 +1,5 @@
-use gpui::{Context, IntoElement, Render, Window, div, prelude::*};
-use gpui_component::{ActiveTheme, Disableable, button::Button, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Disableable, button::Button, h_flex, v_flex};
+use gpui_kit::{Context, IntoElement, Render, Window, div, prelude::*};
 use launcher_i18n as t;
 
 use crate::{entity::DataEntities, pages::instances::InstancesPage};
@@ -7,7 +7,7 @@ use launcher_bridge::{BackendFetchState, MessageToBackend};
 
 pub struct LauncherUI {
     data: DataEntities,
-    instances_page: gpui::Entity<InstancesPage>,
+    instances_page: gpui_kit::Entity<InstancesPage>,
 }
 
 impl LauncherUI {

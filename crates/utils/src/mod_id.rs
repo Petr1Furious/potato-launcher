@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::Path};
 
-use async_zip::base::read::mem::ZipFileReader;
-use futures::io::AsyncReadExt as _;
+use async_zip::base::read1::seek::ZipArchiveReader;
+use futures::io::{AsyncReadExt as _, Cursor};
 use log::warn;
 use serde_json::Value;
 
@@ -17,6 +17,8 @@ const LEGACY_INFO_FILES: &[&str] = &[
 ];
 
 const JARJAR_PREFIX: &str = "META-INF/jarjar/";
+
+type JarReader = ZipArchiveReader<Cursor<Vec<u8>>>;
 
 const PACKAGING_SUFFIXES: &[&str] = &[
     "-all",
@@ -67,47 +69,46 @@ pub async fn extract_mod_id(path: &Path) -> Result<Option<String>, ExtractModIdE
 }
 
 async fn extract_mod_id_from_bytes(bytes: Vec<u8>) -> Result<Option<String>, ExtractModIdError> {
-    let reader = ZipFileReader::new(bytes).await?;
+    let mut reader = ZipArchiveReader::open(Cursor::new(bytes)).await?;
 
     let entry_indices = reader
-        .file()
-        .entries()
+        .cdrs()
         .iter()
         .enumerate()
-        .filter_map(|(index, entry)| Some((entry.filename().as_str().ok()?.to_owned(), index)))
+        .filter_map(|(index, cdr)| Some((cdr.insecure_file_name.as_str()?.to_owned(), index)))
         .collect::<HashMap<String, usize>>();
 
     if let Some(&index) = entry_indices.get(FABRIC_MOD_JSON)
-        && let Some(id) = read_fabric_mod_id(&reader, index).await?
+        && let Some(id) = read_fabric_mod_id(&mut reader, index).await?
     {
         return Ok(Some(id));
     }
 
     if let Some(&index) = entry_indices.get(NEOFORGE_MODS_TOML)
-        && let Some(id) = read_mods_toml_mod_id(&reader, index).await?
+        && let Some(id) = read_mods_toml_mod_id(&mut reader, index).await?
     {
         return Ok(Some(id));
     }
 
     if let Some(&index) = entry_indices.get(FORGE_MODS_TOML)
-        && let Some(id) = read_mods_toml_mod_id(&reader, index).await?
+        && let Some(id) = read_mods_toml_mod_id(&mut reader, index).await?
     {
         return Ok(Some(id));
     }
 
     for info_file in LEGACY_INFO_FILES {
         if let Some(&index) = entry_indices.get(*info_file)
-            && let Some(id) = read_mcmod_info_mod_id(&reader, index, info_file).await?
+            && let Some(id) = read_mcmod_info_mod_id(&mut reader, index, info_file).await?
         {
             return Ok(Some(id));
         }
     }
 
-    extract_mod_id_from_jarjar(&reader, &entry_indices).await
+    extract_mod_id_from_jarjar(&mut reader, &entry_indices).await
 }
 
 async fn extract_mod_id_from_jarjar(
-    reader: &ZipFileReader,
+    reader: &mut JarReader,
     entry_indices: &HashMap<String, usize>,
 ) -> Result<Option<String>, ExtractModIdError> {
     let mut nested_jars = entry_indices
@@ -226,16 +227,16 @@ fn is_valid_mod_id(id: &str) -> bool {
         && chars.all(|ch| matches!(ch, 'a'..='z' | '0'..='9' | '_' | '-'))
 }
 
-async fn read_zip_entry(reader: &ZipFileReader, index: usize) -> Result<String, ExtractModIdError> {
+async fn read_zip_entry(reader: &mut JarReader, index: usize) -> Result<String, ExtractModIdError> {
     let bytes = read_zip_entry_bytes(reader, index).await?;
     Ok(strip_bom(&String::from_utf8_lossy(&bytes)).to_owned())
 }
 
 async fn read_zip_entry_bytes(
-    reader: &ZipFileReader,
+    reader: &mut JarReader,
     index: usize,
 ) -> Result<Vec<u8>, ExtractModIdError> {
-    let mut entry = reader.reader_without_entry(index).await?;
+    let mut entry = reader.file(index).await?;
     let mut content = Vec::new();
     entry.read_to_end(&mut content).await?;
     Ok(content)
@@ -258,7 +259,7 @@ fn parse_json_lenient(content: &str) -> Result<Value, serde_json::Error> {
 }
 
 async fn read_fabric_mod_id(
-    reader: &ZipFileReader,
+    reader: &mut JarReader,
     index: usize,
 ) -> Result<Option<String>, ExtractModIdError> {
     let content = read_zip_entry(reader, index).await?;
@@ -271,7 +272,7 @@ async fn read_fabric_mod_id(
 }
 
 async fn read_mods_toml_mod_id(
-    reader: &ZipFileReader,
+    reader: &mut JarReader,
     index: usize,
 ) -> Result<Option<String>, ExtractModIdError> {
     let content = read_zip_entry(reader, index).await?;
@@ -291,7 +292,7 @@ fn normalize_legacy_info_json(content: &str) -> String {
 }
 
 async fn read_mcmod_info_mod_id(
-    reader: &ZipFileReader,
+    reader: &mut JarReader,
     index: usize,
     entry_name: &str,
 ) -> Result<Option<String>, ExtractModIdError> {

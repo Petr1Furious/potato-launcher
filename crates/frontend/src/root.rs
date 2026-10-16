@@ -1,5 +1,5 @@
-use gpui::{AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div};
-use gpui_component::v_flex;
+use gpui_kit::component::v_flex;
+use gpui_kit::{AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div};
 
 use crate::{
     component::notifications::notification_layer, entity::DataEntities, pages::update::UpdatePage,
@@ -7,12 +7,12 @@ use crate::{
 };
 
 pub struct LauncherRoot {
-    ui: gpui::Entity<LauncherUI>,
-    update_page: gpui::Entity<UpdatePage>,
-    update: gpui::Entity<crate::entity::update::UpdateEntries>,
-    notifications: gpui::Entity<crate::entity::notification::NotificationEntries>,
-    _update_subscription: gpui::Subscription,
-    _notifications_subscription: gpui::Subscription,
+    ui: gpui_kit::Entity<LauncherUI>,
+    update_page: gpui_kit::Entity<UpdatePage>,
+    update: gpui_kit::Entity<crate::entity::update::UpdateEntries>,
+    notifications: gpui_kit::Entity<crate::entity::notification::NotificationEntries>,
+    _update_subscription: gpui_kit::Subscription,
+    _notifications_subscription: gpui_kit::Subscription,
 }
 
 impl LauncherRoot {
@@ -43,7 +43,7 @@ impl LauncherRoot {
 impl Render for LauncherRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_updating = self.update.read(cx).is_blocking();
-        let content: gpui::AnyElement = if is_updating {
+        let content: gpui_kit::AnyElement = if is_updating {
             v_flex()
                 .size_full()
                 .child(self.update_page.clone())

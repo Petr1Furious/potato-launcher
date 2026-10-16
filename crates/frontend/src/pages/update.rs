@@ -1,5 +1,5 @@
-use gpui::{Context, IntoElement, Render, Window, div, prelude::*, px};
-use gpui_component::{ActiveTheme, button::Button, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, button::Button, h_flex, v_flex};
+use gpui_kit::{Context, IntoElement, Render, Window, div, prelude::*, px};
 use launcher_bridge::{MessageToBackend, UpdateStatusView};
 use launcher_i18n as t;
 
@@ -37,7 +37,7 @@ fn render_update_content(
     status: &UpdateStatusView,
     data: &DataEntities,
     cx: &mut Context<UpdatePage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let sender = data.backend_sender.clone();
 
     let proceed_button = Button::new("update-proceed")
@@ -86,14 +86,14 @@ fn render_update_content(
     }
 }
 
-fn status_label(text: impl Into<gpui::SharedString>) -> gpui::Div {
+fn status_label(text: impl Into<gpui_kit::SharedString>) -> gpui_kit::Div {
     div()
         .text_sm()
-        .text_color(gpui::Hsla::from(gpui::rgb(0xAAAAAA)))
+        .text_color(gpui_kit::Hsla::from(gpui_kit::rgb(0xAAAAAA)))
         .child(text.into())
 }
 
-fn progress_bar(current: u64, total: u64, cx: &mut Context<UpdatePage>) -> gpui::Div {
+fn progress_bar(current: u64, total: u64, cx: &mut Context<UpdatePage>) -> gpui_kit::Div {
     let fraction = if total > 0 {
         (current as f32 / total as f32).clamp(0.0, 1.0)
     } else {
@@ -117,14 +117,14 @@ fn progress_bar(current: u64, total: u64, cx: &mut Context<UpdatePage>) -> gpui:
                         .h_full()
                         .rounded_full()
                         .bg(cx.theme().accent)
-                        .w(gpui::relative(fraction)),
+                        .w(gpui_kit::relative(fraction)),
                 ),
         )
         .child(
             h_flex().justify_center().child(
                 div()
                     .text_xs()
-                    .text_color(gpui::Hsla::from(gpui::rgb(0x888888)))
+                    .text_color(gpui_kit::Hsla::from(gpui_kit::rgb(0x888888)))
                     .child(label),
             ),
         )

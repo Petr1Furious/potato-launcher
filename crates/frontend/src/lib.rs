@@ -14,11 +14,10 @@ use entity::{
     instance::InstanceEntries, java_resolve::JavaResolveCache, local_create::LocalCreateEntries,
     notification::NotificationEntries, settings::LauncherSettingsEntries, update::UpdateEntries,
 };
-use gpui::{
+use gpui_kit::{
     App, AppContext, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowOptions, actions, px,
     size,
 };
-use gpui_component::Root;
 use launcher_bridge::{BackendSender, FrontendReceiver};
 use launcher_build_config::{launcher_app_id, launcher_name};
 use processor::Processor;
@@ -31,11 +30,11 @@ pub fn start(
     backend_sender: BackendSender,
     mut receiver: FrontendReceiver,
 ) -> anyhow::Result<()> {
-    gpui_platform::application()
-        .with_assets(gpui_component_assets::Assets)
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
         .run(move |cx: &mut App| {
-            gpui_component::init(cx);
-            gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+            gpui_kit::init(cx);
+            gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
             cx.bind_keys([
                 #[cfg(target_os = "macos")]
                 KeyBinding::new("cmd-q", Quit, None),
@@ -70,7 +69,7 @@ pub fn start(
             };
 
             let window_data = data.clone();
-            cx.open_window(
+            gpui_kit::open_window(
                 WindowOptions {
                     app_id: Some(launcher_app_id().into()),
                     titlebar: Some(TitlebarOptions {
@@ -79,13 +78,11 @@ pub fn start(
                         ..Default::default()
                     }),
                     window_bounds: Some(initial_window_bounds(cx)),
-                    window_min_size: Some(gpui::size(gpui::px(720.0), gpui::px(420.0))),
+                    window_min_size: Some(size(px(720.0), px(420.0))),
                     ..Default::default()
                 },
-                move |window, cx| {
-                    let root = cx.new(|cx| LauncherRoot::new(&window_data, window, cx));
-                    cx.new(|cx| Root::new(root, window, cx))
-                },
+                cx,
+                move |window, cx| cx.new(|cx| LauncherRoot::new(&window_data, window, cx)),
             )
             .expect("failed to open main window");
             cx.activate(true);

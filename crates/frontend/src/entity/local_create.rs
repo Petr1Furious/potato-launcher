@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{Context, EventEmitter};
+use gpui_kit::{Context, EventEmitter};
 use launcher_bridge::LocalLoader;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

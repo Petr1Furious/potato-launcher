@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{Context, EventEmitter, RenderImage};
+use gpui_kit::{Context, EventEmitter, RenderImage};
 use launcher_auth::flow::AuthMessage;
 use launcher_bridge::AuthPromptContext;
 

@@ -11,7 +11,7 @@ pub mod update;
 use account::AccountEntries;
 use auth::AuthSession;
 use backend::BackendList;
-use gpui::Entity;
+use gpui_kit::Entity;
 use instance::InstanceEntries;
 use java_resolve::JavaResolveCache;
 use launcher_bridge::BackendSender;

@@ -1,12 +1,12 @@
-use gpui::{Context, IntoElement, ParentElement, Styled, div, prelude::*, px};
-use gpui_component::{ActiveTheme, StyledExt, button::Button, v_flex};
+use gpui_kit::component::{ActiveTheme, StyledExt, button::Button, v_flex};
+use gpui_kit::{Context, IntoElement, ParentElement, Styled, div, prelude::*, px};
 use launcher_bridge::NotificationLevel;
 use launcher_i18n as t;
 
 use crate::entity::notification::{NotificationEntries, NotificationEntry};
 
 pub fn notification_layer(
-    notifications: gpui::Entity<NotificationEntries>,
+    notifications: gpui_kit::Entity<NotificationEntries>,
     cx: &mut Context<crate::root::LauncherRoot>,
 ) -> impl IntoElement {
     let entries = notifications.read(cx).entries.clone();
@@ -25,9 +25,9 @@ pub fn notification_layer(
 
 fn notification_card(
     entry: NotificationEntry,
-    notifications: gpui::Entity<NotificationEntries>,
+    notifications: gpui_kit::Entity<NotificationEntries>,
     cx: &mut Context<crate::root::LauncherRoot>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let color = match entry.level {
         NotificationLevel::Error => cx.theme().red,
         NotificationLevel::Warning => cx.theme().yellow,

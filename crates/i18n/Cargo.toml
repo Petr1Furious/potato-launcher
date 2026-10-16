@@ -8,7 +8,7 @@ build = "build.rs"
 sys-locale = "0.3.2"
 
 [build-dependencies]
-indexmap = "2.14.0"
+indexmap = "2.14.2"
 toml.workspace = true
 
 [dev-dependencies]

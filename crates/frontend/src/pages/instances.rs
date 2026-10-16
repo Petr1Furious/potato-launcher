@@ -5,11 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use gpui::{
-    App, Context, ImageSource, IntoElement, ObjectFit, Render, SharedString, Window, div, img,
-    prelude::*, px, rems,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Disableable, IndexPath, StyledExt,
     button::Button,
     checkbox::Checkbox,
@@ -20,6 +16,10 @@ use gpui_component::{
     skeleton::Skeleton,
     text::TextView,
     v_flex,
+};
+use gpui_kit::{
+    App, Context, ImageSource, IntoElement, ObjectFit, Render, SharedString, Window, div, img,
+    prelude::*, px, rems,
 };
 use instance::{
     java::{ZGC_MIN_JVM_VERSION, get_default_gc},
@@ -65,32 +65,32 @@ pub struct InstancesPage {
     create_local_loader: LocalLoader,
     pending_delete: Option<InstanceHandle>,
     hidden_launches: HashSet<InstanceHandle>,
-    backend_url_input: gpui::Entity<InputState>,
-    offline_nickname_input: gpui::Entity<InputState>,
-    telegram_base_url_input: gpui::Entity<InputState>,
-    elyby_client_id_input: gpui::Entity<InputState>,
-    elyby_client_secret_input: gpui::Entity<InputState>,
-    elyby_launcher_name_input: gpui::Entity<InputState>,
-    memory_input: gpui::Entity<InputState>,
-    jvm_opts_input: gpui::Entity<InputState>,
-    create_local_name_input: gpui::Entity<InputState>,
-    create_local_mc_version_select: gpui::Entity<SelectState<VersionList>>,
-    create_local_loader_version_select: gpui::Entity<SelectState<VersionList>>,
+    backend_url_input: gpui_kit::Entity<InputState>,
+    offline_nickname_input: gpui_kit::Entity<InputState>,
+    telegram_base_url_input: gpui_kit::Entity<InputState>,
+    elyby_client_id_input: gpui_kit::Entity<InputState>,
+    elyby_client_secret_input: gpui_kit::Entity<InputState>,
+    elyby_launcher_name_input: gpui_kit::Entity<InputState>,
+    memory_input: gpui_kit::Entity<InputState>,
+    jvm_opts_input: gpui_kit::Entity<InputState>,
+    create_local_name_input: gpui_kit::Entity<InputState>,
+    create_local_mc_version_select: gpui_kit::Entity<SelectState<VersionList>>,
+    create_local_loader_version_select: gpui_kit::Entity<SelectState<VersionList>>,
     create_local_show_snapshots: bool,
     create_local_sync_mc_dropdown: bool,
     create_local_sync_loader_dropdown: bool,
-    java_path_input: gpui::Entity<InputState>,
+    java_path_input: gpui_kit::Entity<InputState>,
     java_path_last_instance: Option<InstanceHandle>,
     java_path_last_stored: Option<Arc<str>>,
-    _instances_subscription: gpui::Subscription,
-    _backends_subscription: gpui::Subscription,
-    _accounts_subscription: gpui::Subscription,
-    _settings_subscription: gpui::Subscription,
-    _local_create_subscription: gpui::Subscription,
-    _local_loader_subscription: gpui::Subscription,
-    _mc_version_selected_subscription: gpui::Subscription,
-    _java_resolve_subscription: gpui::Subscription,
-    _auth_subscription: gpui::Subscription,
+    _instances_subscription: gpui_kit::Subscription,
+    _backends_subscription: gpui_kit::Subscription,
+    _accounts_subscription: gpui_kit::Subscription,
+    _settings_subscription: gpui_kit::Subscription,
+    _local_create_subscription: gpui_kit::Subscription,
+    _local_loader_subscription: gpui_kit::Subscription,
+    _mc_version_selected_subscription: gpui_kit::Subscription,
+    _java_resolve_subscription: gpui_kit::Subscription,
+    _auth_subscription: gpui_kit::Subscription,
 }
 
 impl InstancesPage {
@@ -581,7 +581,7 @@ impl InstancesPage {
             });
     }
 
-    fn create_local_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+    fn create_local_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui_kit::Div {
         if self.create_local_sync_mc_dropdown {
             self.create_local_sync_mc_dropdown = false;
             self.update_minecraft_version_dropdown(window, cx);
@@ -832,7 +832,7 @@ impl InstancesPage {
             )
     }
 
-    fn auth_modal(&self, _window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+    fn auth_modal(&self, _window: &mut Window, cx: &mut Context<Self>) -> gpui_kit::Div {
         let auth_session = self.data.auth.read(cx).clone();
         let Some(message) = auth_session.message.clone() else {
             return div();
@@ -900,7 +900,7 @@ impl InstancesPage {
                             div().flex().justify_center().child(
                                 div()
                                     .p(px(4.0))
-                                    .bg(gpui::white())
+                                    .bg(gpui_kit::white())
                                     .rounded(cx.theme().radius)
                                     .child(
                                         img(ImageSource::Render(qr_image))
@@ -1178,7 +1178,7 @@ impl InstancesPage {
             ))
     }
 
-    fn advanced_accounts_modal(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn advanced_accounts_modal(&self, cx: &mut Context<Self>) -> gpui_kit::Div {
         let sender = self.data.backend_sender.clone();
 
         div()
@@ -1351,9 +1351,9 @@ fn group_instances(instances: &[InstanceView]) -> InstanceGroups {
 }
 
 fn separated_backend_sections(
-    sections: Vec<gpui::Div>,
+    sections: Vec<gpui_kit::Div>,
     cx: &mut Context<InstancesPage>,
-) -> Vec<gpui::Div> {
+) -> Vec<gpui_kit::Div> {
     let mut separated = Vec::with_capacity(sections.len().saturating_mul(2).saturating_sub(1));
     for (index, section) in sections.into_iter().enumerate() {
         if index > 0 {
@@ -1374,7 +1374,7 @@ struct SectionParams<'a> {
     sender: BackendSender,
 }
 
-fn section(params: SectionParams<'_>, cx: &mut Context<InstancesPage>) -> gpui::Div {
+fn section(params: SectionParams<'_>, cx: &mut Context<InstancesPage>) -> gpui_kit::Div {
     let SectionParams {
         title,
         backend,
@@ -1470,7 +1470,7 @@ fn backend_empty_state_section(
     backend: &BackendStatus,
     title: String,
     cx: &mut Context<InstancesPage>,
-) -> Option<gpui::Div> {
+) -> Option<gpui_kit::Div> {
     let fetch_state = fetch_state_label(&backend.fetch_state);
     let fetch_color = match &backend.fetch_state {
         BackendFetchState::Offline | BackendFetchState::Error(_) => cx.theme().red,
@@ -1549,7 +1549,7 @@ fn instance_card(
     hide_usernames: bool,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let orphaned = instance.is_orphaned();
     let installed = instance.locally_installed;
     let status = status_label(&instance);
@@ -1622,7 +1622,7 @@ fn instance_card(
 
 const INSTALL_OPTIONS_SLOT_HEIGHT: f32 = 20.0;
 
-fn install_options_slot(instance: &InstanceView, sender: BackendSender) -> gpui::Div {
+fn install_options_slot(instance: &InstanceView, sender: BackendSender) -> gpui_kit::Div {
     div()
         .w_full()
         .h(px(INSTALL_OPTIONS_SLOT_HEIGHT))
@@ -1647,7 +1647,7 @@ fn install_options_slot(instance: &InstanceView, sender: BackendSender) -> gpui:
         })
 }
 
-fn account_summary(instance: &InstanceView, cx: &mut Context<InstancesPage>) -> gpui::Div {
+fn account_summary(instance: &InstanceView, cx: &mut Context<InstancesPage>) -> gpui_kit::Div {
     let account = if instance.launch_blocked_reason.is_some() {
         t::instances::add_account_card().to_string()
     } else {
@@ -1688,7 +1688,7 @@ fn status_badge_color(
     instance: &InstanceView,
     orphaned: bool,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Hsla {
+) -> gpui_kit::Hsla {
     let is_error = matches!(
         instance.status,
         InstanceLiveStatus::InstallFailed(_) | InstanceLiveStatus::LaunchFailed(_)
@@ -1703,7 +1703,11 @@ fn status_badge_color(
     }
 }
 
-fn status_badge_solid(status: String, color: gpui::Hsla, radius: gpui::Pixels) -> gpui::Div {
+fn status_badge_solid(
+    status: String,
+    color: gpui_kit::Hsla,
+    radius: gpui_kit::Pixels,
+) -> gpui_kit::Div {
     div()
         .w_full()
         .min_h_8()
@@ -1729,7 +1733,7 @@ fn status_badge(
     orphaned: bool,
     status: String,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let color = status_badge_color(instance, orphaned, cx);
     let radius = cx.theme().radius;
 
@@ -1758,7 +1762,7 @@ fn status_badge(
 fn start_add_required_account(
     provider: &AuthProviderConfig,
     sender: &BackendSender,
-    offline_nickname_input: &gpui::Entity<InputState>,
+    offline_nickname_input: &gpui_kit::Entity<InputState>,
     cx: &App,
 ) {
     match provider {
@@ -1775,7 +1779,7 @@ fn start_add_required_account(
     }
 }
 
-fn card_actions(primary: Button, settings: Button) -> gpui::Div {
+fn card_actions(primary: Button, settings: Button) -> gpui_kit::Div {
     h_flex()
         .w_full()
         .gap_2()
@@ -1912,7 +1916,11 @@ fn action_button(
     }
 }
 
-fn detail_section(title: &str, content: gpui::Div, cx: &mut Context<InstancesPage>) -> gpui::Div {
+fn detail_section(
+    title: &str,
+    content: gpui_kit::Div,
+    cx: &mut Context<InstancesPage>,
+) -> gpui_kit::Div {
     v_flex()
         .w_full()
         .min_w_0()
@@ -1931,7 +1939,7 @@ fn detail_section(title: &str, content: gpui::Div, cx: &mut Context<InstancesPag
         .child(content.w_full().min_w_0())
 }
 
-fn error_alert(title: &str, message: String, cx: &mut Context<InstancesPage>) -> gpui::Div {
+fn error_alert(title: &str, message: String, cx: &mut Context<InstancesPage>) -> gpui_kit::Div {
     v_flex()
         .gap_1()
         .p_2()
@@ -1948,7 +1956,7 @@ fn account_detail_sections(
     accounts: Vec<AccountView>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> Vec<gpui::Div> {
+) -> Vec<gpui_kit::Div> {
     let Some(required_provider) = instance.auth_provider.as_ref() else {
         return vec![optional_auth_account_section(
             instance, accounts, sender, cx,
@@ -2021,7 +2029,7 @@ fn optional_auth_account_section(
     accounts: Vec<AccountView>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     detail_section(
         t::accounts::account_section(),
         v_flex()
@@ -2084,7 +2092,7 @@ fn account_select_row(
     sender: BackendSender,
     override_account: bool,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let selected = account_is_selected(instance, &account, override_account);
     let instance_handle = instance.handle.clone();
     let key = account.key.clone();
@@ -2138,13 +2146,13 @@ fn account_select_row(
 
 fn runtime_section(
     instance: &InstanceView,
-    memory_input: gpui::Entity<InputState>,
-    jvm_opts_input: gpui::Entity<InputState>,
-    java_path_input: gpui::Entity<InputState>,
-    java_resolve: gpui::Entity<JavaResolveCache>,
+    memory_input: gpui_kit::Entity<InputState>,
+    jvm_opts_input: gpui_kit::Entity<InputState>,
+    java_path_input: gpui_kit::Entity<InputState>,
+    java_resolve: gpui_kit::Entity<JavaResolveCache>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let handle = instance.handle.clone();
     v_flex()
         .gap_3()
@@ -2326,11 +2334,11 @@ fn jvm_gc_opts_button(instance: &InstanceView, choice: JvmGcOpts, sender: Backen
 
 fn java_section(
     instance: &InstanceView,
-    java_path_input: gpui::Entity<InputState>,
-    java_resolve: gpui::Entity<JavaResolveCache>,
+    java_path_input: gpui_kit::Entity<InputState>,
+    java_resolve: gpui_kit::Entity<JavaResolveCache>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let handle = instance.handle.clone();
     let local_install_in_progress =
         matches!(instance.origin, InstanceOrigin::Local) && !instance.locally_installed;
@@ -2407,7 +2415,7 @@ fn java_section(
                                     let handle = handle.clone();
                                     cx.listener(move |_, _, _window, cx| {
                                         let receiver =
-                                            cx.prompt_for_paths(gpui::PathPromptOptions {
+                                            cx.prompt_for_paths(gpui_kit::PathPromptOptions {
                                                 files: true,
                                                 directories: false,
                                                 multiple: false,
@@ -2462,7 +2470,7 @@ fn optional_mods_section(
     instance: &InstanceView,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let handle = instance.handle.clone();
     let mods_locked = matches!(
         instance.status,
@@ -2506,7 +2514,7 @@ fn native_glfw_toggle(
     instance: &InstanceView,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let handle = instance.handle.clone();
     let enabled = instance
         .use_native_glfw
@@ -2552,17 +2560,17 @@ fn native_glfw_toggle(
     _instance: &InstanceView,
     _sender: BackendSender,
     _cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     div()
 }
 
 fn launcher_settings_section(
     settings: LauncherSettingsView,
     launcher_dir: PathBuf,
-    notifications: gpui::Entity<NotificationEntries>,
+    notifications: gpui_kit::Entity<NotificationEntries>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let language = settings.language.clone();
     v_flex()
         .gap_2()
@@ -2733,7 +2741,7 @@ fn accounts_section(
     accounts: Vec<AccountView>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     if accounts.is_empty() {
         return v_flex().gap_1().child(
             div()
@@ -2779,10 +2787,10 @@ fn accounts_section(
 }
 
 fn add_account_section(
-    offline_nickname: gpui::Entity<InputState>,
+    offline_nickname: gpui_kit::Entity<InputState>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     v_flex()
         .gap_3()
         .child(add_provider_button(
@@ -2816,9 +2824,9 @@ fn add_account_section(
 }
 
 fn telegram_add_account_section(
-    telegram_base_url: gpui::Entity<InputState>,
+    telegram_base_url: gpui_kit::Entity<InputState>,
     sender: BackendSender,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     v_flex()
         .gap_2()
         .child(Input::new(&telegram_base_url))
@@ -2840,11 +2848,11 @@ fn telegram_add_account_section(
 }
 
 fn elyby_add_account_section(
-    elyby_client_id: gpui::Entity<InputState>,
-    elyby_client_secret: gpui::Entity<InputState>,
-    elyby_launcher_name: gpui::Entity<InputState>,
+    elyby_client_id: gpui_kit::Entity<InputState>,
+    elyby_client_secret: gpui_kit::Entity<InputState>,
+    elyby_launcher_name: gpui_kit::Entity<InputState>,
     sender: BackendSender,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     v_flex()
         .gap_2()
         .child(Input::new(&elyby_client_id))
@@ -2896,7 +2904,7 @@ fn backend_list(
     backend_names: BTreeMap<String, String>,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     if backends.is_empty() {
         return v_flex().gap_1().child(
             div()
@@ -3015,7 +3023,7 @@ fn action_section(
     pending_delete: bool,
     sender: BackendSender,
     cx: &mut Context<InstancesPage>,
-) -> gpui::Div {
+) -> gpui_kit::Div {
     let handle = instance.handle.clone();
     let can_launch = matches!(
         instance.status,
@@ -3433,7 +3441,12 @@ impl SelectDelegate for VersionList {
         None
     }
 
-    fn perform_search(&mut self, query: &str, _window: &mut Window, _: &mut App) -> gpui::Task<()> {
+    fn perform_search(
+        &mut self,
+        query: &str,
+        _window: &mut Window,
+        _: &mut App,
+    ) -> gpui_kit::Task<()> {
         let lower_query = query.to_lowercase();
         self.matched_versions = self
             .versions
@@ -3441,6 +3454,6 @@ impl SelectDelegate for VersionList {
             .filter(|item| item.to_lowercase().starts_with(&lower_query))
             .cloned()
             .collect();
-        gpui::Task::ready(())
+        gpui_kit::Task::ready(())
     }
 }

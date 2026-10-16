@@ -1,4 +1,4 @@
-use gpui::{Context, EventEmitter};
+use gpui_kit::{Context, EventEmitter};
 use launcher_bridge::UpdateStatusView;
 
 pub enum UpdateState {

@@ -22,9 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
 

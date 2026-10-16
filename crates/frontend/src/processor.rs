@@ -1,4 +1,4 @@
-use gpui::App;
+use gpui_kit::App;
 use launcher_bridge::{ExitOutcome, MessageToFrontend, NotificationLevel};
 use launcher_i18n::set_lang;
 

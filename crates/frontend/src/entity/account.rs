@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{Context, EventEmitter};
+use gpui_kit::{Context, EventEmitter};
 use launcher_bridge::AccountView;
 
 #[derive(Clone, Default)]

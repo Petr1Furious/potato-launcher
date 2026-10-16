@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use gpui::{Context, EventEmitter};
+use gpui_kit::{Context, EventEmitter};
 use instance::storage::InstanceHandle;
 
 #[derive(Clone)]

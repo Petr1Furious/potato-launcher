@@ -108,20 +108,19 @@ pub async fn extract_zip(
     dest: &Path,
     skip_meta_inf: bool,
 ) -> Result<(), ExtractZipError> {
-    use async_zip::base::read::seek::ZipFileReader;
-    use tokio_util::compat::FuturesAsyncReadCompatExt as _;
+    use async_zip::base::read1::seek::ZipArchiveReader;
+    use tokio_util::compat::{FuturesAsyncReadCompatExt as _, TokioAsyncReadCompatExt as _};
 
     let file = fs::File::open(archive_path).await?;
-    let mut zip = ZipFileReader::with_tokio(io::BufReader::new(file)).await?;
+    let mut zip = ZipArchiveReader::open(io::BufReader::new(file).compat()).await?;
 
     let entries = zip
-        .file()
-        .entries()
+        .cdrs()
         .iter()
         .enumerate()
-        .filter_map(|(index, entry)| {
-            let name = entry.filename().as_str().ok()?.to_owned();
-            let is_dir = entry.dir().unwrap_or(false);
+        .filter_map(|(index, cdr)| {
+            let name = cdr.insecure_file_name.as_str()?.to_owned();
+            let is_dir = name.ends_with('/');
             Some((index, name, is_dir))
         })
         .collect::<Vec<_>>();
@@ -149,7 +148,7 @@ pub async fn extract_zip(
             fs::create_dir_all(parent).await?;
         }
 
-        let mut reader = zip.reader_without_entry(index).await?.compat();
+        let mut reader = zip.file(index).await?.compat();
         let mut output = fs::File::create(&output_path).await?;
         io::copy(&mut reader, &mut output).await?;
         output.flush().await?;

@@ -1,5 +1,5 @@
-use gpui::{App, div, prelude::*, px, relative};
-use gpui_component::{ActiveTheme, v_flex};
+use gpui_kit::component::{ActiveTheme, v_flex};
+use gpui_kit::{App, div, prelude::*, px, relative};
 use launcher_bridge::{InstanceTaskView, ProgressUnit};
 
 pub fn format_progress(current: u64, total: u64, unit: ProgressUnit) -> String {
@@ -21,7 +21,7 @@ fn task_fraction(task: &InstanceTaskView) -> f32 {
     (task.current as f32 / task.total as f32).clamp(0.0, 1.0)
 }
 
-fn task_row(task: &InstanceTaskView, cx: &App) -> gpui::Div {
+fn task_row(task: &InstanceTaskView, cx: &App) -> gpui_kit::Div {
     let label = if task.total > 0 {
         format!(
             "{} · {}",
@@ -72,7 +72,7 @@ fn task_row(task: &InstanceTaskView, cx: &App) -> gpui::Div {
         )
 }
 
-pub fn task_progress_rows(tasks: &[InstanceTaskView], cx: &App) -> gpui::Div {
+pub fn task_progress_rows(tasks: &[InstanceTaskView], cx: &App) -> gpui_kit::Div {
     v_flex().w_full().gap_1().children(
         tasks
             .iter()

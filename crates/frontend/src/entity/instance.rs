@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{Context, EventEmitter};
+use gpui_kit::{Context, EventEmitter};
 use instance::storage::InstanceHandle;
 use launcher_bridge::{InstanceLiveStatus, InstanceTaskView, InstanceView};
 
