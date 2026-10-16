@@ -1,0 +1,9 @@
+  <!-- permissions required by some mods (e.g. simple voice chat) -->
+  <key>NSCameraUsageDescription</key>
+  <string>A Minecraft mod wants to access your camera.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>A Minecraft mod wants to access your microphone.</string>
+  <key>NSEnableAutomaticCustomizeTouchBarMenuItem</key>
+  <false/>
+  <key>NSFunctionBarAPIEnabled</key>
+  <false/>

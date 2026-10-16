@@ -22,4 +22,9 @@ winres = "0.1.12"
 # `icon` are filled in at build time by packaging/configure.py from the
 # LAUNCHER_NAME / LAUNCHER_APP_ID / LAUNCHER_ICON environment variables.
 [package.metadata.bundle.bin.launcher]
-osx_minimum_system_version = "10.12"
+
+[package.metadata.bundle.bin.launcher.osx]
+# GPUI targets macOS 10.15
+minimum_system_version = "10.15"
+# relative to the repo root, where scripts/ci/build-launcher.sh runs cargo bundle
+info_plist_exts = ["packaging/macos/Info.plist.fragment"]
