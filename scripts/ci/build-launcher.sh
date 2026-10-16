@@ -10,7 +10,10 @@ mkdir -p build
 
 case "$RUNNER_OS" in
   Windows)
-    cargo build --bin launcher --profile release-lto
+    # Statically link the MSVC C runtime so the exe doesn't need
+    # VCRUNTIME140.dll / the Visual C++ Redistributable.
+    RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static" \
+      cargo build --bin launcher --profile release-lto
     mv "target/release-lto/launcher.exe" "build/${LAUNCHER_NAME}.exe"
     ;;
 
