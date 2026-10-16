@@ -644,6 +644,7 @@ impl InstanceGenerator {
                     info!("Replacing download URLs in {} metadata", metadata.id);
                     *metadata = metadata
                         .with_replaced_download_urls(
+                            &self.client,
                             &remote_config.download_server_base,
                             output_dir,
                         )

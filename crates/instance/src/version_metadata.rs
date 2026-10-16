@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use url::Url;
 
 use utils::{
-    files::{self, CheckTask},
+    files::{self, CheckTask, DownloadTask},
     hash_struct,
     paths::{AssetsDir, BaseUrl, DataDir, LibrariesDir, NativePath, ResourcesUrlBase, VersionsDir},
 };
@@ -82,7 +82,7 @@ mod tests {
         let base_url = BaseUrl::new(Url::parse("http://localhost:8080/").unwrap());
 
         let replaced = metadata
-            .with_replaced_download_urls(&base_url, &data_dir)
+            .with_replaced_download_urls(&reqwest::Client::new(), &base_url, &data_dir)
             .await
             .unwrap();
 
@@ -327,6 +327,12 @@ pub enum VersionMetadataError {
     MissingMinecraftArguments,
     #[error("failed to write version metadata JSON file: {0}")]
     WriteFileJson(#[from] files::WriteFileJsonError),
+    #[error("failed to download library {url} to hash it: {source}")]
+    DownloadLibrary {
+        url: Url,
+        #[source]
+        source: files::DownloadFileError,
+    },
     #[error("failed to hash local library file {}: {source}", path.display())]
     HashFileIo {
         path: PathBuf,
@@ -422,6 +428,13 @@ impl Library {
         }
     }
 
+    /// Download URL for a library without `downloads`, built from its base URL and name.
+    fn get_inferred_url(&self) -> Result<Url, LibraryError> {
+        self.get_url()?
+            .join(self.get_rel_path()?.as_str())
+            .map_err(|source| self.map_url_error(source))
+    }
+
     pub fn get_url(&self) -> Result<Url, LibraryError> {
         self.url.clone().ok_or(LibraryError::MissingLibraryUrl {
             library: self.name.clone(),
@@ -512,10 +525,7 @@ impl Library {
         } else {
             // else infer it from the library name
             Ok(Some(CheckTask {
-                url: self
-                    .get_url()?
-                    .join(self.get_rel_path()?.as_str())
-                    .map_err(|source| self.map_url_error(source))?,
+                url: self.get_inferred_url()?,
                 remote_size: self.size,
                 remote_sha1: self.sha1.clone(),
                 path: self.get_path(data_dir)?,
@@ -757,6 +767,7 @@ impl VersionMetadata {
 
     pub async fn with_replaced_download_urls(
         &self,
+        client: &reqwest::Client,
         download_server_base: &BaseUrl,
         data_dir: &DataDir,
     ) -> Result<VersionMetadata, VersionMetadataError> {
@@ -796,6 +807,30 @@ impl VersionMetadata {
                 }
             } else if library.url.is_some() {
                 let path = library.get_path(data_dir)?;
+                if library.sha1.is_none() || library.size.is_none() {
+                    // Check tasks only download libraries later, but without metadata
+                    // the hash and size have to come from the file itself, now.
+                    let exists = tokio::fs::try_exists(&path).await.map_err(|source| {
+                        VersionMetadataError::HashFileIo {
+                            path: path.clone(),
+                            source,
+                        }
+                    })?;
+                    if !exists {
+                        let url = library.get_inferred_url()?;
+                        let task = DownloadTask {
+                            url: url.clone(),
+                            path: path.clone(),
+                            size: library.size,
+                        };
+                        files::download_file(client, &task)
+                            .await
+                            .map_err(|source| VersionMetadataError::DownloadLibrary {
+                                url,
+                                source,
+                            })?;
+                    }
+                }
                 artifact_size = Some(match library.size {
                     Some(size) => size,
                     None => path
