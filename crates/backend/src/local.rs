@@ -143,6 +143,7 @@ async fn create_local_instance_inner(request: CreateLocalRequest) -> anyhow::Res
             source_root: None,
             content_rules: vec![],
             mod_sync: ModSyncSettings::default(),
+            os_specific_mods: Default::default(),
             resource_sync: ResourceSyncMode::default(),
             auth_backend: None,
             default_xmx: None,

@@ -63,6 +63,10 @@
                     }
                 ]
             },
+            "os_specific_mods": {
+                "voxy-*-macos.jar": ["osx"],
+                "voxy-*-windows.jar": ["windows"]
+            },
             "resource_sync": "on_update",
             "auth_backend": {
                 "type": "telegram",

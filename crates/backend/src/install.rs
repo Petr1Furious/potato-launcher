@@ -897,7 +897,7 @@ pub(crate) async fn apply_optional_mod_set(
     let mod_ids = set.mod_ids.iter().cloned().collect::<HashSet<_>>();
 
     for entry in &metadata.mod_entries {
-        if !mod_ids.contains(&entry.mod_id) {
+        if !mod_ids.contains(&entry.mod_id) || !entry.applies_to_current_os() {
             continue;
         }
         let filename =

@@ -83,7 +83,12 @@ pub async fn build_mod_sync_plan(
     settings: &ModSyncSettings,
     params: &InstallParams,
 ) -> Result<ModSyncPlan, ModSyncError> {
-    ModSyncPlanner::new(new_entries, settings, params)
+    let new_entries = new_entries
+        .iter()
+        .filter(|entry| entry.applies_to_current_os())
+        .cloned()
+        .collect::<Vec<_>>();
+    ModSyncPlanner::new(&new_entries, settings, params)
         .await?
         .build()
 }
@@ -118,6 +123,7 @@ impl<'a> ModSyncPlanner<'a> {
             previous: params
                 .previous_mod_entries
                 .iter()
+                .filter(|entry| entry.applies_to_current_os())
                 .map(|entry| (entry.mod_id.as_str(), entry))
                 .collect(),
             required: settings.required.iter().map(String::as_str).collect(),

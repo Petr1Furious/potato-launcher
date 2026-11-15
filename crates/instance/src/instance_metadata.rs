@@ -137,6 +137,15 @@ fn previous_rule_versions(rules: &[ContentRule]) -> HashMap<(String, &'static st
 pub struct ModEntry {
     pub mod_id: String,
     pub object: Object,
+    /// OS names from `get_os_name()`; empty means all
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub os: Vec<String>,
+}
+
+impl ModEntry {
+    pub fn applies_to_current_os(&self) -> bool {
+        self.os.is_empty() || self.os.contains(&get_os_name())
+    }
 }
 
 pub use crate::install_params::{InstallCause, InstallParams};

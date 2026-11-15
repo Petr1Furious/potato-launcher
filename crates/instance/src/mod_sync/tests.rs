@@ -46,6 +46,7 @@ fn mod_entry(mod_id: &str, filename: &str, sha1: &str) -> ModEntry {
             size: 123,
             url: Url::parse(&format!("https://example.com/{filename}")).unwrap(),
         },
+        os: Vec::new(),
     }
 }
 
@@ -531,4 +532,57 @@ line two"
         Some("some_mod".to_string())
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn optional_set_only_uses_entry_for_current_os() {
+    let dirs = TestDirs::new();
+    let current_os = crate::os::get_os_name();
+    let other_os = if current_os == "windows" {
+        "osx"
+    } else {
+        "windows"
+    };
+    let current = ModEntry {
+        os: vec![current_os],
+        ..mod_entry("voxy", "voxy-current.jar", "aaa")
+    };
+    let other = ModEntry {
+        os: vec![other_os.to_string()],
+        ..mod_entry("voxy", "voxy-other.jar", "bbb")
+    };
+    let settings = ModSyncSettings {
+        optional_sets: vec![OptionalModSet {
+            id: "voxy".to_string(),
+            display_name: LocalizedString::Plain("Voxy".to_string()),
+            enabled_by_default: true,
+            mod_ids: vec!["voxy".to_string()],
+        }],
+        ..default_settings(ModSyncMode::Mirror)
+    };
+
+    let result = plan(
+        &[current, other.clone()],
+        &settings,
+        &InstallParams {
+            previous_mod_entries: vec![other],
+            ..dirs.install_params(InstallCause::Update)
+        },
+    );
+
+    let check_paths = result
+        .tasks
+        .check_tasks
+        .iter()
+        .map(|task| task.path.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        check_paths,
+        vec![dirs.optional_mods_dir.join("voxy-current.jar")]
+    );
+    assert_eq!(result.tasks.enable_optional_mod_tasks.len(), 1);
+    assert_eq!(
+        result.tasks.enable_optional_mod_tasks[0].target,
+        dirs.mods_dir.join("voxy-current.jar")
+    );
 }
