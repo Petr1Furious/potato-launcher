@@ -1,6 +1,6 @@
 # Servers
 
-A modded server is another target of the pack repo, like Fjord. potato keeps
+A modded server is another target of the pack repo, like Prism. potato keeps
 only the shared parts in sync: mods with `side` `server` or `both`, and the
 managed paths from `[[paths]]`. Everything else stays the server's own and
 never enters the repo: `server.properties`, server-only mods and their
@@ -17,12 +17,13 @@ git clone <pack repo> ~/packs/minigames
 cd ~/packs/minigames
 ```
 
-Point it at the server folder in `.potato/local.toml` (not committed):
+Add the server folder as a target. The name is up to you:
 
-```toml
-[servers]
-main = "/srv/minecraft/minigames"
+```bash
+potato target add main /srv/minecraft/minigames
 ```
+
+Targets are stored in `.potato/local.toml`, which isn't committed.
 
 Install the loader the way your server runtime does it (for example, the
 `itzg/minecraft-server` image with `TYPE=NEOFORGE`). potato doesn't install
@@ -74,7 +75,7 @@ Drop the jar and its config into the server folder. potato never touches
 them. To track one in the repo instead:
 
 ```bash
-potato add <file or URL> --side server
+potato mod add <file or URL> --side server
 ```
 
 ## A shared file the server keeps its own version of
@@ -91,5 +92,5 @@ the mod writes its defaults on first start, and you edit it on the server.
 
 ## Several servers
 
-Each server gets its own name in `.potato/local.toml` and its own
-`[servers.<name>]` section.
+Add each server with its own name (`potato target add <name> <folder>`). Its
+`exclude` list goes in its own `[servers.<name>]` section of `potato.toml`.

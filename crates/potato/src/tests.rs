@@ -51,8 +51,8 @@ impl Setup {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let repo = root.join("repo");
-        let fjord = root.join("fjord");
-        let game = fjord.join("minecraft");
+        let prism = root.join("prism");
+        let game = prism.join("minecraft");
         let server = root.join("server");
         let storage = root.join("site/data");
         std::fs::create_dir_all(&storage).unwrap();
@@ -92,8 +92,8 @@ exclude = ["config/excluded.toml"]
         write(
             &repo.join(".potato/local.toml"),
             &format!(
-                "fjord = {}\n[servers]\nmain = {}\n",
-                toml_edit::value(fjord.to_string_lossy().as_ref()),
+                "prism = {}\n[servers]\nmain = {}\n",
+                toml_edit::value(prism.to_string_lossy().as_ref()),
                 toml_edit::value(server.to_string_lossy().as_ref())
             ),
         );
@@ -104,7 +104,7 @@ exclude = ["config/excluded.toml"]
         git(&repo, &["commit", "-qm", "init"]);
 
         write(
-            &fjord.join("mmc-pack.json"),
+            &prism.join("mmc-pack.json"),
             r#"{"components":[{"uid":"net.minecraft","version":"1.21.4"},{"uid":"net.fabricmc.fabric-loader","version":"0.16.9"}]}"#,
         );
         write(&game.join("config/a.toml"), "a = 1\n");
@@ -122,8 +122,8 @@ exclude = ["config/excluded.toml"]
         }
     }
 
-    /// Puts a jar in Fjord with an index file, and in the download cache.
-    async fn fjord_mod(&self, name: &str, filename: &str, content: &[u8], index: Option<&str>) {
+    /// Puts a jar in Prism with an index file, and in the download cache.
+    async fn prism_mod(&self, name: &str, filename: &str, content: &[u8], index: Option<&str>) {
         let path = self.game.join("mods").join(filename);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, content).unwrap();
@@ -181,13 +181,13 @@ url = "https://example.com/extra.jar"
 #[tokio::test]
 async fn pull_push_and_status() {
     let mut s = Setup::new();
-    s.fjord_mod("sodium", "sodium.jar", b"sodium", Some(MODRINTH_INDEX))
+    s.prism_mod("sodium", "sodium.jar", b"sodium", Some(MODRINTH_INDEX))
         .await;
-    s.fjord_mod("jei", "jei.jar.disabled", b"jei", Some(CURSEFORGE_INDEX))
+    s.prism_mod("jei", "jei.jar.disabled", b"jei", Some(CURSEFORGE_INDEX))
         .await;
 
-    // First pull takes Fjord as it is, uploads the CurseForge jar and reads versions.
-    sync::pull(&mut s.ctx, "fjord", &[]).await.unwrap();
+    // First pull takes Prism as it is, uploads the CurseForge jar and reads versions.
+    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     s.commit("pull");
     assert_eq!(read(&s.repo.join("config/a.toml")), "a = 1\n");
     assert!(!s.repo.join("options.txt").exists());
@@ -216,12 +216,12 @@ async fn pull_push_and_status() {
     assert_eq!(config.minecraft, "1.21.4");
     assert_eq!(config.loader_version.as_deref(), Some("0.16.9"));
 
-    // Fjord's own index files stay untouched; nothing differs by jar.
+    // Prism's own index files stay untouched; nothing differs by jar.
     assert_eq!(
         read(&s.game.join("mods/.index/sodium.pw.toml")),
         MODRINTH_INDEX
     );
-    sync::pull(&mut s.ctx, "fjord", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     assert!(s.ctx.git.is_clean().unwrap());
 
     // A side override in the repo survives pulls while the jar stays the same.
@@ -235,7 +235,7 @@ async fn pull_push_and_status() {
     write(&s.repo.join("config/a.toml"), "a = 2\n");
     s.commit("repo edits");
     write(&s.game.join("kubejs/s.js"), "two\n");
-    sync::pull(&mut s.ctx, "fjord", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     s.commit("merge");
     assert_eq!(read(&s.repo.join("kubejs/s.js")), "two\n");
     assert_eq!(read(&s.repo.join("config/a.toml")), "a = 2\n");
@@ -244,8 +244,8 @@ async fn pull_push_and_status() {
         crate::index::Side::Client
     );
 
-    // Pushing writes the repo's config, keeps Fjord's disabled state.
-    sync::push(&mut s.ctx, "fjord", false).await.unwrap();
+    // Pushing writes the repo's config, keeps Prism's disabled state.
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
     assert_eq!(read(&s.game.join("config/a.toml")), "a = 2\n");
     assert!(s.game.join("mods/jei.jar.disabled").exists());
     assert!(!s.game.join("mods/jei.jar").exists());
@@ -254,12 +254,12 @@ async fn pull_push_and_status() {
     write(&s.repo.join("config/a.toml"), "a = 3\n");
     s.commit("repo a=3");
     write(&s.game.join("config/a.toml"), "a = 4\n");
-    sync::pull(&mut s.ctx, "fjord", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     assert!(git(&s.repo, &["diff", "--name-only", "--diff-filter=U"]).contains("config/a.toml"));
     write(&s.repo.join("config/a.toml"), "a = 4\n");
     s.commit("resolve");
 
-    // Removing a mod in the repo removes its jar and index file from Fjord.
+    // Removing a mod in the repo removes its jar and index file from Prism.
     std::fs::remove_file(s.repo.join("mods/.index/jei.pw.toml")).unwrap();
     // A new mod in an off-by-default optional set arrives disabled.
     let extra_sha1 = sha1(b"extra");
@@ -271,15 +271,15 @@ async fn pull_push_and_status() {
     std::fs::write(&extra_jar, b"extra").unwrap();
     s.ctx.files.insert(&extra_jar, &extra_sha1).await.unwrap();
     s.commit("remove jei, add extra");
-    sync::push(&mut s.ctx, "fjord", false).await.unwrap();
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
     assert!(!s.game.join("mods/jei.jar.disabled").exists());
     assert!(!s.game.join("mods/.index/jei.pw.toml").exists());
     assert!(s.game.join("mods/extra.jar.disabled").exists());
     assert!(s.game.join("mods/.index/extra.pw.toml").exists());
 
-    // Unsynced Fjord changes block push.
+    // Unsynced Prism changes block push.
     write(&s.game.join("config/new.toml"), "n = 1\n");
-    let err = sync::push(&mut s.ctx, "fjord", false).await.unwrap_err();
+    let err = sync::push(&mut s.ctx, "prism", false).await.unwrap_err();
     assert!(err.to_string().contains("pull"), "{err}");
     sync::status(&mut s.ctx).await.unwrap();
 }
@@ -300,7 +300,7 @@ async fn os_variants_are_left_alone() {
         ),
     );
     s.commit("other os voxy");
-    s.fjord_mod(
+    s.prism_mod(
         "voxy",
         "voxy.jar",
         b"mine",
@@ -311,7 +311,7 @@ async fn os_variants_are_left_alone() {
         ),
     )
     .await;
-    sync::pull(&mut s.ctx, "fjord", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     s.commit("pull");
     assert_eq!(s.repo_index("voxy").os().unwrap(), vec![other]);
     let mine = s.repo_index(&format!("voxy-{}", crate::index::current_os()));
@@ -321,11 +321,11 @@ async fn os_variants_are_left_alone() {
 #[tokio::test]
 async fn server_sync() {
     let mut s = Setup::new();
-    s.fjord_mod("sodium", "sodium.jar", b"sodium", Some(MODRINTH_INDEX))
+    s.prism_mod("sodium", "sodium.jar", b"sodium", Some(MODRINTH_INDEX))
         .await;
-    s.fjord_mod("jei", "jei.jar", b"jei", Some(CURSEFORGE_INDEX))
+    s.prism_mod("jei", "jei.jar", b"jei", Some(CURSEFORGE_INDEX))
         .await;
-    sync::pull(&mut s.ctx, "fjord", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     s.commit("pull");
 
     let err = sync::pull(&mut s.ctx, "main", &[]).await.unwrap_err();

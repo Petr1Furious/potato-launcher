@@ -220,7 +220,7 @@ impl IndexFile {
 mod tests {
     use super::*;
 
-    const FJORD_CF: &str = r#"filename = "jei.jar"
+    const PRISM_CF: &str = r#"filename = "jei.jar"
 name = "JEI"
 side = "both"
 
@@ -234,7 +234,7 @@ file-id = 123
 project-id = 456
 "#;
 
-    const FJORD_MR: &str = r#"filename = "sodium.jar"
+    const PRISM_MR: &str = r#"filename = "sodium.jar"
 name = "Sodium"
 side = "client"
 
@@ -266,7 +266,7 @@ version = "abc"
 
     #[test]
     fn converts_curseforge_entry() {
-        let mut file = IndexFile::parse(FJORD_CF).unwrap();
+        let mut file = IndexFile::parse(PRISM_CF).unwrap();
         assert_eq!(file.sha1(), None);
         assert_eq!(file.url(), None);
         file.convert("0123456789", "https://x/objects/01/0123456789");
@@ -278,7 +278,7 @@ version = "abc"
 
     #[test]
     fn converts_modrinth_entry_keeping_url() {
-        let mut file = IndexFile::parse(FJORD_MR).unwrap();
+        let mut file = IndexFile::parse(PRISM_MR).unwrap();
         file.convert("ffff", "https://fallback");
         assert_eq!(
             file.url(),
@@ -296,7 +296,7 @@ version = "abc"
         assert_eq!(repo.os().unwrap(), vec!["macos"]);
         assert!(repo.applies_to_os("macos").unwrap());
         assert!(!repo.applies_to_os("linux").unwrap());
-        let mut fresh = IndexFile::parse(FJORD_MR).unwrap();
+        let mut fresh = IndexFile::parse(PRISM_MR).unwrap();
         fresh.carry_overrides(&repo);
         assert_eq!(fresh.side().unwrap(), Side::Client);
         assert_eq!(fresh.os().unwrap(), vec!["macos"]);

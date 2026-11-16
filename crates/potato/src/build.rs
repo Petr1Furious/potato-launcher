@@ -88,7 +88,7 @@ fn collect_entries(tree: &crate::git::Files) -> anyhow::Result<Vec<Entry>> {
         }
         let sha1 = index
             .sha1()
-            .with_context(|| format!("{path} has no sha1, pull from fjord again"))?
+            .with_context(|| format!("{path} has no sha1, pull from prism again"))?
             .to_string();
         let url = index
             .url()

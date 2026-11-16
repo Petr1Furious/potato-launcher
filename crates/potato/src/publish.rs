@@ -134,7 +134,7 @@ pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
             .filter(|key| !existing.contains(*key) && !output.uploads.contains_key(*key))
             .collect::<Vec<_>>();
         if let Some(key) = missing.first() {
-            bail!("{key} is missing from storage, run `potato pull fjord` and publish again");
+            bail!("{key} is missing from storage, run `potato pull prism` and publish again");
         }
 
         let time = now();

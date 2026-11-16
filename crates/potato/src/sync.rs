@@ -52,14 +52,14 @@ pub fn diff(old: &Files, new: &Files) -> Vec<Change> {
     changes
 }
 
-/// Files of `tree` that `target` holds: managed files plus, for Fjord, the
+/// Files of `tree` that `target` holds: managed files plus, for Prism, the
 /// index files that apply to it. Servers hold jars but no index files.
 pub fn domain(tree: &Files, config: &Config, target: &Target) -> anyhow::Result<Files> {
     let os = current_os();
     let mut files = Files::new();
     for (path, content) in tree {
         if index_dir_of(path).is_some() {
-            if !target.is_fjord() {
+            if !target.is_prism() {
                 continue;
             }
             let entry = IndexFile::parse_bytes(content).with_context(|| path.clone())?;
@@ -81,7 +81,7 @@ fn jar_entries(tree: &Files, target: &Target) -> anyhow::Result<Vec<(String, Ind
         let Some(dir) = index_dir_of(path) else {
             continue;
         };
-        if !target.is_fjord() && dir != "mods" {
+        if !target.is_prism() && dir != "mods" {
             continue;
         }
         let entry = IndexFile::parse_bytes(content).with_context(|| path.clone())?;
@@ -140,7 +140,7 @@ fn file_stem(filename: &str) -> &str {
     name.rsplit_once('.').map_or(name, |(stem, _)| stem)
 }
 
-fn read_fjord_indexes(
+fn read_prism_indexes(
     game_dir: &Path,
     dir: &str,
 ) -> anyhow::Result<HashMap<String, (String, IndexFile)>> {
@@ -179,8 +179,8 @@ pub async fn read_target(
         files: Files::new(),
         uploads: vec![],
     };
-    if target.is_fjord() {
-        read_fjord(
+    if target.is_prism() {
+        read_prism(
             ctx,
             config,
             target,
@@ -217,7 +217,7 @@ pub async fn read_target(
     Ok(snapshot)
 }
 
-async fn read_fjord(
+async fn read_prism(
     ctx: &mut Ctx,
     config: &Config,
     target: &Target,
@@ -256,7 +256,7 @@ async fn read_fjord(
     }
 
     for dir in INDEX_DIRS {
-        let fjord_indexes = read_fjord_indexes(game_dir, dir)?;
+        let prism_indexes = read_prism_indexes(game_dir, dir)?;
         let mut base_by_filename = HashMap::new();
         for (path, content) in base_domain {
             if index_dir_of(path) == Some(dir) {
@@ -295,7 +295,7 @@ async fn read_fjord(
                 let (_, mut entry) = make_entry(
                     ctx,
                     config,
-                    fjord_indexes.get(&filename),
+                    prism_indexes.get(&filename),
                     &filename,
                     &sha1,
                     &path,
@@ -310,7 +310,7 @@ async fn read_fjord(
             let (name, entry) = make_entry(
                 ctx,
                 config,
-                fjord_indexes.get(&filename),
+                prism_indexes.get(&filename),
                 &filename,
                 &sha1,
                 &path,
@@ -332,7 +332,7 @@ async fn read_fjord(
 async fn make_entry(
     ctx: &Ctx,
     config: &Config,
-    fjord_index: Option<&(String, IndexFile)>,
+    prism_index: Option<&(String, IndexFile)>,
     filename: &str,
     sha1: &str,
     path: &Path,
@@ -340,7 +340,7 @@ async fn make_entry(
     snapshot: &mut Snapshot,
 ) -> anyhow::Result<(String, IndexFile)> {
     let object_url = config.publish.object_url(sha1).to_string();
-    if let Some((name, index)) = fjord_index {
+    if let Some((name, index)) = prism_index {
         let mut entry = index.clone();
         if entry.url().is_none() {
             snapshot
@@ -405,7 +405,7 @@ pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String]) -> anyhow::Result<(
     let config = ctx.config()?;
     let target = Target::resolve(name, &config, &ctx.local()?)?;
     let base = effective_base(&ctx.git, &target)?;
-    if base.is_none() && !target.is_fjord() {
+    if base.is_none() && !target.is_prism() {
         bail!("{name} hasn't been synced yet, run `potato push {name} --force` first");
     }
     // Without a base, compare against HEAD so unchanged files merge cleanly.
@@ -559,7 +559,7 @@ async fn apply_jars(
     for (path, entry) in &wanted {
         let sha1 = entry
             .sha1()
-            .with_context(|| format!("{path} has no sha1, pull from fjord again"))?;
+            .with_context(|| format!("{path} has no sha1, pull from prism again"))?;
         let url = entry.url().with_context(|| format!("{path} has no url"))?;
         downloads.push((
             url.parse().with_context(|| format!("{path}: bad url"))?,
@@ -576,10 +576,10 @@ async fn apply_jars(
         .flat_map(|set| set.mods.iter().cloned())
         .collect::<HashSet<_>>();
 
-    let mut fjord_indexes = BTreeMap::new();
-    if target.is_fjord() {
+    let mut prism_indexes = BTreeMap::new();
+    if target.is_prism() {
         for dir in INDEX_DIRS {
-            fjord_indexes.insert(dir, read_fjord_indexes(&target.game_dir, dir)?);
+            prism_indexes.insert(dir, read_prism_indexes(&target.game_dir, dir)?);
         }
     }
 
@@ -608,7 +608,7 @@ async fn apply_jars(
             let new_disabled = match &existing {
                 Some(existing) => existing == &disabled,
                 None => {
-                    target.is_fjord() && dir == "mods" && off_by_default.contains(index_name(path))
+                    target.is_prism() && dir == "mods" && off_by_default.contains(index_name(path))
                 }
             };
             let (dest, other) = if new_disabled {
@@ -620,15 +620,15 @@ async fn apply_jars(
             std::fs::copy(&cached[sha1], dest)?;
             remove_if_exists(other)?;
         }
-        if target.is_fjord() {
+        if target.is_prism() {
             let ours = target.game_dir.join(path);
-            if let Some((fjord_name, _)) = fjord_indexes[dir].get(filename) {
-                let fjord_path = target.game_dir.join(index_path(dir, fjord_name));
+            if let Some((prism_name, _)) = prism_indexes[dir].get(filename) {
+                let prism_path = target.game_dir.join(index_path(dir, prism_name));
                 if up_to_date {
                     continue;
                 }
-                if fjord_path != ours {
-                    remove_if_exists(&fjord_path)?;
+                if prism_path != ours {
+                    remove_if_exists(&prism_path)?;
                 }
             }
             std::fs::create_dir_all(ours.parent().expect("has parent"))?;
@@ -651,9 +651,9 @@ async fn apply_jars(
                 .join(dir)
                 .join(format!("{filename}{DISABLED_SUFFIX}")),
         )?;
-        if target.is_fjord() {
-            if let Some((fjord_name, _)) = fjord_indexes[dir].get(filename) {
-                remove_if_exists(&target.game_dir.join(index_path(dir, fjord_name)))?;
+        if target.is_prism() {
+            if let Some((prism_name, _)) = prism_indexes[dir].get(filename) {
+                remove_if_exists(&target.game_dir.join(index_path(dir, prism_name)))?;
             }
             remove_if_exists(&target.game_dir.join(path))?;
         }
@@ -666,7 +666,7 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
     let local = ctx.local()?;
     let names = Target::names(&local);
     if names.is_empty() {
-        println!("no targets in .potato/local.toml");
+        println!("no targets; add one with `potato target add <name> <folder>`");
         return Ok(());
     }
     let head = ctx.git.head()?;

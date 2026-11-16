@@ -167,7 +167,7 @@ pub fn under(path: &str, root: &str) -> bool {
 
 #[derive(Deserialize, Default)]
 pub struct LocalConfig {
-    pub fjord: Option<PathBuf>,
+    pub prism: Option<PathBuf>,
     #[serde(default)]
     pub servers: BTreeMap<String, PathBuf>,
 }
@@ -181,12 +181,45 @@ impl LocalConfig {
         let content = std::fs::read_to_string(&path)?;
         let mut config: LocalConfig =
             toml::from_str(&content).context("invalid .potato/local.toml")?;
-        config.fjord = config.fjord.map(|path| expand_home(&path));
+        config.prism = config.prism.map(|path| expand_home(&path));
         for path in config.servers.values_mut() {
             *path = expand_home(path);
         }
         Ok(config)
     }
+}
+
+/// Sets or, with `None`, removes a target in .potato/local.toml, keeping the rest.
+pub fn set_local_target(repo: &Path, name: &str, path: Option<&Path>) -> anyhow::Result<()> {
+    let file = repo.join(LOCAL_FILE);
+    let content = std::fs::read_to_string(&file).unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = content.parse().context("invalid .potato/local.toml")?;
+    let value = path.map(|path| toml_edit::value(path.to_string_lossy().as_ref()));
+    if name == crate::target::PRISM {
+        match value {
+            Some(value) => doc["prism"] = value,
+            None => {
+                doc.remove("prism");
+            }
+        }
+    } else {
+        let servers = doc
+            .entry("servers")
+            .or_insert(toml_edit::table())
+            .as_table_mut()
+            .context("[servers] in .potato/local.toml must be a table")?;
+        match value {
+            Some(value) => {
+                servers.insert(name, value);
+            }
+            None => {
+                servers.remove(name);
+            }
+        }
+    }
+    std::fs::create_dir_all(repo.join(LOCAL_DIR))?;
+    std::fs::write(&file, doc.to_string())?;
+    Ok(())
 }
 
 fn expand_home(path: &Path) -> PathBuf {

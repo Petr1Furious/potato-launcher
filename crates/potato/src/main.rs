@@ -46,11 +46,11 @@ enum Command {
     Init {
         #[arg(long)]
         id: Option<String>,
-        /// Fjord instance folder to use as the source.
+        /// Prism instance folder to use as the source.
         #[arg(long)]
-        fjord: Option<PathBuf>,
+        prism: Option<PathBuf>,
     },
-    /// Bring changes from a target (fjord or a server) into the repo.
+    /// Bring changes from a target (prism or a server) into the repo.
     Pull {
         target: String,
         /// Also take a new file or folder from a server.
@@ -66,25 +66,16 @@ enum Command {
     },
     /// Show what pull and push would change for each target.
     Status,
-    /// Add a mod or pack from a file or URL.
-    Add {
-        source: String,
-        /// Only for these OSes (windows, macos, linux).
-        #[arg(long)]
-        os: Vec<String>,
-        /// client, server or both.
-        #[arg(long)]
-        side: Option<String>,
-        #[arg(long, default_value = "mods")]
-        dir: String,
-        /// Index file name, without .pw.toml.
-        #[arg(long)]
-        name: Option<String>,
+    /// Manage the Prism instance and servers the repo syncs with.
+    Target {
+        #[command(subcommand)]
+        action: TargetAction,
     },
-    /// List mods and packs in the repo.
-    Mods,
-    /// Print the mod id of a jar or `modrinth:<slug>`.
-    ModId { source: String },
+    /// Add and inspect mods and packs.
+    Mod {
+        #[command(subcommand)]
+        action: ModAction,
+    },
     /// Build the last commit without publishing.
     Build,
     /// Build the last commit and publish it.
@@ -119,14 +110,54 @@ enum Command {
 }
 
 #[derive(Subcommand)]
+enum TargetAction {
+    /// Add or change a target. The name `prism` sets the Prism instance, any other name adds a server.
+    Add { name: String, path: PathBuf },
+    /// List targets.
+    List,
+    /// Forget a target. Its folder is left as it is.
+    Remove { name: String },
+}
+
+#[derive(Subcommand)]
+enum ModAction {
+    /// Add a mod or pack from a file or URL.
+    Add {
+        source: String,
+        /// Only for these OSes (windows, macos, linux).
+        #[arg(long)]
+        os: Vec<String>,
+        /// client, server or both.
+        #[arg(long)]
+        side: Option<String>,
+        #[arg(long, default_value = "mods")]
+        dir: String,
+        /// Index file name, without .pw.toml.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// List mods and packs in the repo.
+    List,
+    /// Print the mod id of a jar or `modrinth:<slug>`.
+    Id { source: String },
+}
+
+#[derive(Subcommand)]
 enum CacheAction {
     /// Delete the cache.
     Clean,
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    if let Command::Init { id, fjord } = cli.command {
-        return commands::init(&cli.repo, id, fjord);
+    if let Command::Init { id, prism } = cli.command {
+        return commands::init(&cli.repo, id, prism);
+    }
+    if let Command::Target { action } = &cli.command {
+        return match action {
+            TargetAction::Add { name, path } => commands::target_add(&cli.repo, name, path),
+            TargetAction::List => commands::target_list(&cli.repo),
+            TargetAction::Remove { name } => commands::target_remove(&cli.repo, name),
+        };
     }
     if let Command::PublishLauncher {
         target,
@@ -140,16 +171,21 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     let mut ctx = ctx::Ctx::new(&cli.repo)?;
     utils::logging::setup_logger(&ctx.cache_dir.join("potato.log"), true, LevelFilter::Warn)?;
     match cli.command {
-        Command::Init { .. } | Command::PublishLauncher { .. } => unreachable!(),
+        Command::Init { .. } | Command::Target { .. } | Command::PublishLauncher { .. } => {
+            unreachable!()
+        }
         Command::Pull { target, add } => sync::pull(&mut ctx, &target, &add).await,
         Command::Push { target, force } => sync::push(&mut ctx, &target, force).await,
         Command::Status => sync::status(&mut ctx).await,
-        Command::Add {
-            source,
-            os,
-            side,
-            dir,
-            name,
+        Command::Mod {
+            action:
+                ModAction::Add {
+                    source,
+                    os,
+                    side,
+                    dir,
+                    name,
+                },
         } => {
             commands::add(
                 &mut ctx,
@@ -163,8 +199,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
-        Command::Mods => commands::mods(&mut ctx).await,
-        Command::ModId { source } => commands::mod_id(&mut ctx, &source).await,
+        Command::Mod {
+            action: ModAction::List,
+        } => commands::mods(&mut ctx).await,
+        Command::Mod {
+            action: ModAction::Id { source },
+        } => commands::mod_id(&mut ctx, &source).await,
         Command::Build => {
             let head = ctx.git.head()?;
             let output = Box::pin(build::build(&mut ctx, &head)).await?;

@@ -5,9 +5,12 @@ also be plain vanilla.
 
 Each instance is a git repo, a **pack repo**. It holds only the files clients
 and servers share: mod index files, configs and scripts. Jars never go into
-git. You set the instance up in a regular launcher (Fjord, or any Prism-based
-launcher), and the `potato` CLI copies changes between that instance and the
-repo, builds the instance and publishes it to your [host](/setting-up/hosting).
+git. You set the instance up in [Prism Launcher](https://prismlauncher.org), and the
+`potato` CLI copies changes between that instance and the repo, builds the
+instance and publishes it to your [host](/setting-up/hosting).
+
+Forks of Prism, such as [Fjord Launcher](https://github.com/unmojang/FjordLauncher),
+work too: use the fork's instance folder as the `prism` target.
 
 ## Installing potato
 
@@ -23,17 +26,17 @@ Linux and macOS:
 
 ```bash
 mkdir minigames && cd minigames
-potato init --id minigames --fjord ~/.local/share/FjordLauncher/instances/minigames
+potato init --id minigames --prism ~/.local/share/PrismLauncher/instances/minigames
 # edit potato.toml: [publish] and [[paths]]
-potato pull fjord
+potato pull prism
 git diff --cached
 git commit -m "first version"
 potato publish
 ```
 
 `init` creates `potato.toml`, a `.gitignore` with `.potato/`, and
-`.potato/local.toml` with the Fjord path. It reads the Minecraft and loader
-versions from Fjord's `mmc-pack.json`.
+`.potato/local.toml` with the Prism path. It reads the Minecraft and loader
+versions from Prism's `mmc-pack.json`.
 
 ## Repo layout
 
@@ -55,9 +58,9 @@ kubejs/...
 ```toml
 id = "minigames"
 display_name = { en = "Minigames", ru = "Миниигры" }
-minecraft = "1.21.1"          # updated by `potato pull fjord`
+minecraft = "1.21.1"          # updated by `potato pull prism`
 loader = "neoforge"           # vanilla | fabric | forge | neoforge
-loader_version = "21.1.77"    # updated by `potato pull fjord`
+loader_version = "21.1.77"    # updated by `potato pull prism`
 default_xmx = "4G"
 auth_backend = { type = "ely_by" }
 order = 10                    # position in the launcher's list; unset goes last
@@ -99,8 +102,8 @@ exclude = ["config/somemod.toml"]
 - **id** (required): must start with a letter, then `a-z`, `0-9`, `_`, `-`
   (max 64). Used in URLs and on players' disks, so don't change it.
 - **display_name**: a string or a language map. Falls back to `id`.
-- **minecraft** (required), **loader**, **loader_version**: set from Fjord on
-  every `pull fjord`. Without `loader_version`, the latest (Fabric, NeoForge)
+- **minecraft** (required), **loader**, **loader_version**: set from Prism on
+  every `pull prism`. Without `loader_version`, the latest (Fabric, NeoForge)
   or recommended (Forge) version is used.
 - **default_xmx**: default `-Xmx`, e.g. `4G`.
 - **auth_backend**: auth provider for this instance. Omit to allow any.
@@ -125,11 +128,11 @@ exclude = ["config/somemod.toml"]
   removes everything not in the pack.
 - **required**: index names of mods players can't remove.
 - **blocked**: mods players can't add, as mod ids or `modrinth:<slug>`. Use
-  `potato mod-id <jar | modrinth:slug>` to find a mod id.
+  `potato mod id <jar | modrinth:slug>` to find a mod id.
 - **optional_sets**: groups of mods players can turn on or off in the
-  launcher. `mods` lists index names.
+  launcher. `potato mod list` lists index names.
 
-Index names are the index file names without `.pw.toml`. `potato mods` lists
+Index names are the index file names without `.pw.toml`. `potato mod list` lists
 them with their mod ids.
 
 ### `[[paths]]`
@@ -176,18 +179,18 @@ Deeper paths win over shallower ones, so you can mark `config` as
 ## Mods and packs
 
 Mods live in `mods/.index/` as packwiz-style `.pw.toml` files, one per mod.
-Fjord writes these when you install a mod through its browser.
+Prism writes these when you install a mod through its browser.
 Resource packs, shader packs and datapacks work the same way in
 `resourcepacks/.index/`, `shaderpacks/.index/` and `datapacks/.index/`. Their
 folder needs a `[[paths]]` entry so clients know how to apply them.
 
-Every index file in the repo has a download URL and a sha1. `pull fjord`
-converts Fjord's files when needed:
+Every index file in the repo has a download URL and a sha1. `pull prism`
+converts Prism's files when needed:
 
 - a mod already in the repo with the same jar keeps the repo's file, so your
   edits to it (like `side`) are kept
 - otherwise the file is copied with its hash replaced by sha1
-- CurseForge mods (Fjord writes them without a URL) and jars without an index
+- CurseForge mods (Prism writes them without a URL) and jars without an index
   file are uploaded to your host, and their index file points there. Jars
   found on Modrinth by hash point at Modrinth instead.
 
@@ -200,49 +203,58 @@ Extra fields potato reads:
 ### Platform-specific jars
 
 Some mods ship a different jar per OS with the same file name and mod id. Use
-one index file per variant, each with its own `os`. Fjord only has the jar for
+one index file per variant, each with its own `os`. Prism only has the jar for
 your OS, so add the others by hand:
 
 ```bash
-potato add voxy-linux.jar --os linux
+potato mod add voxy-linux.jar --os linux
 ```
 
-`pull fjord` and `push fjord` only touch entries for the OS they run on, so a
+`pull prism` and `push prism` only touch entries for the OS they run on, so a
 collaborator on another OS doesn't replace your variant with theirs.
 
 ### Disabled mods
 
-Disabling a mod in Fjord (`.jar.disabled`) is only your local play state; the
+Disabling a mod in Prism (`.jar.disabled`) is only your local play state; the
 mod stays in the pack. This lets you test any combination of optional mods in
-the source instance. To remove a mod, delete it in Fjord.
+the source instance. To remove a mod, delete it in Prism.
 
 Whether a mod is optional, and on by default, is set only by
 `[[client.optional_sets]]`.
 
-### Adding a mod without Fjord
+### Adding a mod without Prism
 
 ```bash
-potato add <file or URL> [--side server] [--os linux] [--dir resourcepacks] [--name NAME]
+potato mod add <file or URL> [--side server] [--os linux] [--dir resourcepacks] [--name NAME]
 ```
 
 The jar is looked up on Modrinth by hash. If it isn't there, a URL source
 keeps its URL and a local file is uploaded to your host.
 
-## Syncing with Fjord
+## Syncing with Prism
 
 ```bash
-potato pull fjord    # Fjord -> repo
-potato push fjord    # repo -> Fjord
+potato pull prism    # Prism -> repo
+potato push prism    # repo -> Prism
 potato status        # what pull and push would change, for every target
 ```
 
-`pull` needs a clean repo. It merges Fjord's state into the repo without
-committing. Changes made only in Fjord apply, changes made only in the repo
+`init --prism` sets the Prism instance. To change it later, or to see and
+remove targets:
+
+```bash
+potato target add prism <instance folder>
+potato target list
+potato target remove <name>
+```
+
+`pull` needs a clean repo. It merges Prism's state into the repo without
+committing. Changes made only in Prism apply, changes made only in the repo
 stay, and changes made in both show up as normal git conflicts. Review with
 `git diff --cached` and commit.
 
-`push` writes the last commit into Fjord. It refuses if Fjord changed since
-the last sync, if the last pull isn't committed yet, or if this Fjord instance
+`push` writes the last commit into Prism. It refuses if Prism changed since
+the last sync, if the last pull isn't committed yet, or if this Prism instance
 was never synced (the first push on a new machine). `--force` overwrites
 anyway. It keeps your enabled/disabled choice for each mod, and new mods from
 an off-by-default optional set arrive disabled.
@@ -280,15 +292,15 @@ downloading them (`--grace-days` to change it).
 
 Everyone works on the same repo through git:
 
-The first time, clone the repo, add your Fjord instance to
-`.potato/local.toml` (`fjord = "<instance folder>"`) and run
-`potato push fjord --force`. After that:
+The first time, clone the repo, add your Prism instance with
+`potato target add prism <instance folder>`, and run
+`potato push prism --force`. After that:
 
 ```bash
 git pull
-potato push fjord   # get the latest pack into your Fjord instance
-# play, change things in Fjord
-potato pull fjord
+potato push prism   # get the latest pack into your Prism instance
+# play, change things in Prism
+potato pull prism
 git commit && git push
 potato publish
 ```

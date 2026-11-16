@@ -8,17 +8,17 @@ use crate::{
     index::Side,
 };
 
-pub const FJORD: &str = "fjord";
+pub const PRISM: &str = "prism";
 
 pub enum TargetKind {
-    Fjord,
+    Prism,
     Server { exclude: Vec<String> },
 }
 
 pub struct Target {
     pub name: String,
     pub kind: TargetKind,
-    /// Where `.potato/` lives: the Fjord instance folder or the server folder.
+    /// Where `.potato/` lives: the Prism instance folder or the server folder.
     pub root: PathBuf,
     /// The game folder.
     pub game_dir: PathBuf,
@@ -26,25 +26,22 @@ pub struct Target {
 
 impl Target {
     pub fn resolve(name: &str, config: &Config, local: &LocalConfig) -> anyhow::Result<Self> {
-        if name == FJORD {
-            let root = local
-                .fjord
-                .clone()
-                .context("set `fjord = \"<instance folder>\"` in .potato/local.toml")?;
-            let game_dir = ["minecraft", ".minecraft"]
-                .into_iter()
-                .map(|dir| root.join(dir))
-                .find(|dir| dir.is_dir())
-                .with_context(|| format!("no minecraft folder in {}", root.display()))?;
+        if name == PRISM {
+            let root = local.prism.clone().context(
+                "no prism target; add it with `potato target add prism <instance folder>`",
+            )?;
+            let game_dir = prism_game_dir(&root)?;
             return Ok(Self {
                 name: name.to_string(),
-                kind: TargetKind::Fjord,
+                kind: TargetKind::Prism,
                 root,
                 game_dir,
             });
         }
         let Some(root) = local.servers.get(name) else {
-            bail!("unknown target '{name}'; add it under [servers] in .potato/local.toml");
+            bail!(
+                "unknown target '{name}'; add it with `potato target add {name} <server folder>`"
+            );
         };
         if !root.is_dir() {
             bail!("{} doesn't exist", root.display());
@@ -64,19 +61,19 @@ impl Target {
 
     pub fn names(local: &LocalConfig) -> Vec<String> {
         let mut names = vec![];
-        if local.fjord.is_some() {
-            names.push(FJORD.to_string());
+        if local.prism.is_some() {
+            names.push(PRISM.to_string());
         }
         names.extend(local.servers.keys().cloned());
         names
     }
 
-    pub fn is_fjord(&self) -> bool {
-        matches!(self.kind, TargetKind::Fjord)
+    pub fn is_prism(&self) -> bool {
+        matches!(self.kind, TargetKind::Prism)
     }
 
     pub fn side(&self) -> Side {
-        if self.is_fjord() {
+        if self.is_prism() {
             Side::Client
         } else {
             Side::Server
@@ -85,7 +82,7 @@ impl Target {
 
     pub fn is_excluded(&self, path: &str) -> bool {
         match &self.kind {
-            TargetKind::Fjord => false,
+            TargetKind::Prism => false,
             TargetKind::Server { exclude } => exclude
                 .iter()
                 .any(|excluded| under(path, excluded.trim_end_matches('/'))),
@@ -93,7 +90,7 @@ impl Target {
     }
 
     fn base_file(&self) -> PathBuf {
-        self.root.join(".potato").join("synced-commit")
+        synced_file(&self.root)
     }
 
     pub fn recorded_base(&self) -> Option<String> {
@@ -115,7 +112,7 @@ impl Target {
     }
 
     pub fn mmc_pack(&self) -> anyhow::Result<Option<(String, LoaderName, Option<String>)>> {
-        if !self.is_fjord() {
+        if !self.is_prism() {
             return Ok(None);
         }
         let path = self.root.join("mmc-pack.json");
@@ -126,7 +123,7 @@ impl Target {
     }
 
     pub fn is_running(&self) -> bool {
-        if self.is_fjord() {
+        if self.is_prism() {
             return false;
         }
         let level = std::fs::read_to_string(self.root.join("server.properties"))
@@ -140,6 +137,31 @@ impl Target {
             .unwrap_or_else(|| "world".to_string());
         session_locked(&self.root.join(level).join("session.lock"))
     }
+}
+
+pub fn synced_file(root: &Path) -> PathBuf {
+    root.join(".potato").join("synced-commit")
+}
+
+fn prism_game_dir(root: &Path) -> anyhow::Result<PathBuf> {
+    ["minecraft", ".minecraft"]
+        .into_iter()
+        .map(|dir| root.join(dir))
+        .find(|dir| dir.is_dir())
+        .with_context(|| format!("no minecraft folder in {}", root.display()))
+}
+
+/// Checks a folder for `target add` and returns it as an absolute path.
+pub fn check_folder(name: &str, path: &Path) -> anyhow::Result<PathBuf> {
+    let path = path
+        .canonicalize()
+        .with_context(|| format!("{} doesn't exist", path.display()))?;
+    if name == PRISM {
+        prism_game_dir(&path)?;
+    } else if !path.is_dir() {
+        bail!("{} isn't a folder", path.display());
+    }
+    Ok(path)
 }
 
 #[derive(Deserialize)]

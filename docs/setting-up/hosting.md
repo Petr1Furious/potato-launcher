@@ -76,6 +76,6 @@ once can't break the instance list.
 ## Backups
 
 Most of the site can be rebuilt by publishing each instance repo again. The
-exception is jars uploaded by `potato pull fjord` or `potato add` (CurseForge
-and custom jars): they only exist in `data/objects/` and in the Fjord instance
+exception is jars uploaded by `potato pull prism` or `potato mod add` (CurseForge
+and custom jars): they only exist in `data/objects/` and in the Prism instance
 they came from. Back up `data/objects/` or keep those jars.

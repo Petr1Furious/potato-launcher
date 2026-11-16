@@ -7,7 +7,7 @@ Replaces the Go backend, the admin frontend, filebrowser, `instance-builder`,
 
 ## Goals
 
-- Edit where it's convenient: the client in Fjord, the server in its own folder.
+- Edit where it's convenient: the client in Prism, the server in its own folder.
   No hand-written JSON spec.
 - Git is the source of truth and the collaboration tool.
 - The storage host only serves static files. Everything complex (Forge
@@ -25,12 +25,12 @@ Replaces the Go backend, the admin frontend, filebrowser, `instance-builder`,
 
 Each instance is one git repo holding only what clients and servers share: mod
 and pack index files, configs and scripts. The repo is a separate folder, not
-the Fjord instance or the server folder. Potato copies files between the repo
+the Prism instance or the server folder. Potato copies files between the repo
 and those folders, which are called **targets**:
 
 | Target | What it is | `pull` (target → repo) | `push` (repo → target) |
 |---|---|---|---|
-| `fjord` | your Fjord instance, the source for the client | yes, including new files | yes, for collaborators |
+| `prism` | your Prism instance, the source for the client | yes, including new files | yes, for collaborators |
 | a server | a modded server's game folder | changes to files the repo already has | yes |
 
 Everything server-only (`server.properties`, server-only mods and their
@@ -55,7 +55,7 @@ kubejs/…
 ```toml
 id = "minigames"
 display_name = { en = "Minigames", ru = "Миниигры" }
-minecraft = "1.21.1"          # updated by `pull fjord` from mmc-pack.json
+minecraft = "1.21.1"          # updated by `pull prism` from mmc-pack.json
 loader = "neoforge"           # vanilla | fabric | forge | neoforge
 loader_version = "21.1.77"
 default_xmx = "4G"
@@ -95,8 +95,10 @@ without one.
 
 ### `.potato/local.toml` (not committed)
 
+Written by `potato target add`:
+
 ```toml
-fjord = "~/.local/share/FjordLauncher/instances/minigames"
+prism = "~/.local/share/PrismLauncher/instances/minigames"
 
 [servers]
 main = "/srv/minecraft/minigames"
@@ -104,7 +106,7 @@ main = "/srv/minecraft/minigames"
 
 ## Index files: packwiz `.pw.toml`
 
-Fjord writes `<dir>/.index/<name>.pw.toml` for every mod or pack installed
+Prism writes `<dir>/.index/<name>.pw.toml` for every mod or pack installed
 through its browser. We use that format as the lockfile: one file per mod, so
 git merges rarely conflict. We only read and write these files ourselves; the
 `packwiz` CLI isn't used, because its `index.toml` holds every file's hash and
@@ -117,18 +119,18 @@ Extra fields potato reads:
 - `os = ["windows", "macos", "linux"]` (missing means all). Only for mods.
 
 Every index file in the repo has a `[download] url` and a sha1 hash, so potato
-only ever checks sha1. Fjord's own files don't always look like that: it
+only ever checks sha1. Prism's own files don't always look like that: it
 writes sha512 for Modrinth mods, sha1 or md5 (older files: murmur2) for
 CurseForge mods, and no URL for CurseForge mods.
 
 Two index files are **equal when they describe the same jar** (same sha1 of
 the jar), however they're written:
 
-- `pull fjord` keeps the repo's file if it describes the same jar as Fjord's.
-  Otherwise it writes a converted copy: sha1 instead of Fjord's hash, and
-  `<base_url>/objects/<ab>/<sha1>` as the URL if Fjord's has none (the jar is
+- `pull prism` keeps the repo's file if it describes the same jar as Prism's.
+  Otherwise it writes a converted copy: sha1 instead of Prism's hash, and
+  `<base_url>/objects/<ab>/<sha1>` as the URL if Prism's has none (the jar is
   uploaded there). When the jar changed, the repo's `side` and `os` are kept.
-- `push fjord` writes an index file only if Fjord has none for that mod or its
+- `push prism` writes an index file only if Prism has none for that mod or its
   file describes a different jar.
 
 Jar hashes are cached by path, size and modification time.
@@ -136,15 +138,15 @@ Jar hashes are cached by path, size and modification time.
 ### OS variants
 
 Mods with one jar per OS (same filename and mod id) get one index file per
-variant, each with its own `os`. `pull fjord` and `push fjord` only touch
+variant, each with its own `os`. `pull prism` and `push prism` only touch
 entries for the OS they run on. Other variants are added with
-`potato add <jar|url> --os <os>`.
+`potato mod add <jar|url> --os <os>`.
 
 ### Disabled mods
 
-A `.jar.disabled` jar in Fjord is still part of the pack: disabling is only
+A `.jar.disabled` jar in Prism is still part of the pack: disabling is only
 local play state. Optional sets and their defaults come only from
-`potato.toml`. `push fjord` keeps each mod's local enabled/disabled state, and
+`potato.toml`. `push prism` keeps each mod's local enabled/disabled state, and
 new mods in an off-by-default set arrive disabled.
 
 ## Syncing with targets
@@ -168,7 +170,7 @@ Both directions need a clean repo tree.
 
 What gets read:
 
-- **`fjord`:** everything under the managed paths, including new and deleted
+- **`prism`:** everything under the managed paths, including new and deleted
   files, with index files compared by jar. It also reads `mmc-pack.json` into
   `potato.toml`, and uploads (under the storage lock) CurseForge jars without a
   URL and jars without an index file. Unindexed jars are looked up on Modrinth
@@ -186,7 +188,7 @@ if the last pull isn't committed, or, for servers, while the world's
 `session.lock` is held. A target that was never synced needs `--force` too. `--force` skips all of these checks. Otherwise it:
 
 - writes `HEAD`'s managed files, minus that server's `exclude`
-- for `fjord`, also writes index files (skipped when Fjord's describes the same
+- for `prism`, also writes index files (skipped when Prism's describes the same
   jar); servers get jars only, and only for `mods/`
 - deletes files and jars that were in the base but are gone from `HEAD`
 - downloads missing jars for the target's side and OS
@@ -239,8 +241,8 @@ hex characters of the sha1. That's Mojang's asset layout, so
 - `s3://bucket/prefix`: `object_store`, credentials from `AWS_*` or `~/.aws`.
   The lock is an object created with a conditional write.
 
-Every command that writes to storage (`publish`, `unpublish`, `pull fjord`,
-`add`, `gc`) holds the lock for its whole run.
+Every command that writes to storage (`publish`, `unpublish`, `pull prism`,
+`mod add`, `gc`) holds the lock for its whole run.
 
 ### `potato build`
 
@@ -276,7 +278,7 @@ Removes this instance's entry from the instance list.
 
 Keeps objects listed by a current `publish.json`, by a history record newer
 than the grace period (default 7 days), or uploaded within the grace period
-(so jars uploaded by `pull fjord` survive until they're published). Deletes
+(so jars uploaded by `pull prism` survive until they're published). Deletes
 everything else in `objects/` and history records older than the grace period.
 
 ### `potato publish-launcher`
@@ -289,11 +291,15 @@ regenerates `index.html`. CI runs it on `v*` tags.
 
 ## Other commands
 
-- `potato init [--id] [--fjord]`: `potato.toml` template, `.gitignore`,
-  `.potato/local.toml`, versions from Fjord.
-- `potato add <file|url> [--os] [--side] [--dir] [--name]`
-- `potato mods`: index name, mod id, side and OS of every entry.
-- `potato mod-id <jar | modrinth:slug>`
+- `potato init [--id] [--prism]`: `potato.toml` template, `.gitignore`,
+  `.potato/local.toml`, versions from Prism.
+- `potato target add <name> <folder>`, `target list`, `target remove <name>`:
+  the name `prism` sets the Prism instance, any other adds a server. `add`
+  checks the folder (Prism: has a `minecraft/` folder) and stores an absolute
+  path.
+- `potato mod add <file|url> [--os] [--side] [--dir] [--name]`
+- `potato mod list`: index name, mod id, side and OS of every entry.
+- `potato mod id <jar | modrinth:slug>`
 - `potato cache clean`. The cache is in the user cache dir, overridable with
   `POTATO_CACHE_DIR`.
 - Global `-C/--repo <dir>`.
@@ -314,19 +320,19 @@ The nginx config in `docker/nginx/templates/` maps those URLs, and the legacy
 **Client change:**
 
 ```
-potato pull fjord
+potato pull prism
 git diff --cached && git commit && git push
 potato publish
 ```
 
-**Collaborator picking up changes:** `git pull`, then `potato push fjord`.
+**Collaborator picking up changes:** `git pull`, then `potato push prism`.
 
 **Server update** (on the server): `git pull`, stop the server,
 `potato push main`, start it. If shared files were edited on the server,
 `push` refuses: `potato pull main`, commit, `git push`, push again.
 
 **Server-only mod:** drop the jar and its config on the server, or
-`potato add <jar> --side server`.
+`potato mod add <jar> --side server`.
 
 **A shared config the server needs its own version of:** add it to that
 server's `exclude`.

@@ -8,8 +8,8 @@ description: Convert an instance from the old instance-builder spec.json (plus i
 Inputs to collect from the user before starting:
 
 - the old `spec.json` and the instance `id` to migrate
-- the Fjord instance folder that matches the old source folder (the instance
-  set up in Fjord, not the copy uploaded to the backend)
+- the Prism instance folder that matches the old source folder (the instance
+  set up in Prism, not the copy uploaded to the backend)
 - where the new pack repo should live, and its git remote if any
 - the new site folder and publish target (see `docs/setting-up/hosting.md`)
 
@@ -17,7 +17,7 @@ Read `docs/creating-instances.md` first for the `potato.toml` format.
 
 ## Steps
 
-1. `potato init --id <id> --fjord <fjord folder>` in the new repo folder.
+1. `potato init --id <id> --prism <prism folder>` in the new repo folder.
 2. Fill `potato.toml` from the old spec entry:
 
    | spec.json | potato.toml |
@@ -25,27 +25,27 @@ Read `docs/creating-instances.md` first for the `potato.toml` format.
    | `download_server_base` | `[publish] base_url` (must stay the URL launchers already use, usually `https://<domain>/data`) |
    | `replace_download_urls` | `[publish] mirror` |
    | `display_name`, `auth_backend`, `default_xmx` | same keys at the top level |
-   | `minecraft_version`, `mod_loader`, `loader_version` | filled by `pull fjord`; check they match the spec |
+   | `minecraft_version`, `mod_loader`, `loader_version` | filled by `pull prism`; check they match the spec |
    | `resource_sync` | `[client] resource_sync` |
    | `mod_sync.mode` | `[client] mod_sync` (a plain string) |
    | `content_rules` | `[[paths]]`, same fields; drop rules for `mods` |
    | `source_root` | not needed |
 
    Set `[publish] target` to the new site's `data/` folder.
-3. `potato pull fjord`, then check `git diff --cached`. Every managed path
+3. `potato pull prism`, then check `git diff --cached`. Every managed path
    should come over, and every mod should have an index file.
 4. Port mod references. They used mod ids; `required` and optional sets now
-   use index names. Run `potato mods` to map mod ids to index names.
+   use index names. Run `potato mod list` to map mod ids to index names.
    - `mod_sync.required` → `[client] required` (index names)
    - `mod_sync.optional_sets[].mod_ids` → `[[client.optional_sets]] mods`
      (index names), keeping `id`, `display_name`, `enabled_by_default`
    - `mod_sync.blocked` → `[client] blocked`, unchanged (mod ids)
 5. Port `os_specific_mods`. For each glob, find the jars it matched in the old
-   source folder. The jar for the current OS came over with `pull fjord`; set
+   source folder. The jar for the current OS came over with `pull prism`; set
    `os = [...]` in its index file. Add each other variant with
-   `potato add <jar> --os <os>`. Old OS names: `osx` is `macos` now.
+   `potato mod add <jar> --os <os>`. Old OS names: `osx` is `macos` now.
 6. Compare against the old source folder: any jar or file there that isn't in
-   the repo now is either missing from Fjord or outside every `[[paths]]`
+   the repo now is either missing from Prism or outside every `[[paths]]`
    entry. Ask the user which.
 7. Commit, then `potato build`. Fix errors until it builds.
 8. Compare `.potato/build/` metadata with the old published
