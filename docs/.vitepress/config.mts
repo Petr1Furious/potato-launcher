@@ -24,11 +24,12 @@ export default defineConfig({
       {
         text: 'Setting up',
         items: [
-          { text: 'Server', link: '/setting-up/server' },
+          { text: 'Hosting', link: '/setting-up/hosting' },
           { text: 'Launcher', link: '/setting-up/launcher' },
         ],
       },
       { text: 'Creating instances', link: '/creating-instances' },
+      { text: 'Servers', link: '/servers' },
       { text: 'Development', link: '/development' },
     ],
     search: {

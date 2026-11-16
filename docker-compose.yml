@@ -1,49 +1,13 @@
 services:
-  backend:
-    image: ghcr.io/petr1furious/potato-launcher-backend:latest
-    container_name: ${CONTAINER_NAME_PREFIX:-potato-launcher}-backend
-    user: "${PUID:-1000}:${PGID:-1000}"
-    environment:
-      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
-      ADMIN_SECRET_TOKEN: ${ADMIN_SECRET_TOKEN}
-      DOWNLOAD_SERVER_BASE: ${DOWNLOAD_SERVER_BASE}
-      RESOURCES_URL_BASE: ${RESOURCES_URL_BASE-}
-      REPLACE_DOWNLOAD_URLS: ${REPLACE_DOWNLOAD_URLS:-false}
-      LAUNCHER_NAME: ${LAUNCHER_NAME:-Potato Launcher}
-    restart: unless-stopped
-    volumes:
-      - ./state/internal:/data/internal
-      - ./state/generated:/data/generated
-      - ./state/workdir:/data/workdir
-      - ./state/launcher:/data/launcher
-
-  filebrowser:
-    image: filebrowser/filebrowser:latest
-    container_name: ${CONTAINER_NAME_PREFIX:-potato-launcher}-filebrowser
-    user: "${PUID:-1000}:${PGID:-1000}"
-    command:
-      - --noauth
-      - --database=/database/filebrowser.db
-      - --root=/srv
-      - --port=80
-      - --baseurl=/filebrowser
-    restart: unless-stopped
-    volumes:
-      - ./state/internal/uploaded-instances:/srv
-      - ./state/filebrowser-db:/database
-
   nginx:
-    image: ghcr.io/petr1furious/potato-launcher-frontend:latest
+    image: nginx:1.29-alpine
     container_name: ${CONTAINER_NAME_PREFIX:-potato-launcher}-nginx
-    depends_on:
-      - backend
-      - filebrowser
-    restart: unless-stopped
     environment:
       LAUNCHER_NAME: ${LAUNCHER_NAME:-Potato Launcher}
-      VITE_GITHUB_URL: ${VITE_GITHUB_URL-}
+    restart: unless-stopped
     ports:
       - "${PORT:-8000}:80"
     volumes:
-      - ./state/generated:/var/www/generated:ro
-      - ./state/launcher:/var/www/launcher:ro
+      - ${SITE_DIR:-./site}:/usr/share/nginx/html:ro
+      - ./docker/nginx/templates:/etc/nginx/templates:ro
+      - ./docker/nginx/10-launcher-lower-name.envsh:/docker-entrypoint.d/10-launcher-lower-name.envsh:ro

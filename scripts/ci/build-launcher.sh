@@ -2,7 +2,8 @@
 # Builds the launcher for the current runner OS into ./build
 # Expects: LAUNCHER_NAME, LOWER_LAUNCHER_NAME, VERSION, RUNNER_OS
 # and env vars read by crates/build-config
-# (LAUNCHER_APP_ID, LAUNCHER_ICON, INSTANCE_MANIFEST_URLS, BACKEND_API_BASE)
+# (LAUNCHER_APP_ID, LAUNCHER_ICON, INSTANCE_MANIFEST_URLS, LAUNCHER_UPDATE_URL or
+# LAUNCHER_UPDATE_GITHUB)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -57,6 +58,3 @@ case "$RUNNER_OS" in
     exit 1
     ;;
 esac
-
-os_lower="$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
-echo "$VERSION" > "build/version_${os_lower}.txt"

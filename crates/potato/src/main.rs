@@ -1,0 +1,210 @@
+mod build;
+mod commands;
+mod config;
+mod ctx;
+mod fetch;
+mod git;
+mod hashcache;
+mod index;
+mod java_mirror;
+mod launcher;
+mod modrinth;
+mod progress;
+mod publish;
+mod storage;
+mod sync;
+mod target;
+
+#[cfg(test)]
+mod tests;
+
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+use log::LevelFilter;
+
+pub fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent(concat!("potato-launcher/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .expect("http client")
+}
+
+#[derive(Parser)]
+#[command(name = "potato", about = "Pack repos for Potato Launcher", version)]
+struct Cli {
+    /// Pack repo to work in.
+    #[arg(short = 'C', long = "repo", default_value = ".", global = true)]
+    repo: PathBuf,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Create potato.toml in a new or existing repo.
+    Init {
+        #[arg(long)]
+        id: Option<String>,
+        /// Fjord instance folder to use as the source.
+        #[arg(long)]
+        fjord: Option<PathBuf>,
+    },
+    /// Bring changes from a target (fjord or a server) into the repo.
+    Pull {
+        target: String,
+        /// Also take a new file or folder from a server.
+        #[arg(long = "add")]
+        add: Vec<String>,
+    },
+    /// Write the committed repo to a target.
+    Push {
+        target: String,
+        /// Skip the safety checks and overwrite the target.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show what pull and push would change for each target.
+    Status,
+    /// Add a mod or pack from a file or URL.
+    Add {
+        source: String,
+        /// Only for these OSes (windows, macos, linux).
+        #[arg(long)]
+        os: Vec<String>,
+        /// client, server or both.
+        #[arg(long)]
+        side: Option<String>,
+        #[arg(long, default_value = "mods")]
+        dir: String,
+        /// Index file name, without .pw.toml.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// List mods and packs in the repo.
+    Mods,
+    /// Print the mod id of a jar or `modrinth:<slug>`.
+    ModId { source: String },
+    /// Build the last commit without publishing.
+    Build,
+    /// Build the last commit and publish it.
+    Publish {
+        /// Skip the checks against the last publish.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove this instance from the instance list.
+    Unpublish,
+    /// Delete stored files no published version needs.
+    Gc {
+        #[arg(long, default_value_t = publish::DEFAULT_GRACE_DAYS)]
+        grace_days: u64,
+    },
+    /// Upload launcher builds and regenerate the downloads page.
+    PublishLauncher {
+        /// Site root, e.g. rsync://user@host/srv/potato/site
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        version: String,
+        files: Vec<PathBuf>,
+    },
+    /// Manage the download and build cache.
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum CacheAction {
+    /// Delete the cache.
+    Clean,
+}
+
+async fn run(cli: Cli) -> anyhow::Result<()> {
+    if let Command::Init { id, fjord } = cli.command {
+        return commands::init(&cli.repo, id, fjord);
+    }
+    if let Command::PublishLauncher {
+        target,
+        name,
+        version,
+        files,
+    } = &cli.command
+    {
+        return launcher::publish_launcher(target, name, version, files).await;
+    }
+    let mut ctx = ctx::Ctx::new(&cli.repo)?;
+    utils::logging::setup_logger(&ctx.cache_dir.join("potato.log"), true, LevelFilter::Warn)?;
+    match cli.command {
+        Command::Init { .. } | Command::PublishLauncher { .. } => unreachable!(),
+        Command::Pull { target, add } => sync::pull(&mut ctx, &target, &add).await,
+        Command::Push { target, force } => sync::push(&mut ctx, &target, force).await,
+        Command::Status => sync::status(&mut ctx).await,
+        Command::Add {
+            source,
+            os,
+            side,
+            dir,
+            name,
+        } => {
+            commands::add(
+                &mut ctx,
+                &source,
+                commands::AddOptions {
+                    os,
+                    side,
+                    dir,
+                    name,
+                },
+            )
+            .await
+        }
+        Command::Mods => commands::mods(&mut ctx).await,
+        Command::ModId { source } => commands::mod_id(&mut ctx, &source).await,
+        Command::Build => {
+            let head = ctx.git.head()?;
+            let output = Box::pin(build::build(&mut ctx, &head)).await?;
+            println!(
+                "built {} ({} files to upload), see .potato/build/",
+                output.config.id,
+                output.uploads.len()
+            );
+            Ok(())
+        }
+        Command::Publish { force } => publish::publish(&mut ctx, force).await,
+        Command::Unpublish => publish::unpublish(&mut ctx).await,
+        Command::Gc { grace_days } => publish::gc(&mut ctx, grace_days).await,
+        Command::Cache {
+            action: CacheAction::Clean,
+        } => commands::cache_clean(&ctx),
+    }
+}
+
+/// The generator's futures are large in debug builds.
+pub fn block_on_big_stack<T: Send + 'static>(job: impl Future<Output = T> + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_stack_size(64 << 20)
+                .build()
+                .expect("tokio runtime")
+                .block_on(job)
+        })
+        .expect("main thread")
+        .join()
+        .expect("main thread panicked")
+}
+
+fn main() {
+    let cli = Cli::parse();
+    if let Err(err) = block_on_big_stack(run(cli)) {
+        eprintln!("error: {err:#}");
+        std::process::exit(1);
+    }
+}

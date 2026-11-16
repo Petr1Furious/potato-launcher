@@ -2,40 +2,36 @@ name: Build launcher
 
 on:
   workflow_dispatch:
-    inputs:
-      upload_launchers:
-        description: "Upload launcher artifacts via backend API"
-        type: boolean
-        required: false
-        default: false
   workflow_run:
     workflows: ["Check"]
     types:
       - completed
+  push:
+    tags:
+      - "v*"
 
 defaults:
   run:
     shell: bash
 
 env:
-  UPLOAD_LAUNCHERS: ${{ (github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.upload_launchers)) && vars.BACKEND_API_BASE != '' && secrets.ADMIN_SECRET_TOKEN != '' }}
+  LAUNCHER_NAME: ${{ vars.LAUNCHER_NAME }}
+  LAUNCHER_APP_ID: ${{ vars.LAUNCHER_APP_ID }}
+  LAUNCHER_ICON: ${{ vars.LAUNCHER_ICON }}
+  LAUNCHER_DESCRIPTION: ${{ vars.LAUNCHER_DESCRIPTION }}
+  INSTANCE_MANIFEST_URLS: ${{ vars.INSTANCE_MANIFEST_URLS }}
+  LAUNCHER_UPDATE_URL: ${{ vars.LAUNCHER_UPDATE_URL }}
+  LAUNCHER_UPDATE_GITHUB: ${{ vars.LAUNCHER_UPDATE_GITHUB }}
 
 jobs:
   binaries:
     name: Build binaries
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: ["windows-latest", "ubuntu-latest", "macos-latest"]
-    env:
-      LAUNCHER_NAME: ${{ vars.LAUNCHER_NAME }}
-      LAUNCHER_APP_ID: ${{ vars.LAUNCHER_APP_ID }}
-      LAUNCHER_ICON: ${{ vars.LAUNCHER_ICON }}
-      LAUNCHER_DESCRIPTION: ${{ vars.LAUNCHER_DESCRIPTION }}
-      INSTANCE_MANIFEST_URLS: ${{ vars.INSTANCE_MANIFEST_URLS }}
-      BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
 
     steps:
       - uses: actions/checkout@v7
@@ -61,41 +57,45 @@ jobs:
       - name: Build the launcher
         run: ./scripts/ci/build-launcher.sh
 
-      - name: Upload launcher artifacts via backend API
-        if: ${{ env.UPLOAD_LAUNCHERS == 'true' }}
-        env:
-          ADMIN_SECRET_TOKEN: ${{ secrets.ADMIN_SECRET_TOKEN }}
-        run: ./scripts/ci/upload-launcher.sh
+      - name: Build potato
+        if: runner.os != 'Windows'
+        run: |
+          cargo build -p potato --profile release-lto
+          os="$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')"
+          mkdir -p build-potato
+          cp target/release-lto/potato "build-potato/potato-${os}-$(uname -m)"
 
-      - name: Upload artifacts
+      - name: Upload launcher artifacts
         uses: actions/upload-artifact@v7
         with:
           name: launcher-${{ matrix.os }}
           path: build/*
 
+      - name: Upload potato artifact
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: potato-${{ matrix.os }}
+          path: build-potato/*
+
   flatpak:
     name: Build Flatpak package
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/andyholmes/flatter/rust:25.08
       options: --privileged
     env:
-      VERSION: ${{ github.sha }}
-      LAUNCHER_NAME: ${{ vars.LAUNCHER_NAME }}
-      LAUNCHER_APP_ID: ${{ vars.LAUNCHER_APP_ID }}
-      LAUNCHER_ICON: ${{ vars.LAUNCHER_ICON }}
-      LAUNCHER_DESCRIPTION: ${{ vars.LAUNCHER_DESCRIPTION }}
       FLATPAK_KEYWORDS: ${{ vars.FLATPAK_KEYWORDS }}
-      INSTANCE_MANIFEST_URLS: ${{ vars.INSTANCE_MANIFEST_URLS }}
-      BACKEND_API_BASE: ${{ vars.BACKEND_API_BASE }}
-      GPG_PUBLIC_KEY: ${{ vars.GPG_PUBLIC_KEY }}
 
     steps:
       - uses: actions/checkout@v7
 
       - name: Install packaging dependencies
         run: ./scripts/ci/install-packaging-deps.sh
+
+      - name: Resolve build environment
+        run: ./scripts/ci/set-build-env.sh
 
       - name: Install Rust SDK extension
         run: |
@@ -115,7 +115,7 @@ jobs:
       - name: Setup GPG
         id: gpg
         # `if` doesn't see secrets directly, so the key is mirrored into env first.
-        if: ${{ github.ref == 'refs/heads/master' && env.GPG_PRIVATE_KEY != '' }}
+        if: ${{ github.ref_type == 'tag' && env.GPG_PRIVATE_KEY != '' }}
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         uses: crazy-max/ghaction-import-gpg@v7
@@ -124,7 +124,6 @@ jobs:
           passphrase: ${{ secrets.GPG_PASSPHRASE }}
 
       - name: Build Flatpak package
-        id: flatpak
         uses: andyholmes/flatter@main
         with:
           files: |
@@ -133,8 +132,62 @@ jobs:
           gpg-sign: ${{ steps.gpg.outputs.fingerprint }}
           upload-bundles: true
 
-      - name: Upload Flatpak artifacts via backend API
-        if: ${{ env.UPLOAD_LAUNCHERS == 'true' }}
+      - name: Collect Flatpak bundle
+        run: |
+          bundle="$(ls -1 ./*.flatpak | head -n1)"
+          mkdir -p build
+          cp "$bundle" "build/${LOWER_LAUNCHER_NAME}.flatpak"
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: launcher-flatpak
+          path: build/*
+
+  release:
+    name: Release
+    if: ${{ github.ref_type == 'tag' }}
+    needs: [binaries, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve build environment
+        run: ./scripts/ci/set-build-env.sh
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: launcher-*
+          merge-multiple: true
+          path: release/launcher
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: potato-*
+          merge-multiple: true
+          path: release/potato
+
+      - name: Create GitHub release
         env:
-          ADMIN_SECRET_TOKEN: ${{ secrets.ADMIN_SECRET_TOKEN }}
-        run: ./scripts/ci/upload-flatpak.sh
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" release/launcher/* release/potato/* \
+            --title "$VERSION" --generate-notes --verify-tag
+
+      - name: Publish to storage
+        if: ${{ vars.LAUNCHER_PUBLISH_TARGET != '' }}
+        env:
+          LAUNCHER_PUBLISH_TARGET: ${{ vars.LAUNCHER_PUBLISH_TARGET }}
+          LAUNCHER_PUBLISH_SSH_KEY: ${{ secrets.LAUNCHER_PUBLISH_SSH_KEY }}
+          LAUNCHER_PUBLISH_KNOWN_HOSTS: ${{ vars.LAUNCHER_PUBLISH_KNOWN_HOSTS }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ENDPOINT: ${{ vars.AWS_ENDPOINT }}
+        run: |
+          export POTATO=release/potato/potato-linux-x86_64
+          chmod +x "$POTATO"
+          ./scripts/ci/publish-launcher.sh

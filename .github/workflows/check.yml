@@ -2,6 +2,8 @@ name: Check
 
 on:
   push:
+    branches:
+      - '**'
     paths-ignore:
       - 'docs/**'
       - '.github/workflows/docs.yml'
@@ -43,53 +45,3 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo test --workspace
 
-  backend:
-    name: Backend
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
-
-      - name: Go fmt (check)
-        working-directory: backend
-        run: test -z "$(gofmt -l .)"
-
-      - name: Go vet
-        working-directory: backend
-        run: go vet ./...
-
-      - name: Go test
-        working-directory: backend
-        run: go test ./...
-
-  frontend:
-    name: Frontend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-
-      - name: Enable Corepack + activate Yarn 4
-        run: |
-          corepack enable
-
-      - name: Install
-        run: yarn install --immutable
-
-      - name: Typecheck
-        run: yarn type-check
-
-      - name: Build
-        run: yarn build-only

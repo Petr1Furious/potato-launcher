@@ -1,0 +1,41 @@
+[package]
+name = "potato"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "potato"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+bytes = "1"
+clap = { workspace = true, features = ["derive"] }
+dirs.workspace = true
+futures.workspace = true
+generate = { path = "../generate" }
+indicatif = "0.18.6"
+instance = { path = "../instance" }
+launcher-auth = { path = "../auth" }
+log.workspace = true
+percent-encoding = "2"
+object_store = { version = "0.12", features = ["aws"] }
+relative-path.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shell-words = "1.1.1"
+tempfile = "3"
+tokio.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+url.workspace = true
+utils = { path = "../utils" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.190"
+
+[dev-dependencies]
+hex = "0.4.3"
+sha1.workspace = true

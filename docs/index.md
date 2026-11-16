@@ -8,7 +8,7 @@ hero:
   actions:
     - theme: brand
       text: Get started
-      link: /setting-up/server
+      link: /setting-up/hosting
     - theme: alt
       text: Learn more
       link: /about

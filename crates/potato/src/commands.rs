@@ -1,0 +1,261 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, bail};
+
+use crate::{
+    build::{mod_id_of, modrinth_mod_id},
+    config::{CONFIG_FILE, INDEX_DIRS, LOCAL_FILE, object_key, set_versions},
+    ctx::Ctx,
+    git::Git,
+    index::{IndexFile, Side, index_dir_of, index_name, index_path, normalize_os},
+    modrinth, storage,
+    target::parse_mmc_pack,
+};
+
+const TEMPLATE: &str = r#"id = "{id}"
+minecraft = "1.21.1"
+loader = "vanilla"
+
+[publish]
+base_url = "https://example.com/data"
+target = "rsync://user@example.com/srv/potato/site/data"
+
+[client]
+mod_sync = "delta"
+
+[[paths]]
+path = "config"
+type = "directory"
+skip_if_dir_exists = true
+"#;
+
+pub fn init(repo: &Path, id: Option<String>, fjord: Option<PathBuf>) -> anyhow::Result<()> {
+    std::fs::create_dir_all(repo)?;
+    let config_path = repo.join(CONFIG_FILE);
+    if config_path.exists() {
+        bail!("{CONFIG_FILE} already exists");
+    }
+    let repo = repo.canonicalize()?;
+    let id = match id {
+        Some(id) => id,
+        None => repo
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("can't guess an id, pass --id")?
+            .to_lowercase(),
+    };
+    utils::instance_id::validate_instance_id(&id)
+        .map_err(|err| anyhow::anyhow!("invalid id '{id}': {err}, pass --id"))?;
+    let git = Git::new(&repo);
+    if !git.is_repo() {
+        git.init()?;
+    }
+    std::fs::write(&config_path, TEMPLATE.replace("{id}", &id))?;
+    let gitignore = repo.join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    if !existing.lines().any(|line| line.trim() == ".potato/") {
+        std::fs::write(&gitignore, format!("{existing}.potato/\n"))?;
+    }
+    if let Some(fjord) = fjord {
+        let fjord = fjord.canonicalize().context("fjord folder doesn't exist")?;
+        std::fs::create_dir_all(repo.join(".potato"))?;
+        std::fs::write(
+            repo.join(LOCAL_FILE),
+            format!(
+                "fjord = {}\n",
+                toml_edit::value(fjord.to_string_lossy().as_ref())
+            ),
+        )?;
+        if let Ok(content) = std::fs::read(fjord.join("mmc-pack.json")) {
+            let (minecraft, loader, loader_version) = parse_mmc_pack(&content)?;
+            set_versions(&repo, &minecraft, loader, loader_version.as_deref())?;
+        }
+    }
+    println!("created {CONFIG_FILE}; set [publish], then run `potato pull fjord`");
+    Ok(())
+}
+
+pub struct AddOptions {
+    pub os: Vec<String>,
+    pub side: Option<String>,
+    pub dir: String,
+    pub name: Option<String>,
+}
+
+pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Result<()> {
+    let config = ctx.config()?;
+    if !INDEX_DIRS.contains(&options.dir.as_str()) {
+        bail!("--dir must be one of {}", INDEX_DIRS.join(", "));
+    }
+    let os = options
+        .os
+        .iter()
+        .map(|os| normalize_os(os))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let side = options.side.as_deref().map(Side::parse).transpose()?;
+
+    let local = Path::new(source);
+    let (sha1, path, source_url, filename) = if local.is_file() {
+        let sha1 = utils::files::hash_file(local).await?;
+        let path = ctx.files.insert(local, &sha1).await?;
+        let filename = local
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("bad file name")?;
+        (sha1, path, None, filename.to_string())
+    } else {
+        let url: url::Url = source
+            .parse()
+            .with_context(|| format!("{source} is neither a file nor a URL"))?;
+        let (sha1, path) = ctx.files.fetch_unknown(&ctx.client, &url).await?;
+        let filename = url
+            .path_segments()
+            .and_then(|mut s| s.next_back().map(str::to_string))
+            .filter(|n| !n.is_empty())
+            .context("can't tell the file name from the URL")?;
+        let filename = percent_encoding::percent_decode_str(&filename)
+            .decode_utf8_lossy()
+            .into_owned();
+        (sha1, path, Some(url), filename)
+    };
+
+    let stem = filename
+        .rsplit_once('.')
+        .map_or(filename.as_str(), |(s, _)| s)
+        .to_string();
+    let mut entry = match modrinth::file_by_sha1(&ctx.client, &sha1).await? {
+        Some(found) => {
+            let mut entry = IndexFile::new(&stem, &filename, &found.url, &sha1);
+            entry.set_modrinth(&found.project_id, &found.version_id);
+            entry
+        }
+        None => match source_url {
+            Some(url) => IndexFile::new(&stem, &filename, url.as_str(), &sha1),
+            None => {
+                let storage = storage::open(&config.publish.target)?;
+                let files = [(object_key(&sha1), path.clone())];
+                storage::locked(storage.as_ref(), storage.put_objects(&files)).await?;
+                IndexFile::new(
+                    &stem,
+                    &filename,
+                    config.publish.object_url(&sha1).as_str(),
+                    &sha1,
+                )
+            }
+        },
+    };
+    if let Some(side) = side {
+        entry.set_side(side);
+    }
+    entry.set_os(&os);
+
+    let mut name = options.name.unwrap_or_else(|| stem.clone());
+    let mut rel = index_path(&options.dir, &name);
+    if ctx.repo.join(&rel).exists() && !os.is_empty() {
+        name = format!("{name}-{}", os.join("-"));
+        rel = index_path(&options.dir, &name);
+    }
+    if ctx.repo.join(&rel).exists() {
+        bail!("{rel} already exists, pass --name");
+    }
+    let full = ctx.repo.join(&rel);
+    std::fs::create_dir_all(full.parent().expect("has parent"))?;
+    std::fs::write(&full, entry.to_bytes())?;
+    println!("added {rel}");
+    Ok(())
+}
+
+pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
+    let mut rows = vec![(
+        "NAME".to_string(),
+        "MOD ID".to_string(),
+        "SIDE".to_string(),
+        "OS".to_string(),
+    )];
+    let mut wanted = vec![];
+    let mut entries = vec![];
+    for dir in INDEX_DIRS {
+        let Ok(dir_entries) = std::fs::read_dir(ctx.repo.join(dir).join(".index")) else {
+            continue;
+        };
+        for item in dir_entries {
+            let path = item?.path();
+            let rel = format!(
+                "{dir}/.index/{}",
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default()
+            );
+            if index_dir_of(&rel).is_none() {
+                continue;
+            }
+            let entry =
+                IndexFile::parse(&std::fs::read_to_string(&path)?).with_context(|| rel.clone())?;
+            if dir == "mods"
+                && let (Some(url), Some(sha1)) = (entry.url(), entry.sha1())
+            {
+                wanted.push((url.parse()?, sha1.to_string()));
+            }
+            entries.push((rel, entry));
+        }
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let cached = ctx.files.ensure(&wanted).await?;
+    for (rel, entry) in entries {
+        let mod_id = match entry.sha1().and_then(|sha1| cached.get(sha1)) {
+            Some(path) if rel.starts_with("mods/") => {
+                mod_id_of(path).await.unwrap_or_else(|_| "?".into())
+            }
+            _ => "-".into(),
+        };
+        let os = entry.os()?.join(",");
+        let name = if rel.starts_with("mods/") {
+            index_name(&rel).to_string()
+        } else {
+            format!(
+                "{}/{}",
+                rel.split('/').next().unwrap_or_default(),
+                index_name(&rel)
+            )
+        };
+        rows.push((
+            name,
+            mod_id,
+            entry.side()?.as_str().to_string(),
+            if os.is_empty() { "all".into() } else { os },
+        ));
+    }
+    let widths = rows.iter().fold([0; 3], |w, r| {
+        [
+            w[0].max(r.0.len()),
+            w[1].max(r.1.len()),
+            w[2].max(r.2.len()),
+        ]
+    });
+    for (name, id, side, os) in rows {
+        println!(
+            "{name:w0$}  {id:w1$}  {side:w2$}  {os}",
+            w0 = widths[0],
+            w1 = widths[1],
+            w2 = widths[2]
+        );
+    }
+    Ok(())
+}
+
+pub async fn mod_id(ctx: &mut Ctx, source: &str) -> anyhow::Result<()> {
+    let id = match source.strip_prefix("modrinth:") {
+        Some(slug) => modrinth_mod_id(ctx, slug).await?,
+        None => mod_id_of(Path::new(source)).await?,
+    };
+    println!("{id}");
+    Ok(())
+}
+
+pub fn cache_clean(ctx: &Ctx) -> anyhow::Result<()> {
+    if ctx.cache_dir.exists() {
+        std::fs::remove_dir_all(&ctx.cache_dir)?;
+    }
+    println!("removed {}", ctx.cache_dir.display());
+    Ok(())
+}

@@ -28,7 +28,8 @@ modules:
         LAUNCHER_NAME: {{ app_name }}
         INSTANCE_MANIFEST_URLS: {{ instance_manifest_urls }}
         # used only to check for new versions; Flatpak installs never self-update
-        BACKEND_API_BASE: "{{ backend_api_base }}"
+        LAUNCHER_UPDATE_URL: "{{ launcher_update_url }}"
+        LAUNCHER_UPDATE_GITHUB: "{{ launcher_update_github }}"
         # TODO: bundle patched GLFW and enable this
         # USE_NATIVE_GLFW_DEFAULT: "true"
     build-commands:

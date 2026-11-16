@@ -12,10 +12,18 @@ if [ -z "$name" ]; then
   exit 1
 fi
 
+release_version() {
+  if [ "${GITHUB_REF_TYPE:-}" = tag ]; then
+    echo "$GITHUB_REF_NAME"
+  else
+    echo "$GITHUB_SHA"
+  fi
+}
+
 lower="$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr -d "'" | tr ' ' '_')"
 
 {
   echo "LAUNCHER_NAME=$name"
   echo "LOWER_LAUNCHER_NAME=$lower"
-  echo "VERSION=$GITHUB_SHA"
+  echo "VERSION=$(release_version)"
 } >> "$GITHUB_ENV"

@@ -5,12 +5,6 @@
 
 .DS_Store
 
-/*.json
-crates/instance-builder/*.json
-!crates/instance-builder/spec.example.json
-crates/instance-builder/generated/
-crates/instance-builder/workdir/
-
 .cargo/config.toml
 target/
 **/__pycache__/
@@ -31,11 +25,10 @@ result
 .flatpak-builder/
 gpg/
 
-# backend
-out/
-
 .env*
-generated/
-workdir/
 state/
 *.local.md
+
+# hosting
+/site/
+/dev-site/

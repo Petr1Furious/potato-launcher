@@ -24,9 +24,11 @@
         };
       in
       {
-        packages.default = pkgs.callPackage ./packaging/nix/package.nix {
-          # lets the launcher tell when a newer version is published
-          version = self.rev or null;
+        packages.default = pkgs.callPackage ./packaging/nix/package.nix { };
+        packages.potato = pkgs.callPackage ./packaging/nix/potato.nix { };
+        apps.potato = {
+          type = "app";
+          program = "${self.packages.${system}.potato}/bin/potato";
         };
         devShells.default = pkgs.mkShell {
           # keep in sync with deps in package.nix

@@ -31,39 +31,58 @@ To use this option, go to the "Settings" tab, then choose "Secrets and variables
 ## Variables list
 
 - **LAUNCHER_NAME** (required): Your launcher name, for example "Potato Launcher". Can only contain Latin letters, numbers, spaces, `-`, `_` and `'`
-- **INSTANCE_MANIFEST_URLS** (optional): One or more instance manifest URLs for your deployed modpacks, separated by commas, semicolons, or newlines. For a typical server deployment, set this to `https://<your-domain>/data/instance_manifest.json`. The launcher uses these as default backend catalog URLs; users can add or remove catalogs later in launcher settings. Can be omitted if you want users to configure catalogs manually after install.
+- **INSTANCE_MANIFEST_URLS** (optional): One or more instance manifest URLs for your deployed modpacks, separated by commas, semicolons, or newlines. For a typical server deployment, set this to `https://<your-domain>/data/instance_manifest.json`. The launcher uses these as default catalog URLs; users can add or remove catalogs later in launcher settings. Can be omitted if you want users to configure catalogs manually after install.
 - **LAUNCHER_APP_ID** (required): An application ID in a [reverse domain notation](https://en.wikipedia.org/wiki/Reverse_domain_name_notation). Used in macOS and Flatpak packages. For example, `me.petr1furious.PotatoLauncher`
 - **LAUNCHER_ICON** (required): A path to the launcher icon, relative to the repository root. For example, `packaging/potato_launcher.png`
 
   If you are using the environment variables option, this can also be a URL.
-- **BACKEND_API_BASE** (optional): An URL that will be used to download launcher updates. Doesn't impact instance download. Set it to `https://<your-domain>/api/v1` if you want the launcher to update automatically (you want to). Also used to generate the `.flatpakref` file
+- **LAUNCHER_UPDATE_URL** (optional): Where the launcher looks for its own updates, on your host. Set it to `https://<your-domain>/launcher`. The launcher reads `<url>/<os>/version.txt` and downloads `<url>/<os>/<file>`.
+- **LAUNCHER_UPDATE_GITHUB** (optional): Update from GitHub Releases instead, as `owner/repo`. The launcher reads the latest release and uses its tag as the version.
+
+  Set at most one of the two. Setting both fails the build. Without either, the launcher doesn't update itself. Variables from Actions only override `build.env` when non-empty, so if you set `LAUNCHER_UPDATE_GITHUB` there, also remove `LAUNCHER_UPDATE_URL` from `build.env`.
 - **LAUNCHER_DESCRIPTION** (optional): The application description. Used in `.desktop` files in the Nix and Flatpak packages, can safely be omitted.
 - **FLATPAK_KEYWORDS** (optional): Semicolon-separated list of additional keywords for the Flatpak `.desktop` file. Can safely be omitted.
 - **USE_NATIVE_GLFW_DEFAULT** (optional): If `true`, new instances default to using native GLFW. Default: `false`
 
-## Setting up secrets
+## Publishing releases
 
-If you want GitHub Actions to upload built launcher artifacts to your backend automatically, set these secrets.
+Every push builds the launcher, and the builds are kept as workflow artifacts.
+A release happens only when you push a version tag:
 
-Go to the "Settings" tab, then choose "Secrets and variables" on the left and select "Actions". Then, add the secrets in the "Secrets" tab.
+```bash
+git tag v1.2.0
+git push --tags
+```
 
-You need to set the following secrets:
-- **ADMIN_SECRET_TOKEN**: Must match the `ADMIN_SECRET_TOKEN` used by your deployed backend (see [Server setup](/setting-up/server))
+The tag becomes the launcher's version. The **Release** job then creates a
+GitHub release with the launcher files and `potato` binaries, and, if
+`LAUNCHER_PUBLISH_TARGET` is set, publishes the launcher to your host with
+`potato publish-launcher`. That also regenerates the downloads page at the
+site root.
 
-If you want signed Flatpak packages on `master`, also set:
-- **GPG_PRIVATE_KEY**: Private key used to sign Flatpak bundles
-- **GPG_PASSPHRASE**: Passphrase for the key above, if any
+Variables for publishing to your host:
 
-And the corresponding variable:
-- **GPG_PUBLIC_KEY**: Public key matching the private key above
+- **LAUNCHER_PUBLISH_TARGET**: the site root (not `data/`), e.g.
+  `rsync://user@host/srv/potato/site` or `s3://bucket/prefix`. See
+  [publish targets](/setting-up/hosting#publish-targets).
+- **LAUNCHER_PUBLISH_KNOWN_HOSTS**: the host's SSH key line(s) for
+  `known_hosts`, for `rsync://` targets.
+- **AWS_REGION**, **AWS_ENDPOINT**: for `s3://` targets.
+
+Secrets:
+
+- **LAUNCHER_PUBLISH_SSH_KEY**: private SSH key with write access to the site
+  folder, for `rsync://` targets.
+- **AWS_ACCESS_KEY_ID**, **AWS_SECRET_ACCESS_KEY**: for `s3://` targets.
+- **GPG_PRIVATE_KEY**, **GPG_PASSPHRASE** (optional): sign the Flatpak bundle.
+
+Go to "Settings" → "Secrets and variables" → "Actions" to add them.
 
 ## Triggering the build
 
-All done! Make sure to enable actions in your fork by going to the "Actions" tab and clicking "I understand my workflows".
+Enable actions in your fork in the "Actions" tab. Builds then run after the
+**Check** workflow succeeds on a push, on every `v*` tag, or manually via "Run
+workflow" on **Build launcher**.
 
-Then, you can trigger the build:
-
-- By pushing to the `master` branch. This runs the **Check** workflow first, and when it succeeds, the **Build launcher** workflow starts automatically. Uploads happen on `master` when `BACKEND_API_BASE` and `ADMIN_SECRET_TOKEN` are set.
-- Or manually via "Run workflow" on **Build launcher** (you can enable uploads in the workflow inputs)
-
-After a successful workflow run, the launcher binaries and packages should be available at `https://your.domain/launcher`
+After a release, the launcher is available at `https://<your-domain>/` and
+`https://<your-domain>/launcher/<os>/`.

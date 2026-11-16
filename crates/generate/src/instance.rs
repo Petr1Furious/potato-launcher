@@ -105,7 +105,7 @@ async fn get_directory_objects(
     Ok(objects)
 }
 
-fn validate_mod_sync_overrides(
+pub fn validate_mod_sync_overrides(
     mod_entries: &[ModEntry],
     mod_sync: &ModSyncSettings,
 ) -> Result<(), GenerateError> {
@@ -253,7 +253,7 @@ fn match_os_filters(
     Ok(matched.cloned().unwrap_or_default())
 }
 
-fn validate_duplicate_mod_ids(entries: &[ModEntry]) -> Result<(), GenerateError> {
+pub fn validate_duplicate_mod_ids(entries: &[ModEntry]) -> Result<(), GenerateError> {
     for (index, entry) in entries.iter().enumerate() {
         for other in &entries[index + 1..] {
             if other.mod_id != entry.mod_id {
@@ -528,6 +528,19 @@ impl InstanceGenerator {
         work_dir: &Path,
         os_arch: &OsArch,
     ) -> Result<GeneratorResult, GenerateError> {
+        self.generate_with_mod_entries(instance_dir, work_dir, os_arch, None)
+            .await
+    }
+
+    /// Like `generate`, but with `mod_entries` set the `mods/` dir of `source_root`
+    /// is not scanned and the given entries are used as is.
+    pub async fn generate_with_mod_entries(
+        self,
+        instance_dir: &InstanceDirFS,
+        work_dir: &Path,
+        os_arch: &OsArch,
+        mod_entries: Option<Vec<ModEntry>>,
+    ) -> Result<GeneratorResult, GenerateError> {
         let output_dir = instance_dir.data_dir();
         let work_data_dir = DataDir::new(work_dir.to_path_buf());
 
@@ -736,7 +749,11 @@ impl InstanceGenerator {
                 .to_resources_url_base(&include_config.download_server_base);
         }
 
-        let mod_entries = if let (Some(source_root), Some(remote_config)) =
+        let mod_entries = if let Some(mut entries) = mod_entries {
+            entries.sort_by(|left, right| left.mod_id.cmp(&right.mod_id));
+            validate_duplicate_mod_ids(&entries)?;
+            entries
+        } else if let (Some(source_root), Some(remote_config)) =
             (&self.spec.source_root, &self.remote_config)
         {
             let entries = collect_mod_entries(

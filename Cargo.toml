@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/instance-builder",
+    "crates/potato",
     "crates/auth",
     "crates/backend",
     "crates/bridge",
@@ -51,6 +51,7 @@ url = { version = "2.5.8", features = ["serde"] }
 relative-path = { version = "2.0.2", features = ["serde"] }
 uuid = { version = "1.28.0", features = ["serde", "v4"] }
 toml = "1.1.8"
+toml_edit = "0.25.17"
 gpui-kit = "0.7.3"
 either = { version = "1.19.0", features = ["serde"] }
 unidecode = "0.3.0"

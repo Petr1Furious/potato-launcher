@@ -1,239 +1,302 @@
 # Creating instances
 
-**Note on terminology:** Potato Launcher calls these **instances**. In most cases instances will be modpacks, but technically you can deploy vanilla versions too.
+**Terminology:** Potato Launcher calls modpacks **instances**. An instance can
+also be plain vanilla.
 
-## Recommended: use the Web UI
+Each instance is a git repo, a **pack repo**. It holds only the files clients
+and servers share: mod index files, configs and scripts. Jars never go into
+git. You set the instance up in a regular launcher (Fjord, or any Prism-based
+launcher), and the `potato` CLI copies changes between that instance and the
+repo, builds the instance and publishes it to your [host](/setting-up/hosting).
 
-If you deployed the full server setup (see [Server setup](/setting-up/server)), you can manage instances from the browser. Typical workflow:
+## Installing potato
 
-- Log in at `https://<your-domain>/admin`
-- Click **New Instance** or select an instance you want to update and click **Update**
-- Fill all necessary fields (**Instance Name**, **Minecraft Version**, **Mod Loader**, **Loader version** (if not vanilla), **Authentication Type**, **Mod Sync**, and **Resource Sync**)
-- Click **Create Instance**
-- To upload modpack files (e.g. mods, configs), select an existing instance, click **Update** and **Manage instance files**. You can also upload files via [Filebrowser](/setting-up/server#what-gets-served-where) at `/filebrowser/`. Upload all files you want the builder to include.
-- **Important:** add **content rules** and choose a **type** for each rule (`file`, `directory`, or `config_options`). The launcher needs these rules to know how to sync each path when the remote pack changes. For example, set **Skip if dir exists** on `config`, and both **Overwrite** and **Delete Extra** on `kubejs`.
-- Optionally open **Settings** to toggle **Replace download URLs** (whether libraries and assets are served from your server). This matches the `REPLACE_DOWNLOAD_URLS` variable from [Server setup](/setting-up/server).
-- Click **Build** to generate the `/data/` output served by nginx
+Linux and macOS:
 
-The launcher downloads metadata from `<download_server_base>/instance_manifest.json` (usually `https://<your-domain>/data/instance_manifest.json`).
+- Nix: `nix run github:Petr1Furious/potato-launcher#potato -- --help`
+- Release binaries: `potato-<os>-<arch>` on the GitHub releases page
+- Cargo: `cargo install --git https://github.com/Petr1Furious/potato-launcher potato`
 
-## Manual
+`potato` needs `git`, and `rsync` plus `ssh` for `rsync://` targets.
 
-Linux/macOS is recommended for building instances. However, Windows should also work.
-
-If you don't have Rust installed, get it from [rustup.rs](https://rustup.rs).
-
-Clone the repository and build from the workspace root:
+## Quick start
 
 ```bash
-git clone <your-repository-url>
-cd <repository-name>
+mkdir minigames && cd minigames
+potato init --id minigames --fjord ~/.local/share/FjordLauncher/instances/minigames
+# edit potato.toml: [publish] and [[paths]]
+potato pull fjord
+git diff --cached
+git commit -m "first version"
+potato publish
 ```
 
-Then, you'll need to create a `spec.json` file. It's used to define launcher instances that should be created. The file format is described below. You can also find an example config at [`crates/instance-builder/spec.example.json`](https://github.com/Petr1Furious/potato-launcher/blob/master/crates/instance-builder/spec.example.json)
+`init` creates `potato.toml`, a `.gitignore` with `.potato/`, and
+`.potato/local.toml` with the Fjord path. It reads the Minecraft and loader
+versions from Fjord's `mmc-pack.json`.
 
-After defining your instance, you can build it with the following command:
+## Repo layout
+
+The repo mirrors the game folder, but only for managed paths:
+
+```
+potato.toml
+.gitignore                  # .potato/
+mods/.index/*.pw.toml
+resourcepacks/.index/*.pw.toml
+config/...
+kubejs/...
+```
+
+`.potato/` is local to your machine and never committed.
+
+## potato.toml
+
+```toml
+id = "minigames"
+display_name = { en = "Minigames", ru = "Миниигры" }
+minecraft = "1.21.1"          # updated by `potato pull fjord`
+loader = "neoforge"           # vanilla | fabric | forge | neoforge
+loader_version = "21.1.77"    # updated by `potato pull fjord`
+default_xmx = "4G"
+auth_backend = { type = "ely_by" }
+order = 10                    # position in the launcher's list; unset goes last
+
+[publish]
+base_url = "https://mc.example.com/data"
+target = "rsync://user@mc.example.com/srv/potato/site/data"
+mirror = false
+
+[client]
+resource_sync = "on_update"   # on_update | always | always_fast
+mod_sync = "delta"            # delta | mirror | mirror_fast
+required = ["sodium"]
+blocked = ["optifine", "modrinth:xaeros-minimap"]
+
+[[client.optional_sets]]
+id = "shaders"
+display_name = { en = "Shaders" }
+enabled_by_default = false
+mods = ["iris"]
+
+[[paths]]
+path = "config"
+type = "directory"
+skip_if_dir_exists = true
+
+[[paths]]
+path = "kubejs"
+type = "directory"
+overwrite = true
+delete_extra = true
+
+[servers.main]
+exclude = ["config/somemod.toml"]
+```
+
+### Top level
+
+- **id** (required): must start with a letter, then `a-z`, `0-9`, `_`, `-`
+  (max 64). Used in URLs and on players' disks, so don't change it.
+- **display_name**: a string or a language map. Falls back to `id`.
+- **minecraft** (required), **loader**, **loader_version**: set from Fjord on
+  every `pull fjord`. Without `loader_version`, the latest (Fabric, NeoForge)
+  or recommended (Forge) version is used.
+- **default_xmx**: default `-Xmx`, e.g. `4G`.
+- **auth_backend**: auth provider for this instance. Omit to allow any.
+- **order**: sort key in the instance list. Ties and unset values sort by id.
+
+### `[publish]`
+
+- **base_url** (required): public URL of the site's `data/` folder.
+- **target** (required): where to write that folder. See
+  [publish targets](/setting-up/hosting#publish-targets).
+- **mirror**: if `true`, libraries, assets, Java and Modrinth jars are stored
+  on your host too, instead of players downloading them from Mojang, Modrinth
+  and Azul. Use it when those are blocked or slow for your players. Default:
+  `false`.
+
+### `[client]`
+
+- **resource_sync**: when the launcher checks the client jar, libraries and
+  assets.
+- **mod_sync**: how a player's `mods/` is reconciled with the pack. `delta`
+  only touches mods the pack changed, so players can add their own. `mirror`
+  removes everything not in the pack.
+- **required**: index names of mods players can't remove.
+- **blocked**: mods players can't add, as mod ids or `modrinth:<slug>`. Use
+  `potato mod-id <jar | modrinth:slug>` to find a mod id.
+- **optional_sets**: groups of mods players can turn on or off in the
+  launcher. `mods` lists index names.
+
+Index names are the index file names without `.pw.toml`. `potato mods` lists
+them with their mod ids.
+
+### `[[paths]]`
+
+The managed paths, and how the launcher applies each one on clients. Only
+these paths are copied between the repo and targets. `mods/` is always
+managed and doesn't need an entry.
+
+Common fields:
+
+- **path**: relative to the game folder.
+- **type**: `file`, `directory` or `config_options`.
+- **apply_on**: `update` (default, only when the pack changes) or `always`
+  (every launch).
+- **version**: optional. Once a player has applied a rule with this version,
+  it's skipped until you raise it. Useful for one-time changes players may
+  undo later.
+
+`file`:
+
+- **overwrite** (default `true`): replace the player's copy if it differs. If
+  `false`, the file is only written when missing.
+
+`directory`:
+
+- **overwrite** (default `true`): replace files that differ.
+- **delete_extra** (default `true`): delete files the pack doesn't have.
+- **skip_if_dir_exists** (default `false`): only write the folder if the
+  player doesn't have it yet, so players can change it.
+
+`config_options` changes single keys in a config file instead of shipping it:
+
+- **config_type**: `json`, `yaml`, `toml` or `properties`.
+- **options**: a list of `{ key = ["section", "name"], value = ... }`.
+
+Deeper paths win over shallower ones, so you can mark `config` as
+`skip_if_dir_exists` and still force one file inside it with a `file` rule.
+
+### `[servers.<name>]`
+
+- **exclude**: shared files this server keeps its own version of. See
+  [Servers](/servers).
+
+## Mods and packs
+
+Mods live in `mods/.index/` as packwiz-style `.pw.toml` files, one per mod.
+Fjord writes these when you install a mod through its browser.
+Resource packs, shader packs and datapacks work the same way in
+`resourcepacks/.index/`, `shaderpacks/.index/` and `datapacks/.index/`. Their
+folder needs a `[[paths]]` entry so clients know how to apply them.
+
+Every index file in the repo has a download URL and a sha1. `pull fjord`
+converts Fjord's files when needed:
+
+- a mod already in the repo with the same jar keeps the repo's file, so your
+  edits to it (like `side`) are kept
+- otherwise the file is copied with its hash replaced by sha1
+- CurseForge mods (Fjord writes them without a URL) and jars without an index
+  file are uploaded to your host, and their index file points there. Jars
+  found on Modrinth by hash point at Modrinth instead.
+
+Extra fields potato reads:
+
+- **side**: `client`, `server` or `both` (default). Clients get `client` and
+  `both`, servers get `server` and `both`.
+- **os**: list of `windows`, `macos`, `linux`. Unset means every OS.
+
+### Platform-specific jars
+
+Some mods ship a different jar per OS with the same file name and mod id. Use
+one index file per variant, each with its own `os`. Fjord only has the jar for
+your OS, so add the others by hand:
 
 ```bash
-cargo run --release -p instance-builder -- -s <path to spec.json>
+potato add voxy-linux.jar --os linux
 ```
 
-This will create a `generated` directory (and a `workdir` directory used during the build), which should then be uploaded to your server. If you followed the [Server setup](/setting-up/server) guide, upload the contents of `generated` (not the directory itself) into a directory on your server that nginx will serve under `/data/`.
+`pull fjord` and `push fjord` only touch entries for the OS they run on, so a
+collaborator on another OS doesn't replace your variant with theirs.
 
-## Manual (remote server build via SSH)
+### Disabled mods
 
-If you already have the backend deployed and you want to automate uploading files and building instances, you can:
+Disabling a mod in Fjord (`.jar.disabled`) is only your local play state; the
+mod stays in the pack. This lets you test any combination of optional mods in
+the source instance. To remove a mod, delete it in Fjord.
 
-- Pick the backend **internal directory** on the server, e.g. `/srv/potato-launcher/state/internal`
-- Upload your `spec.json` into `<internal-dir>/spec.json`
-- Upload your raw modpack files into `<internal-dir>/uploaded-instances/<instance-id>/`
-- Run `instance-builder` inside the running backend container (`potato-launcher-backend` by default)
+Whether a mod is optional, and on by default, is set only by
+`[[client.optional_sets]]`.
 
-This repository includes a helper script that automates the above:
+### Adding a mod without Fjord
 
 ```bash
-python3 scripts/remote-instance.py build --help
-python3 scripts/remote-instance.py fetch --help
+potato add <file or URL> [--side server] [--os linux] [--dir resourcepacks] [--name NAME]
 ```
 
-The build command uploads a temporary copy of `spec.json` with `source_root` rewritten to the in-container uploaded instance path (default: `/data/internal/uploaded-instances/<instance-id>`). It does not modify your local spec file. Instance sync skips `.git` and `saves` by default; see `--help` for flags to change that.
+The jar is looked up on Modrinth by hash. If it isn't there, a URL source
+keeps its URL and a local file is uploaded to your host.
 
-You can keep common settings in `scripts/remote-instance.json`. See [`scripts/remote-instance.example.json`](https://github.com/Petr1Furious/potato-launcher/blob/master/scripts/remote-instance.example.json) for an example.
+## Syncing with Fjord
 
-## JSON structure
-
-```json
-{
-  "download_server_base": "string",
-  "replace_download_urls": "boolean",
-  "resources_url_base": "string",
-  "instances": [
-    {
-      "id": "string",
-      "display_name": {
-        "en": "Minigames",
-        "ru": "Миниигры"
-      },
-      "minecraft_version": "string",
-      "mod_loader": "string",
-      "loader_version": "string",
-      "source_root": "string",
-      "content_rules": [
-        {
-          "path": "string",
-          "apply_on": "update | always",
-          "type": "file",
-          "overwrite": "boolean"
-        },
-        {
-          "path": "string",
-          "apply_on": "update | always",
-          "type": "directory",
-          "overwrite": "boolean",
-          "delete_extra": "boolean",
-          "skip_if_dir_exists": "boolean"
-        },
-        {
-          "path": "string",
-          "apply_on": "update | always",
-          "version": "number",
-          "type": "config_options",
-          "config_type": "json | yaml | toml | properties",
-          "options": []
-        }
-      ],
-      "mod_sync": {
-        "mode": "delta | mirror | mirror_fast",
-        "required": ["string (mod-id)"],
-        "blocked": ["string (mod-id)"],
-        "optional_sets": [
-          {
-            "id": "string",
-            "display_name": {
-              "en": "Extras",
-              "ru": "Дополнительные"
-            },
-            "enabled_by_default": "boolean",
-            "mod_ids": ["string (mod-id)"]
-          }
-        ]
-      },
-      "resource_sync": "on_update | always | always_fast",
-      "auth_backend": {
-        "type": "string"
-      },
-      "default_xmx": "string"
-    }
-  ]
-}
+```bash
+potato pull fjord    # Fjord -> repo
+potato push fjord    # repo -> Fjord
+potato status        # what pull and push would change, for every target
 ```
 
-## Root fields
+`pull` needs a clean repo. It merges Fjord's state into the repo without
+committing. Changes made only in Fjord apply, changes made only in the repo
+stay, and changes made in both show up as normal git conflicts. Review with
+`git diff --cached` and commit.
 
-- **download_server_base** (required): Base URL where generated files are deployed. Files must be reachable at `<download_server_base>/<relative-path>`. Typically `https://your.domain/data`.
-- **replace_download_urls**: If `true`, libraries, assets, included files, and Zulu JRE runtimes are served from your server. If `false`, Mojang/upstream URLs are kept where possible; only metadata, content rules, and Forge patched jars come from your server. Default: `false`.
-- **resources_url_base**: Optional override for the assets base URL. When omitted, assets follow `replace_download_urls` (Mojang servers if `false`, your `download_server_base` if `true`). The backend can also set this from the `RESOURCES_URL_BASE` environment variable.
-- **instances** (required): Array of instance specs (see below).
+`push` writes the last commit into Fjord. It refuses if Fjord changed since
+the last sync, if the last pull isn't committed yet, or if this Fjord instance
+was never synced (the first push on a new machine). `--force` overwrites
+anyway. It keeps your enabled/disabled choice for each mod, and new mods from
+an off-by-default optional set arrive disabled.
 
-## Instance fields
+Each target remembers the commit it last matched in `<target>/.potato/`.
 
-- **id** (required): Stable instance ID used in manifests, URLs, uploaded instance directories, and sync state. Must start with a letter, then use only `a-z`, `0-9`, `_`, and `-` (max 64 characters). Example: `minigames`, `skyblock-2`.
-- **display_name**: Name shown in the launcher. Use a plain string (`"Minigames"`) or a language map object (`{ "en": "Minigames", "ru": "Миниигры" }`). Falls back to `id`.
-- **minecraft_version** (required): Minecraft version.
-- **mod_loader**: `vanilla`, `fabric`, `forge`, or `neoforge`. Default: `vanilla`.
-- **loader_version**: Mod loader version. Required in the admin panel for non-vanilla instances. In manual `spec.json` files, it can be omitted — Fabric/Forge/NeoForge generators then pick a default (latest / recommended / latest).
-- **source_root**: Directory containing authored pack files. Required when `content_rules` is non-empty. Web UI / backend set this to the uploaded instance directory on build.
-- **content_rules**: Rules for syncing authored files into the client instance directory.
-- **mod_sync**: How local `mods/` is reconciled with the remote mod list. Defaults to `delta` mode with empty required/blocked/optional lists if omitted.
-- **resource_sync**: When to verify client jar, libraries, and assets.
-- **auth_backend**: Auth provider for this instance. Omit to allow any provider.
-- **default_xmx**: Default JVM `-Xmx` (e.g. `4G`, `8192M`).
+## Publishing
 
-## Content rules
-
-Each rule is a tagged object. Shared fields:
-
-| Field      | Applies to | Default          | Description                                                                                         |
-| ---------- | ---------- | ---------------- | --------------------------------------------------------------------------------------------------- |
-| `path`     | all        | —                | Path relative to `source_root`                                                                      |
-| `type`     | all        | —                | `file`, `directory`, or `config_options`                                                            |
-| `apply_on` | all        | `update`         | `update` = only on instance update; `always` = on each launch                                       |
-| `version`  | all        | — (always apply) | Optional integer. Apply the rule only once per value, re-applying after you increase it (see below) |
-
-### Versioned (one-time) rules
-
-By default a rule is applied on every sync. Set `version` to an integer to make it a one-time rule instead: the launcher records the applied version per rule (matched by `path` + `type`) and re-applies the rule only after you increase `version` in the pack. This is mainly useful for `config_options` patches that should be applied once and then leave the value alone, even if the player later changes it.
-
-- First install, or a higher `version` than the client has recorded: the rule runs, then the new version is recorded.
-- Same `version` the client already recorded: the rule is skipped.
-
-Omit `version` to keep the default behavior of applying the rule on every sync.
-
-### `type: "file"`
-
-Sync a single file. The builder hashes the file and records download metadata.
-
-| Field       | Default | Description                                   |
-| ----------- | ------- | --------------------------------------------- |
-| `overwrite` | `true`  | Re-check/download even if file exists locally |
-
-### `type: "directory"`
-
-Sync a directory tree.
-
-| Field                | Default | Description                                                                     |
-| -------------------- | ------- | ------------------------------------------------------------------------------- |
-| `overwrite`          | `true`  | Re-check/download per-file even if it exists locally                            |
-| `delete_extra`       | `true`  | Delete local directory files not in the remote manifest                         |
-| `skip_if_dir_exists` | `false` | Skip the entire rule if the directory exists with a `.download_complete` marker |
-
-When `skip_if_dir_exists` is true and the marker is present, the rule does not run: no per-file checks and no deletions, regardless of `overwrite` or `delete_extra`.
-
-### `type: "config_options"`
-
-Patch config options in an existing file.
-
-| Field         | Description                                     |
-| ------------- | ----------------------------------------------- |
-| `config_type` | `json`, `yaml`, `toml`, or `properties`         |
-| `options`     | Array of `{ "key": ..., "value": ... }` entries |
-
-- `key` may be a string (`"difficulty"`) or path array (`["mods", 0, "enabled"]`) for nested access.
-- `properties` supports flat string keys only.
-- `value` is any JSON value.
-
-Example:
-
-```json
-{
-  "path": "config/zoomify.json",
-  "apply_on": "update",
-  "type": "config_options",
-  "config_type": "json",
-  "options": [{ "key": ["initialZoom"], "value": 4 }]
-}
+```bash
+potato build      # build the last commit into .potato/build/, without uploading
+potato publish
 ```
 
-## Mod sync
+`publish` builds the last commit (not uncommitted changes) and uploads it. It
+refuses to run unless:
 
-- **mode**: `delta` (preserve user-added/removed mods), `mirror` (exact match), `mirror_fast` (mirror with size-only checks).
-- **required**: Mod IDs that must stay installed; removed locally they are restored.
-- **blocked**: Mod IDs that must not appear in the pack.
-- **optional_sets**: Toggleable optional mod groups. In the launcher, players enable or disable each set with a checkbox in the instance settings panel. Sets with `enabled_by_default: true` are installed until the player turns them off; the choice is saved per instance. Each set's `display_name` supports the same string-or-language-map format as instance `display_name`.
+- the repo is clean and on `master`
+- the last publish of this instance is in your history, so you can't revert
+  someone else's publish
+- the instance id isn't published from a different repo
 
-Mods are managed separately from `content_rules`; do not add a `mods` directory content rule.
+`--force` skips the last two checks. To roll back, check out an older commit
+and run `potato publish --force`.
 
-## Resource sync
+`potato unpublish` removes the instance from the instance list.
 
-Controls verification of client jar, libraries, and assets (separate from mod sync):
+### Cleaning up storage
 
-- `on_update` — check on instance update only (default)
-- `always` — check on update and launch
-- `always_fast` — like `always`, but size-only checks where possible
+Published files are never deleted by `publish`. Run `potato gc` from any
+instance repo to delete stored files that no published instance uses
+anymore. Versions replaced in the last 7 days are kept for players still
+downloading them (`--grace-days` to change it).
 
-## Authentication providers
+## Collaborating
 
-- `"microsoft"`: Official Microsoft/Minecraft account auth. No extra fields.
-- `"telegram"`: [tgauth](https://foxlab.dev/minecraft/tgauth-backend). Requires `"auth_base_url"`.
-- `"ely.by"`: [ely.by](https://ely.by). Requires `"client_id"`, `"client_secret"`, and optionally `"launcher_name"`.
-- `"offline"`: Offline mode.
+Everyone works on the same repo through git:
+
+The first time, clone the repo, add your Fjord instance to
+`.potato/local.toml` (`fjord = "<instance folder>"`) and run
+`potato push fjord --force`. After that:
+
+```bash
+git pull
+potato push fjord   # get the latest pack into your Fjord instance
+# play, change things in Fjord
+potato pull fjord
+git commit && git push
+potato publish
+```
+
+Publishing needs write access to the host (SSH or S3 keys).
+
+## Cache
+
+Downloads, builds and hashes are cached in your user cache folder (on Linux
+`~/.cache/potato`), shared by all repos. Set `POTATO_CACHE_DIR` to move it, and
+run `potato cache clean` to delete it.
