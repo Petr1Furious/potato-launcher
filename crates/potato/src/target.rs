@@ -186,10 +186,10 @@ fn session_locked(path: &Path) -> bool {
         return false;
     };
     let mut lock: libc::flock = unsafe { std::mem::zeroed() };
-    lock.l_type = libc::F_WRLCK as _;
-    lock.l_whence = libc::SEEK_SET as _;
+    lock.l_type = libc::F_WRLCK as libc::c_short;
+    lock.l_whence = libc::SEEK_SET as libc::c_short;
     let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETLK, &mut lock) };
-    result == 0 && lock.l_type as i32 != libc::F_UNLCK
+    result == 0 && lock.l_type != libc::F_UNLCK as libc::c_short
 }
 
 #[cfg(not(unix))]
@@ -223,8 +223,8 @@ mod tests {
             .open(path)
             .unwrap();
         let mut lock: libc::flock = unsafe { std::mem::zeroed() };
-        lock.l_type = libc::F_WRLCK as _;
-        lock.l_whence = libc::SEEK_SET as _;
+        lock.l_type = libc::F_WRLCK as libc::c_short;
+        lock.l_whence = libc::SEEK_SET as libc::c_short;
         assert_eq!(
             unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) },
             0

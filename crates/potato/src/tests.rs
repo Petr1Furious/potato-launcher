@@ -98,6 +98,8 @@ exclude = ["config/excluded.toml"]
             ),
         );
         git(&repo, &["init", "-q", "-b", "master"]);
+        git(&repo, &["config", "user.name", "t"]);
+        git(&repo, &["config", "user.email", "t@t"]);
         git(&repo, &["add", "-A"]);
         git(&repo, &["commit", "-qm", "init"]);
 
@@ -400,6 +402,8 @@ type = "directory"
     write(&repo.join("config/my file.toml"), "a = 1\n");
     write(&repo.join(".gitignore"), ".potato/\n");
     git(&repo, &["init", "-q", "-b", "master"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-qm", "init"]);
     let mut ctx = Ctx::with_cache(&repo, crate::config::cache_dir().unwrap());
@@ -448,6 +452,8 @@ type = "directory"
     std::fs::copy(repo.join("potato.toml"), other.join("potato.toml")).unwrap();
     std::fs::copy(repo.join(".gitignore"), other.join(".gitignore")).unwrap();
     git(&other, &["init", "-q", "-b", "master"]);
+    git(&other, &["config", "user.name", "t"]);
+    git(&other, &["config", "user.email", "t@t"]);
     git(&other, &["add", "-A"]);
     git(&other, &["commit", "-qm", "other"]);
     let mut other_ctx = Ctx::with_cache(&other, crate::config::cache_dir().unwrap());
