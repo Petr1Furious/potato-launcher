@@ -37,6 +37,7 @@ use launcher_bridge::{
     InstanceLiveStatus, InstanceOrigin, InstanceView, JvmGcOpts, LauncherSettingsView, LocalLoader,
     MessageToBackend, NotificationLevel,
 };
+use launcher_build_config::launcher_name;
 #[cfg(target_os = "linux")]
 use launcher_build_config::use_native_glfw_default;
 use launcher_i18n as t;
@@ -1137,6 +1138,16 @@ impl InstancesPage {
                 .w_full()
                 .min_w_0(),
             )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "{} {}",
+                        launcher_name(),
+                        launcher_build_config::version().unwrap_or("dev")
+                    )),
+            )
     }
 
     fn accounts_panel(
@@ -1560,6 +1571,7 @@ fn instance_card(
     let action = action_button(instance.clone(), sender.clone(), cx);
     let details_handle = instance.handle.clone();
     let show_dir_name = instance.dir_name.as_ref() != instance.display_name.as_ref();
+    let game = game_label(&instance);
     let settings = Button::new(format!("settings-{details_handle}"))
         .label(t::common::settings())
         .on_click(cx.listener(move |page, _, window, cx| {
@@ -1614,6 +1626,15 @@ fn instance_card(
                             .line_clamp(1)
                             .child(instance.dir_name.to_string()),
                     )
+                })
+                .when_some(game, |this, game| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .line_clamp(1)
+                            .child(game),
+                    )
                 }),
         )
         .when(!hide_usernames, |this| {
@@ -1622,6 +1643,16 @@ fn instance_card(
         .child(status_badge(&instance, orphaned, status, cx))
         .child(install_options_slot(&instance, sender.clone()))
         .child(card_actions(action, settings))
+}
+
+/// "1.21.1 · NeoForge", or just the version for vanilla.
+fn game_label(instance: &InstanceView) -> Option<String> {
+    match (&instance.minecraft_version, &instance.loader) {
+        (Some(minecraft), Some(loader)) => Some(format!("{minecraft} · {loader}")),
+        (Some(minecraft), None) => Some(minecraft.to_string()),
+        (None, Some(loader)) => Some(loader.to_string()),
+        (None, None) => None,
+    }
 }
 
 const INSTALL_OPTIONS_SLOT_HEIGHT: f32 = 20.0;

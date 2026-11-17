@@ -344,7 +344,33 @@ impl InstanceMetadata {
             sha1: hash_struct(&self)?,
             auth_backend: self.auth_backend.clone(),
             required_java_version: self.get_java_version(),
+            minecraft_version: self.minecraft_version(),
+            loader: self.loader_name(),
         })
+    }
+
+    /// The vanilla version at the root of the version chain.
+    pub fn minecraft_version(&self) -> Option<String> {
+        self.versions.first().map(|version| version.id.clone())
+    }
+
+    /// Loader name from the last version id in the chain, such as
+    /// `fabric-loader-0.16.9-1.21.1`, `neoforge-21.1.77` or `1.20.1-forge-47.2.0`.
+    pub fn loader_name(&self) -> Option<String> {
+        if self.versions.len() < 2 {
+            return None;
+        }
+        let id = &self.versions.last()?.id;
+        let name = if id.starts_with("fabric-loader-") {
+            "Fabric"
+        } else if id.starts_with("neoforge-") {
+            "NeoForge"
+        } else if id.contains("-forge-") {
+            "Forge"
+        } else {
+            return None;
+        };
+        Some(name.to_string())
     }
 
     pub async fn save(&self, instance_dir: &InstanceDirFS) -> Result<(), InstanceMetadataError> {

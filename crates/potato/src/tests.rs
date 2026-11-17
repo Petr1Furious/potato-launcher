@@ -557,6 +557,18 @@ type = "directory"
     let meta: instance::instance_metadata::InstanceMetadata =
         serde_json::from_slice(&std::fs::read(&meta_path).unwrap()).unwrap();
     assert_eq!(entry.sha1, utils::hash_struct(&meta).unwrap());
+    assert_eq!(entry.minecraft_version.as_deref(), Some("1.21.1"));
+    let expected_loader = if loader == "fabric" {
+        "Fabric"
+    } else {
+        "NeoForge"
+    };
+    assert_eq!(
+        entry.loader.as_deref(),
+        Some(expected_loader),
+        "{:?}",
+        meta.versions.iter().map(|v| &v.id).collect::<Vec<_>>()
+    );
     assert_eq!(
         utils::files::hash_file(&meta_path).await.unwrap(),
         entry.sha1

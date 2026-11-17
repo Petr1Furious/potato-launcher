@@ -567,6 +567,8 @@ impl BackendState {
                         auth_provider: metadata.auth_backend.clone(),
                         default_xmx_mb: parse_xmx_mb(metadata.default_xmx.as_deref()),
                         required_java_version: Some(metadata.get_java_version()),
+                        minecraft_version: metadata.minecraft_version(),
+                        loader: metadata.loader_name(),
                         mod_sync: metadata.mod_sync.clone(),
                     },
                 ))

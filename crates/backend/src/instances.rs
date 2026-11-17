@@ -39,6 +39,8 @@ pub struct LocalMetadataView {
     pub auth_provider: Option<AuthProviderConfig>,
     pub default_xmx_mb: Option<u64>,
     pub required_java_version: Option<String>,
+    pub minecraft_version: Option<String>,
+    pub loader: Option<String>,
     pub mod_sync: ModSyncSettings,
 }
 
@@ -137,6 +139,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
         let mut orphaned = false;
         let mut manifest_auth_provider = None;
         let mut manifest_java_version = None;
+        let mut manifest_versions = (None, None);
         let (display_name, origin) = match &local.source {
             Some(source) => {
                 let manifest = fetched_manifests.get(&source.manifest_url);
@@ -151,6 +154,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                     (Some(_), Some(remote)) => {
                         manifest_auth_provider = remote.auth_backend.clone();
                         manifest_java_version = Some(remote.required_java_version.clone());
+                        manifest_versions =
+                            (remote.minecraft_version.clone(), remote.loader.clone());
                         covered_remote_keys.insert(remote_key(&source.manifest_url, &remote.id));
                         if local.is_installed()
                             && status == InstanceLiveStatus::Installed
@@ -213,6 +218,12 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             ),
         };
 
+        // An installed instance shows what it runs; otherwise what the backend lists.
+        let (minecraft_version, loader) = if metadata.minecraft_version.is_some() {
+            (metadata.minecraft_version.clone(), metadata.loader.clone())
+        } else {
+            manifest_versions
+        };
         let auth_provider = manifest_auth_provider.or(metadata.auth_provider);
         let has_required_account = auth_provider
             .as_ref()
@@ -255,6 +266,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 .required_java_version
                 .clone()
                 .or(manifest_java_version),
+            minecraft_version: minecraft_version.as_deref().map(Arc::from),
+            loader: loader.as_deref().map(Arc::from),
             use_native_glfw: settings.use_native_glfw,
             optional_mod_sets: build_optional_mod_set_views(
                 &metadata.mod_sync,
@@ -304,6 +317,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             jvm_gc_opts: JvmGcOpts::Default,
             java_path: None,
             required_java_version: None,
+            minecraft_version: None,
+            loader: None,
             use_native_glfw: None,
             optional_mod_sets: Arc::from([]),
             launch_after_install: launch_after,
@@ -369,6 +384,8 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 jvm_gc_opts: settings.jvm_gc_opts,
                 java_path: settings.java_path,
                 required_java_version: Some(entry.required_java_version.clone()),
+                minecraft_version: entry.minecraft_version.as_deref().map(Arc::from),
+                loader: entry.loader.as_deref().map(Arc::from),
                 use_native_glfw: settings.use_native_glfw,
                 optional_mod_sets: Arc::from([]),
                 launch_after_install: launch_after,
@@ -816,6 +833,8 @@ mod tests {
             sha1: "remote-sha1".to_string(),
             auth_backend: None,
             required_java_version: "8".to_string(),
+            minecraft_version: None,
+            loader: None,
         };
         let catalogs = HashMap::from([(
             url,
@@ -955,6 +974,8 @@ mod tests {
             sha1: "remote-sha1".to_string(),
             auth_backend: Some(provider.clone()),
             required_java_version: "8".to_string(),
+            minecraft_version: None,
+            loader: None,
         };
         let catalogs = HashMap::from([(
             url,
@@ -990,6 +1011,8 @@ mod tests {
             sha1: "remote-sha1".to_string(),
             auth_backend: Some(required),
             required_java_version: "8".to_string(),
+            minecraft_version: None,
+            loader: None,
         };
         let handle = remote_entry_handle(&url, &entry.id);
         let catalogs = HashMap::from([(
@@ -1151,6 +1174,8 @@ mod tests {
                     sha1: sha1.to_string(),
                     auth_backend: None,
                     required_java_version: "8".to_string(),
+                    minecraft_version: None,
+                    loader: None,
                 })
                 .collect(),
         }

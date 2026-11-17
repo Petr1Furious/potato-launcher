@@ -1104,6 +1104,8 @@ mod tests {
             sha1: "abc".to_string(),
             auth_backend: None,
             required_java_version: "8".to_string(),
+            minecraft_version: None,
+            loader: None,
         };
         let id = remote_entry_handle(&url, &entry.id);
         let catalogs = HashMap::from([(
@@ -1261,6 +1263,8 @@ mod tests {
             sha1: "new".to_string(),
             auth_backend: None,
             required_java_version: "8".to_string(),
+            minecraft_version: None,
+            loader: None,
         };
         let catalogs = HashMap::from([(
             url.clone(),
