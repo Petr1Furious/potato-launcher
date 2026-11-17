@@ -9,7 +9,7 @@ use crate::{
     build::build,
     ctx::Ctx,
     storage::{self, Storage},
-    upload,
+    sync, upload,
 };
 
 pub const MANIFEST_KEY: &str = "instance_manifest.json";
@@ -85,7 +85,10 @@ async fn put_json(storage: &dyn Storage, key: &str, value: &impl Serialize) -> a
 }
 
 pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
-    ctx.git.ensure_clean()?;
+    if !force {
+        let config = ctx.config()?;
+        sync::ensure_committed(&ctx.git, "published", |path| config.is_pack_file(path))?;
+    }
     if ctx.git.branch()?.as_deref() != Some("master") {
         bail!("publish from master");
     }

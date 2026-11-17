@@ -152,6 +152,13 @@ impl Config {
             .collect()
     }
 
+    /// Whether `path` is synced or built: potato.toml, index files and managed files.
+    pub fn is_pack_file(&self, path: &str) -> bool {
+        path == CONFIG_FILE
+            || crate::index::index_dir_of(path).is_some()
+            || self.is_managed_file(path)
+    }
+
     /// Whether `path` is a managed non-index file.
     pub fn is_managed_file(&self, path: &str) -> bool {
         if crate::index::index_dir_of(path).is_some() {

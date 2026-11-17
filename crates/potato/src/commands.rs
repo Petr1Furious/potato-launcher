@@ -96,6 +96,13 @@ pub fn target_add(
         TargetType::Server
     });
     let path = check_folder(kind, path)?;
+    let unchanged = LocalConfig::load(repo)?
+        .targets
+        .get(name)
+        .is_some_and(|old| old.kind == kind && old.path == path);
+    if !unchanged {
+        forget_sync(repo, name)?;
+    }
     set_local_target(repo, name, Some((kind, &path)))?;
     println!("{name} ({}): {}", kind.as_str(), path.display());
     Ok(())
@@ -113,7 +120,7 @@ pub fn target_list(repo: &Path) -> anyhow::Result<()> {
         .targets
         .iter()
         .map(|(name, target)| {
-            let state = if synced_file(&target.path).exists() {
+            let state = if synced_file(repo, name).exists() {
                 "synced"
             } else {
                 "never synced"
@@ -129,10 +136,18 @@ pub fn target_list(repo: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn forget_sync(repo: &Path, name: &str) -> anyhow::Result<()> {
+    match std::fs::remove_file(synced_file(repo, name)) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err.into()),
+        _ => Ok(()),
+    }
+}
+
 pub fn target_remove(repo: &Path, name: &str) -> anyhow::Result<()> {
     if !LocalConfig::load(repo)?.targets.contains_key(name) {
         bail!("unknown target '{name}'");
     }
+    forget_sync(repo, name)?;
     set_local_target(repo, name, None)
 }
 

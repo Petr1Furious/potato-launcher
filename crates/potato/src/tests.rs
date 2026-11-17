@@ -187,7 +187,7 @@ async fn pull_push_and_status() {
         .await;
 
     // First pull takes Prism as it is, uploads the CurseForge jar and reads versions.
-    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
     s.commit("pull");
     assert_eq!(read(&s.repo.join("config/a.toml")), "a = 1\n");
     assert!(!s.repo.join("options.txt").exists());
@@ -221,7 +221,7 @@ async fn pull_push_and_status() {
         read(&s.game.join("mods/.index/sodium.pw.toml")),
         MODRINTH_INDEX
     );
-    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
     assert!(s.ctx.git.is_clean().unwrap());
 
     // A side override in the repo survives pulls while the jar stays the same.
@@ -235,7 +235,7 @@ async fn pull_push_and_status() {
     write(&s.repo.join("config/a.toml"), "a = 2\n");
     s.commit("repo edits");
     write(&s.game.join("kubejs/s.js"), "two\n");
-    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
     s.commit("merge");
     let parents = git(&s.repo, &["rev-list", "--parents", "-n", "1", "HEAD"]);
     assert_eq!(
@@ -260,7 +260,7 @@ async fn pull_push_and_status() {
     write(&s.repo.join("config/a.toml"), "a = 3\n");
     s.commit("repo a=3");
     write(&s.game.join("config/a.toml"), "a = 4\n");
-    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
     assert!(git(&s.repo, &["diff", "--name-only", "--diff-filter=U"]).contains("config/a.toml"));
     assert!(!s.repo.join(".git/CHERRY_PICK_HEAD").exists());
     write(&s.repo.join("config/a.toml"), "a = 4\n");
@@ -271,7 +271,7 @@ async fn pull_push_and_status() {
     write(&s.repo.join("config/a.toml"), "a = 5\n");
     s.commit("repo a=5");
     write(&s.game.join("config/a.toml"), "a = 5\n");
-    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
     assert!(s.ctx.git.is_clean().unwrap());
 
     // Removing a mod in the repo removes its jar and index file from Prism.
@@ -326,11 +326,56 @@ async fn os_variants_are_left_alone() {
         ),
     )
     .await;
-    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
     s.commit("pull");
     assert_eq!(s.repo_index("voxy").os().unwrap(), vec![other]);
     let mine = s.repo_index(&format!("voxy-{}", crate::index::current_os()));
     assert_eq!(mine.sha1(), Some(sha1(b"mine").as_str()));
+}
+
+#[tokio::test]
+async fn uncommitted_changes() {
+    let mut s = Setup::new();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    s.commit("pull");
+
+    // Files outside the pack never block a push.
+    write(&s.repo.join("README.md"), "notes\n");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+
+    // Uncommitted pack files do, since push would leave them out.
+    write(&s.repo.join("config/a.toml"), "a = 7\n");
+    let err = sync::push(&mut s.ctx, "prism", false).await.unwrap_err();
+    assert!(err.to_string().contains("config/a.toml"), "{err}");
+    git(&s.repo, &["checkout", "-q", "--", "config/a.toml"]);
+
+    // Pulls stack up without committing in between.
+    write(&s.game.join("kubejs/s.js"), "one\n");
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    write(&s.game.join("config/a.toml"), "a = 9\n");
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    assert_eq!(read(&s.repo.join("kubejs/s.js")), "one\n");
+    assert_eq!(read(&s.repo.join("config/a.toml")), "a = 9\n");
+    let err = sync::push(&mut s.ctx, "prism", false).await.unwrap_err();
+    assert!(err.to_string().contains("won't be pushed"), "{err}");
+}
+
+#[tokio::test]
+async fn discarded_pull_comes_back_with_force() {
+    let mut s = Setup::new();
+    s.prism_mod("sodium", "sodium.jar", b"sodium", Some(MODRINTH_INDEX))
+        .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    assert!(s.repo.join(".potato/synced/prism").exists());
+    assert!(!s.game.join("../.potato").exists());
+    git(&s.repo, &["reset", "-q", "--hard"]);
+
+    // The record still matches Prism, so only --force brings the mod back.
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    assert!(!s.repo.join("mods/.index/sodium.pw.toml").exists());
+    s.commit("versions");
+    sync::pull(&mut s.ctx, "prism", &[], true).await.unwrap();
+    assert!(s.repo.join("mods/.index/sodium.pw.toml").exists());
 }
 
 #[tokio::test]
@@ -340,11 +385,11 @@ async fn server_sync() {
         .await;
     s.prism_mod("jei", "jei.jar", b"jei", Some(CURSEFORGE_INDEX))
         .await;
-    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
     s.commit("pull");
 
     // A never-synced server can be pulled; it has nothing the repo lacks.
-    sync::pull(&mut s.ctx, "main", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "main", &[], false).await.unwrap();
     assert!(s.repo.join("config/a.toml").exists());
     let err = sync::push(&mut s.ctx, "main", false).await.unwrap_err();
     assert!(err.to_string().contains("--force"), "{err}");
@@ -365,14 +410,19 @@ async fn server_sync() {
     // Server pulls only take changes to files the repo already has.
     write(&s.server.join("config/a.toml"), "a = 5\n");
     write(&s.server.join("config/excluded.toml"), "mine\n");
-    sync::pull(&mut s.ctx, "main", &[]).await.unwrap();
+    sync::pull(&mut s.ctx, "main", &[], false).await.unwrap();
     s.commit("pull server");
     assert_eq!(read(&s.repo.join("config/a.toml")), "a = 5\n");
     assert!(!s.repo.join("config/server-only.toml").exists());
     assert_eq!(read(&s.repo.join("config/excluded.toml")), "x = 1\n");
-    sync::pull(&mut s.ctx, "main", &["config/server-only.toml".into()])
-        .await
-        .unwrap();
+    sync::pull(
+        &mut s.ctx,
+        "main",
+        &["config/server-only.toml".into()],
+        false,
+    )
+    .await
+    .unwrap();
     s.commit("add server file");
     assert!(s.repo.join("config/server-only.toml").exists());
 

@@ -154,12 +154,18 @@ new mods in an off-by-default set arrive disabled.
 
 ## Syncing with targets
 
-Each target remembers the repo commit it last matched, its **base**, in
-`<target>/.potato/synced-commit`. A local ref `refs/potato/<target>` keeps it
-from being garbage-collected. If the base commit isn't in the repo, the target
-counts as never synced.
+Each target remembers the repo commit it last matched, its **base**, in the
+repo's `.potato/synced/<name>` (local to the clone). A local ref
+`refs/potato/<name>` keeps it from being garbage-collected. If the base commit
+isn't in the repo, the target counts as never synced. `target remove`, and
+`target add` with a different folder or kind, forget the base.
 
-Both directions need a clean repo tree.
+`pull` works on a dirty tree; git refuses if the cherry-pick would overwrite
+unstaged edits, and staged edits (including earlier uncommitted pulls) take part
+in the three-way merge. `push` and `publish` build from `HEAD`, so they refuse
+when uncommitted changes touch pack files (`potato.toml`, index files, managed
+paths; for `push`, minus the server's `exclude`) and name them; other files
+don't matter. `--force` skips this check.
 
 ### `potato pull <target>`
 
@@ -174,7 +180,8 @@ Both directions need a clean repo tree.
    history; `refs/potato/<target>` keeps it from being garbage-collected.
 
 Discarding a pull (`git reset --hard`) means the repo wins: the target still
-matches its base, so the next `push` overwrites those changes.
+matches its base, so the next `push` overwrites those changes. `pull --force`
+ignores the base and compares the target with `HEAD`, which brings them back.
 
 What gets read:
 
@@ -267,10 +274,10 @@ index entries unless `mirror = true`.
 
 ### `potato publish`
 
-Refuses unless the tree is clean, `master` is checked out, the last publish's
-`source_commit` is an ancestor of `HEAD`, and the instance id isn't published
-from another repo (`repo_root`, the repo's root commit). `--force` skips the
-last two checks. It always rebuilds, then:
+Refuses unless `master` is checked out, pack files have no uncommitted changes,
+the last publish's `source_commit` is an ancestor of `HEAD`, and the instance id
+isn't published from another repo (`repo_root`, the repo's root commit).
+`--force` skips all but the `master` check. It always rebuilds, then:
 
 1. uploads objects not already in storage, and fails if a referenced object
    is missing (a CurseForge or custom jar that was never uploaded)

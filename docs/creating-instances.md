@@ -251,19 +251,30 @@ potato target remove <name>
 `target add` picks the kind from the folder: one with `mmc-pack.json` is a Prism
 instance, anything else a server. `--prism` or `--server` sets it explicitly.
 
-`pull` needs a clean repo. It stages Prism's changes since the last sync in the
-repo, without committing: changes made only in Prism apply, changes made only
-in the repo stay, and changes made in both show up as normal git conflicts.
-Review with `git diff --cached` and commit. To drop the pulled changes, run
-`git reset --hard`; the next `push` then overwrites them in Prism.
+`pull` stages Prism's changes since the last sync in the repo, without
+committing: changes made only in Prism apply, changes made only in the repo
+stay, and changes made in both show up as normal git conflicts. Review with
+`git diff --cached` and commit. If you drop the pulled changes (`git reset
+--hard`), potato still counts them as synced: the next `pull` won't bring them
+back and the next `push` removes them from Prism. To get them back, run
+`potato pull prism --force`, which ignores the last sync and compares Prism
+with your last commit.
+
+You can pull again before committing; each pull adds on top of the last one.
+Other uncommitted changes are fine too. git refuses a pull that would overwrite
+unstaged edits to the same file. Note that `git reset --hard` to drop a pull
+then drops your own uncommitted changes as well.
 
 `push` writes the last commit into Prism. It refuses if Prism changed since
-the last sync, or if this Prism instance was never synced with this repo (the
-first push on a new machine or from a fresh clone). `--force` overwrites
-anyway. It keeps your enabled/disabled choice for each mod, and new mods from
-an off-by-default optional set arrive disabled.
+the last sync, if this Prism instance was never synced with this repo (the
+first push on a new machine or from a fresh clone), or if pack files
+(`potato.toml`, index files, managed paths) have uncommitted changes, since
+those wouldn't be pushed. Other uncommitted files don't matter. `--force`
+overwrites anyway. It keeps your enabled/disabled choice for each mod, and new
+mods from an off-by-default optional set arrive disabled.
 
-Each target remembers the commit it last matched in `<target>/.potato/`.
+Each target's last sync is recorded in the repo's `.potato/synced/<name>`, so it
+is local to your clone.
 
 ## Publishing
 
@@ -275,12 +286,13 @@ potato publish
 `publish` builds the last commit (not uncommitted changes) and uploads it. It
 refuses to run unless:
 
-- the repo is clean and on `master`
+- `master` is checked out
+- pack files have no uncommitted changes
 - the last publish of this instance is in your history, so you can't revert
   someone else's publish
 - the instance id isn't published from a different repo
 
-`--force` skips the last two checks. To roll back, check out an older commit
+`--force` skips all but the first. To roll back, check out an older commit
 and run `potato publish --force`.
 
 Uploads list each pack file and jar. Libraries, assets, Java and game jars are

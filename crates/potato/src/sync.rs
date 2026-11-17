@@ -388,6 +388,27 @@ fn jar_upload(sha1: &str, path: &Path, filename: &str, note: &'static str) -> Up
     }
 }
 
+/// Refuses when uncommitted changes touch files that `action` would leave out.
+pub fn ensure_committed(
+    git: &Git,
+    action: &str,
+    relevant: impl Fn(&str) -> bool,
+) -> anyhow::Result<()> {
+    let paths = git
+        .changed_paths()?
+        .into_iter()
+        .filter(|path| relevant(path))
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut list = paths[..paths.len().min(5)].join(", ");
+    if paths.len() > 5 {
+        list.push_str(&format!(" and {} more", paths.len() - 5));
+    }
+    bail!("uncommitted changes to {list} won't be {action}; commit them first or use --force");
+}
+
 /// The commit the target last matched, if this repo has it.
 pub fn effective_base(git: &Git, target: &Target) -> anyhow::Result<Option<String>> {
     Ok(target
@@ -401,11 +422,14 @@ fn print_changes(changes: &[Change]) {
     }
 }
 
-pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String]) -> anyhow::Result<()> {
-    ctx.git.ensure_clean()?;
+pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String], force: bool) -> anyhow::Result<()> {
     let config = ctx.config()?;
-    let target = Target::resolve(name, &config, &ctx.local()?)?;
-    let base = effective_base(&ctx.git, &target)?;
+    let target = Target::resolve(&ctx.repo, name, &config, &ctx.local()?)?;
+    let base = if force {
+        None
+    } else {
+        effective_base(&ctx.git, &target)?
+    };
     // Without a base, compare against HEAD so unchanged files merge cleanly.
     let base_tree = match &base {
         Some(base) => ctx.git.read_tree(base)?,
@@ -476,10 +500,14 @@ pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String]) -> anyhow::Result<(
 }
 
 pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> {
-    ctx.git.ensure_clean()?;
     let head = ctx.git.head()?;
     let config = ctx.config()?;
-    let target = Target::resolve(name, &config, &ctx.local()?)?;
+    let target = Target::resolve(&ctx.repo, name, &config, &ctx.local()?)?;
+    if !force {
+        ensure_committed(&ctx.git, "pushed", |path| {
+            config.is_pack_file(path) && !target.is_excluded(path)
+        })?;
+    }
     if !force && target.is_running() {
         bail!("{name} is running, stop it first");
     }
@@ -671,7 +699,7 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
     let head = ctx.git.head()?;
     let head_tree = ctx.git.read_tree(&head)?;
     for name in names {
-        let target = match Target::resolve(&name, &config, &local) {
+        let target = match Target::resolve(&ctx.repo, &name, &config, &local) {
             Ok(target) => target,
             Err(err) => {
                 println!("{name}: {err}");

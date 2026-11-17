@@ -83,15 +83,31 @@ impl Git {
             .is_ok_and(|output| output.status.success())
     }
 
+    #[cfg(test)]
     pub fn is_clean(&self) -> anyhow::Result<bool> {
         Ok(self.out(&["status", "--porcelain"])?.is_empty())
     }
 
-    pub fn ensure_clean(&self) -> anyhow::Result<()> {
-        if !self.is_clean()? {
-            bail!("repo has uncommitted changes, commit them first");
+    /// Paths with uncommitted changes, untracked files included.
+    pub fn changed_paths(&self) -> anyhow::Result<Vec<String>> {
+        let out = self.checked(
+            &["status", "--porcelain", "-z", "--untracked-files=all"],
+            &[],
+            None,
+        )?;
+        let mut paths = vec![];
+        let mut records = out.split(|byte| *byte == 0).filter(|r| !r.is_empty());
+        while let Some(record) = records.next() {
+            let record = std::str::from_utf8(record)?;
+            let path = record.get(3..).context("bad git status output")?;
+            paths.push(path.to_string());
+            if (record.starts_with('R') || record.starts_with('C'))
+                && let Some(old) = records.next()
+            {
+                paths.push(std::str::from_utf8(old)?.to_string());
+            }
         }
-        Ok(())
+        Ok(paths)
     }
 
     pub fn head(&self) -> anyhow::Result<String> {

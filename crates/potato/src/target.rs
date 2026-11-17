@@ -4,7 +4,7 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use crate::{
-    config::{Config, LoaderName, LocalConfig, TargetType, under},
+    config::{Config, LOCAL_DIR, LoaderName, LocalConfig, TargetType, under},
     index::Side,
 };
 
@@ -23,10 +23,18 @@ pub struct Target {
     pub root: PathBuf,
     /// The game folder.
     pub game_dir: PathBuf,
+    /// The repo file holding the commit the target last matched.
+    record: PathBuf,
 }
 
 impl Target {
-    pub fn resolve(name: &str, config: &Config, local: &LocalConfig) -> anyhow::Result<Self> {
+    pub fn resolve(
+        repo: &Path,
+        name: &str,
+        config: &Config,
+        local: &LocalConfig,
+    ) -> anyhow::Result<Self> {
+        let record = synced_file(repo, name);
         let local_target = local.targets.get(name).with_context(|| {
             format!("unknown target '{name}'; add it with `potato target add {name} <folder> --prism` or `--server`")
         })?;
@@ -39,6 +47,7 @@ impl Target {
                     kind: TargetKind::Prism,
                     root,
                     game_dir,
+                    record,
                 })
             }
             TargetType::Server => {
@@ -55,6 +64,7 @@ impl Target {
                     kind: TargetKind::Server { exclude },
                     game_dir: root.clone(),
                     root,
+                    record,
                 })
             }
         }
@@ -85,21 +95,16 @@ impl Target {
         }
     }
 
-    fn base_file(&self) -> PathBuf {
-        synced_file(&self.root)
-    }
-
     pub fn recorded_base(&self) -> Option<String> {
-        std::fs::read_to_string(self.base_file())
+        std::fs::read_to_string(&self.record)
             .ok()
             .map(|content| content.trim().to_string())
             .filter(|content| !content.is_empty())
     }
 
     pub fn record_base(&self, commit: &str) -> anyhow::Result<()> {
-        let path = self.base_file();
-        std::fs::create_dir_all(path.parent().expect("base file has a parent"))?;
-        std::fs::write(path, format!("{commit}\n"))?;
+        std::fs::create_dir_all(self.record.parent().expect("record has a parent"))?;
+        std::fs::write(&self.record, format!("{commit}\n"))?;
         Ok(())
     }
 
@@ -135,8 +140,8 @@ impl Target {
     }
 }
 
-pub fn synced_file(root: &Path) -> PathBuf {
-    root.join(".potato").join("synced-commit")
+pub fn synced_file(repo: &Path, name: &str) -> PathBuf {
+    repo.join(LOCAL_DIR).join("synced").join(name)
 }
 
 fn prism_game_dir(root: &Path) -> anyhow::Result<PathBuf> {

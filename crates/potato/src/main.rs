@@ -61,6 +61,9 @@ enum Command {
         /// Also take a new file or folder from a server.
         #[arg(long = "add")]
         add: Vec<String>,
+        /// Ignore the last sync and compare the target with the last commit.
+        #[arg(long)]
+        force: bool,
     },
     /// Write the committed repo to a target.
     Push {
@@ -85,7 +88,7 @@ enum Command {
     Build,
     /// Build the last commit and publish it.
     Publish {
-        /// Skip the checks against the last publish.
+        /// Skip the checks against the last publish and for uncommitted changes.
         #[arg(long)]
         force: bool,
     },
@@ -203,7 +206,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Init { .. } | Command::Target { .. } | Command::PublishLauncher { .. } => {
             unreachable!()
         }
-        Command::Pull { target, add } => sync::pull(&mut ctx, &target, &add).await,
+        Command::Pull { target, add, force } => sync::pull(&mut ctx, &target, &add, force).await,
         Command::Push { target, force } => sync::push(&mut ctx, &target, force).await,
         Command::Status => sync::status(&mut ctx).await,
         Command::Mod {
