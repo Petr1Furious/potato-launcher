@@ -140,10 +140,15 @@ Jar hashes are cached by path, size and modification time.
 
 ### OS variants
 
-Mods with one jar per OS (same filename and mod id) get one index file per
-variant, each with its own `os`. `pull prism` and `push prism` only touch
-entries for the OS they run on. Other variants are added with
-`potato mod add <jar|url> --os <os>`.
+Mods with one jar per OS (same mod id) get one index file per variant, each
+with its own `os`. `pull prism` and `push prism` only touch entries for the OS
+they run on. Other variants are added with `potato mod add <jar|url> --os <os>`,
+and `potato mod set <name> --os <os>|all --side <side>` edits the fields.
+
+A jar with a new filename is an update, not a new mod, when it matches exactly
+one entry for the current OS whose jar disappeared: same Modrinth or
+CurseForge project, or else same index name. The update keeps that entry's
+file name, `side` and `os`. Ambiguous cases count as a new mod.
 
 ### Disabled mods
 
@@ -329,6 +334,8 @@ regenerates `index.html`. CI runs it on `v*` tags.
 - `potato mod add <file|url> [--os] [--side] [--dir] [--name]`
 - `potato mod list`: index name, mod id, side and OS of every entry.
 - `potato mod id <jar | modrinth:slug>`
+- `potato mod set <name> [--os <os>]... [--side <side>]`: `--os all` clears the
+  list.
 - `potato cache clean`. The cache is in the user cache dir, overridable with
   `POTATO_CACHE_DIR`.
 - Global `-C/--repo <dir>`, and `-v` to list every uploaded file. Without it,

@@ -347,6 +347,49 @@ pub async fn mod_id(ctx: &mut Ctx, source: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn mod_set(ctx: &Ctx, name: &str, os: &[String], side: Option<&str>) -> anyhow::Result<()> {
+    if os.is_empty() && side.is_none() {
+        bail!("pass --os or --side");
+    }
+    let (dir, name) = name.split_once('/').unwrap_or(("mods", name));
+    let rel = index_path(dir, name);
+    let full = ctx.repo.join(&rel);
+    let mut entry = IndexFile::parse(
+        &std::fs::read_to_string(&full)
+            .with_context(|| format!("no {rel}, see `potato mod list`"))?,
+    )
+    .with_context(|| rel.clone())?;
+    if !os.is_empty() {
+        if dir != "mods" {
+            bail!("os is only supported for mods");
+        }
+        if os == ["all"] {
+            entry.set_os(&[]);
+        } else {
+            let os = os
+                .iter()
+                .map(|os| normalize_os(os))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            entry.set_os(&os);
+        }
+    }
+    if let Some(side) = side {
+        entry.set_side(Side::parse(side)?);
+    }
+    std::fs::write(&full, entry.to_bytes())?;
+    let os = entry.os()?;
+    println!(
+        "{rel}: side {}, os {}",
+        entry.side()?.as_str(),
+        if os.is_empty() {
+            "all".to_string()
+        } else {
+            os.join(", ")
+        }
+    );
+    Ok(())
+}
+
 pub fn cache_clean(ctx: &Ctx) -> anyhow::Result<()> {
     if ctx.cache_dir.exists() {
         std::fs::remove_dir_all(&ctx.cache_dir)?;

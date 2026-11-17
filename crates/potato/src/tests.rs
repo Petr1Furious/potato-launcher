@@ -333,6 +333,56 @@ async fn os_variants_are_left_alone() {
     assert_eq!(mine.sha1(), Some(sha1(b"mine").as_str()));
 }
 
+fn voxy_index(filename: &str) -> String {
+    format!(
+        "filename = \"{filename}\"\nname = \"Voxy\"\nside = \"client\"\n\n[download]\nhash = \"ffff\"\nhash-format = \"sha512\"\nurl = \"https://cdn.modrinth.com/data/v/{filename}\"\n\n[update.modrinth]\nmod-id = \"VOXY\"\nversion = \"1\"\n"
+    )
+}
+
+#[tokio::test]
+async fn renamed_jar_updates_its_os_variant() {
+    let mut s = Setup::new();
+    let os = crate::index::current_os();
+    s.prism_mod(
+        "voxy",
+        "voxy-1.jar",
+        b"voxy 1",
+        Some(&voxy_index("voxy-1.jar")),
+    )
+    .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    crate::commands::mod_set(&s.ctx, "voxy", &[os.to_string()], None).unwrap();
+    let mut other = IndexFile::parse(&voxy_index("voxy-other.jar")).unwrap();
+    let other_os = if os == "windows" { "linux" } else { "windows" };
+    other.set_os(&[other_os]);
+    std::fs::write(
+        s.repo.join("mods/.index/voxy-other.pw.toml"),
+        other.to_bytes(),
+    )
+    .unwrap();
+    s.commit("two voxies");
+
+    // Prism replaces the jar under a new name but keeps its own index name.
+    std::fs::remove_file(s.game.join("mods/voxy-1.jar")).unwrap();
+    s.prism_mod(
+        "voxy",
+        "voxy-2.jar",
+        b"voxy 2",
+        Some(&voxy_index("voxy-2.jar")),
+    )
+    .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    let updated = s.repo_index("voxy");
+    assert_eq!(updated.filename(), Some("voxy-2.jar"));
+    assert_eq!(updated.os().unwrap(), vec![os]);
+    assert_eq!(s.repo_index("voxy-other").os().unwrap(), vec![other_os]);
+    assert!(
+        !s.repo
+            .join(format!("mods/.index/voxy-{os}.pw.toml"))
+            .exists()
+    );
+}
+
 #[tokio::test]
 async fn packs_need_a_path() {
     let mut s = Setup::new();

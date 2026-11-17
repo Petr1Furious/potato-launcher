@@ -159,6 +159,17 @@ enum ModAction {
     List,
     /// Print the mod id of a jar or `modrinth:<slug>`.
     Id { source: String },
+    /// Change which OSes or side a mod or pack is for.
+    Set {
+        /// Index name, as `mod list` shows it.
+        name: String,
+        /// windows, macos or linux; repeat for several, or `all`.
+        #[arg(long)]
+        os: Vec<String>,
+        /// client, server or both.
+        #[arg(long)]
+        side: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -237,6 +248,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Mod {
             action: ModAction::Id { source },
         } => commands::mod_id(&mut ctx, &source).await,
+        Command::Mod {
+            action: ModAction::Set { name, os, side },
+        } => commands::mod_set(&ctx, &name, &os, side.as_deref()),
         Command::Build => {
             let head = ctx.git.head()?;
             let output = Box::pin(build::build(&mut ctx, &head)).await?;

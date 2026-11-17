@@ -177,6 +177,25 @@ impl IndexFile {
         }
     }
 
+    /// The Modrinth or CurseForge project this file belongs to, as `modrinth:<id>`
+    /// or `curseforge:<id>`.
+    pub fn project(&self) -> Option<String> {
+        let update = self.doc.get("update")?;
+        if let Some(id) = update
+            .get("modrinth")
+            .and_then(|table| table.get("mod-id"))
+            .and_then(Item::as_str)
+        {
+            return Some(format!("modrinth:{id}"));
+        }
+        let id = update.get("curseforge")?.get("project-id")?;
+        let id = id
+            .as_integer()
+            .map(|id| id.to_string())
+            .or_else(|| id.as_str().map(str::to_string))?;
+        Some(format!("curseforge:{id}"))
+    }
+
     pub fn set_modrinth(&mut self, project_id: &str, version_id: &str) {
         let mut table = Table::new();
         table["mod-id"] = value(project_id);

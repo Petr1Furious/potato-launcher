@@ -287,6 +287,20 @@ async fn read_prism(
             }
         }
         binaries.sort();
+        let present = binaries
+            .iter()
+            .map(|(name, _)| {
+                name.strip_suffix(DISABLED_SUFFIX)
+                    .unwrap_or(name)
+                    .to_string()
+            })
+            .collect::<HashSet<_>>();
+        // Entries whose file is gone: a renamed jar may be an update of one of them.
+        let mut vanished = base_by_filename
+            .iter()
+            .filter(|(filename, _)| !present.contains(filename.as_str()))
+            .map(|(_, (path, entry, _))| (path.clone(), entry.clone()))
+            .collect::<Vec<_>>();
         for (name, path) in binaries {
             let filename = name
                 .strip_suffix(DISABLED_SUFFIX)
@@ -326,6 +340,13 @@ async fn read_prism(
                 snapshot,
             )
             .await?;
+            if let Some(position) = find_update(&vanished, &entry, &name) {
+                let (base_path, base_entry) = vanished.remove(position);
+                let mut entry = entry;
+                entry.carry_overrides(&base_entry);
+                snapshot.files.insert(base_path, entry.to_bytes());
+                continue;
+            }
             let mut index = index_path(dir, &name);
             if base_tree.contains_key(&index) || snapshot.files.contains_key(&index) {
                 index = index_path(dir, &format!("{name}-{}", current_os()));
@@ -334,6 +355,31 @@ async fn read_prism(
         }
     }
     Ok(())
+}
+
+/// Which vanished entry a renamed jar replaces: the only one from the same
+/// Modrinth or CurseForge project, or else the only one with the same index name.
+fn find_update(vanished: &[(String, IndexFile)], entry: &IndexFile, name: &str) -> Option<usize> {
+    let only = |matches: Vec<usize>| (matches.len() == 1).then(|| matches[0]);
+    if let Some(project) = entry.project() {
+        let same = vanished
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, base))| base.project().as_deref() == Some(project.as_str()))
+            .map(|(position, _)| position)
+            .collect::<Vec<_>>();
+        if !same.is_empty() {
+            return only(same);
+        }
+    }
+    only(
+        vanished
+            .iter()
+            .enumerate()
+            .filter(|(_, (path, _))| index_name(path) == name)
+            .map(|(position, _)| position)
+            .collect(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

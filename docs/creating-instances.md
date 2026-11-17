@@ -203,16 +203,23 @@ Extra fields potato reads:
 
 ### Platform-specific jars
 
-Some mods ship a different jar per OS with the same file name and mod id. Use
-one index file per variant, each with its own `os`. Prism only has the jar for
-your OS, so add the others by hand:
+Some mods ship a different jar per OS with the same mod id. Use one index file
+per variant, each with its own `os`. Prism only has the jar for your OS, so
+mark that one and add the others:
 
 ```bash
-potato mod add voxy-linux.jar --os linux
+potato mod set voxy --os macos
+potato mod add <windows jar or URL> --os windows --name voxy-windows
 ```
 
 `pull prism` and `push prism` only touch entries for the OS they run on, so a
-collaborator on another OS doesn't replace your variant with theirs.
+collaborator on another OS doesn't replace your variant with theirs. When
+Prism updates a mod under a new jar name, `pull` keeps it in the same index
+file with the same `side` and `os`: it matches the new jar to the entry whose
+jar disappeared, by Modrinth or CurseForge project, or else by index name.
+
+`potato mod set <name> [--os <os>]... [--side <side>]` changes these fields;
+`--os all` makes a mod apply to every OS again.
 
 ### Disabled mods
 
