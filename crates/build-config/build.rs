@@ -45,6 +45,7 @@ fn main() {
         "LAUNCHER_NAME",
         "LAUNCHER_APP_ID",
         "LAUNCHER_ICON",
+        "LAUNCHER_DATA_DIR",
         "INSTANCE_MANIFEST_URLS",
         "LAUNCHER_UPDATE_URL",
         "LAUNCHER_UPDATE_GITHUB",
@@ -59,6 +60,12 @@ fn main() {
     let launcher_app_id =
         get_env("LAUNCHER_APP_ID", &build_env).unwrap_or_else(|| LAUNCHER_APP_ID_DEFAULT.into());
     let launcher_icon = get_env("LAUNCHER_ICON", &build_env);
+    let data_dir = get_env("LAUNCHER_DATA_DIR", &build_env);
+    if let Some(dir) = &data_dir
+        && (dir.contains(['/', '\\']) || dir == "." || dir == "..")
+    {
+        panic!("LAUNCHER_DATA_DIR must be a single folder name");
+    }
     let update_url = get_env("LAUNCHER_UPDATE_URL", &build_env);
     let update_github = get_env("LAUNCHER_UPDATE_GITHUB", &build_env);
     if update_url.is_some() && update_github.is_some() {
@@ -87,6 +94,7 @@ fn main() {
         r#"pub const LAUNCHER_NAME: &str = {launcher_name:?};
 pub const LAUNCHER_APP_ID: &str = {launcher_app_id:?};
 pub const LAUNCHER_ICON: Option<&str> = {launcher_icon:?};
+pub const LAUNCHER_DATA_DIR: Option<&str> = {data_dir:?};
 pub const INSTANCE_MANIFEST_URLS: &[&str] = &[{urls_literal}];
 pub const LAUNCHER_UPDATE_URL: Option<&str> = {update_url:?};
 pub const LAUNCHER_UPDATE_GITHUB: Option<&str> = {update_github:?};

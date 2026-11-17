@@ -36,6 +36,7 @@ To use this option, go to the "Settings" tab, then choose "Secrets and variables
 - **LAUNCHER_ICON** (required): A path to the launcher icon, relative to the repository root. For example, `packaging/potato_launcher.png`
 
   If you are using the environment variables option, this can also be a URL.
+- **LAUNCHER_DATA_DIR** (optional): The name of the folder the launcher keeps its data in, inside the user's data directory. Default: the launcher name in lowercase with dashes, for example `potato-launcher`. Each launcher build gets its own folder, so set this only to keep an existing folder: launchers built before this setting existed all used `potato-launcher`. Users can also override the full path when running the launcher with the `POTATO_LAUNCHER_DATA_DIR` environment variable.
 - **LAUNCHER_UPDATE_URL** (optional): Where the launcher looks for its own updates, on your host. Set it to `https://<your-domain>/launcher`. The launcher reads `<url>/<os>/version.txt` and downloads `<url>/<os>/<file>`.
 - **LAUNCHER_UPDATE_GITHUB** (optional): Update from GitHub Releases instead, as `owner/repo`. The launcher reads the latest release and uses its tag as the version.
 
@@ -54,7 +55,7 @@ git tag v1.2.0
 git push --tags
 ```
 
-The tag becomes the launcher's version. The **Release** job then creates a
+The tag becomes the launcher's version. Use `vX.Y.Z` tags (pre-releases like `v1.2.0-rc1` work too): launchers only offer an update when the published version is newer than their own. Versions that aren't `vX.Y.Z` update on any difference. The **Release** job then creates a
 GitHub release with the launcher files and `potato` binaries, and, if
 `LAUNCHER_PUBLISH_TARGET` is set, publishes the launcher to your host with
 `potato publish-launcher`. That also regenerates the downloads page at the

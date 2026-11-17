@@ -26,6 +26,7 @@ modules:
         CARGO_HOME: /run/build/potato-launcher/cargo
         VERSION: {{ version }}
         LAUNCHER_NAME: {{ app_name }}
+        LAUNCHER_DATA_DIR: "{{ launcher_data_dir }}"
         INSTANCE_MANIFEST_URLS: {{ instance_manifest_urls }}
         # used only to check for new versions; Flatpak installs never self-update
         LAUNCHER_UPDATE_URL: "{{ launcher_update_url }}"

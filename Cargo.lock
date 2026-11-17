@@ -3784,6 +3784,7 @@ dependencies = [
  "relative-path",
  "reqwest 0.13.5",
  "self-replace",
+ "semver",
  "serde",
  "serde-saphyr 2.0.0",
  "serde_json",

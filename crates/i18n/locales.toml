@@ -686,6 +686,10 @@ ru = "Настройки лаунчера были повреждены и сб�
 en = "Saved accounts were corrupted and could not be loaded; please sign in again"
 ru = "Сохранённые аккаунты повреждены и не были загружены; войдите снова"
 
+[notifications.data_from_newer_launcher]
+en = "This launcher data was created by a newer version. Update the launcher to use it"
+ru = "Данные лаунчера созданы более новой версией. Обновите лаунчер, чтобы продолжить"
+
 [notifications.preparing_local_instance]
 en = "Preparing local instance"
 ru = "Подготовка локального инстанса"

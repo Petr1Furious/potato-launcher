@@ -23,6 +23,7 @@ def main():
         'flatpak_keywords': get_env('FLATPAK_KEYWORDS', ''),
         'launcher_update_url': get_env('LAUNCHER_UPDATE_URL', ''),
         'launcher_update_github': get_env('LAUNCHER_UPDATE_GITHUB', ''),
+        'launcher_data_dir': get_env('LAUNCHER_DATA_DIR', ''),
         'version': os.getenv('VERSION', ''),
     }
 

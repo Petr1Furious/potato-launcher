@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+semver = "1"
 anyhow.workspace = true
 async-trait.workspace = true
 instance = { path = "../instance" }

@@ -2249,11 +2249,54 @@ fn parse_xmx_mb(value: Option<&str>) -> Option<u64> {
     }
 }
 
+/// Bump when the data folder changes in a way older launchers can't read, and
+/// migrate older folders where `check_data_format` writes the new number.
+const DATA_FORMAT: u32 = 1;
+const DATA_FORMAT_FILE: &str = "data_format";
+/// Keeps an open launcher's instance list well inside `potato gc`'s default
+/// 2-hour grace, so it never installs a version whose files are gone.
+const CATALOG_REFRESH: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Whether this launcher may use the folder: false when a newer format wrote it.
+async fn check_data_format(launcher_dir: &Path) -> anyhow::Result<bool> {
+    let path = launcher_dir.join(DATA_FORMAT_FILE);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(content) => {
+            let found = content.trim().parse::<u32>().unwrap_or(u32::MAX);
+            if found > DATA_FORMAT {
+                return Ok(false);
+            }
+            if found == DATA_FORMAT {
+                return Ok(true);
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    tokio::fs::create_dir_all(launcher_dir).await?;
+    files::write_file_atomic(&path, format!("{DATA_FORMAT}\n").as_bytes()).await?;
+    Ok(true)
+}
+
 pub async fn run(
     launcher_dir: PathBuf,
     mut receiver: BackendReceiver,
     frontend: FrontendSender,
 ) -> anyhow::Result<()> {
+    if !check_data_format(&launcher_dir).await? {
+        // Leave newer data untouched; only self-update can help.
+        set_lang(resolve_language_code(
+            Some(detect_system_language_code()),
+            None,
+        ));
+        update::start(reqwest::Client::new(), frontend.clone());
+        frontend.send(MessageToFrontend::Notification {
+            level: NotificationLevel::Error,
+            message: Arc::from(launcher_i18n::notifications::data_from_newer_launcher()),
+        });
+        while receiver.recv().await.is_some() {}
+        return Ok(());
+    }
     let mut state = BackendState::load(launcher_dir).await?;
     let (internal_sender, mut internal_receiver) = mpsc::unbounded_channel();
 
@@ -2264,9 +2307,20 @@ pub async fn run(
         frontend.send(MessageToFrontend::Notification { level, message });
     }
     state.refresh_all(&internal_sender, &frontend).await;
+    let mut catalog_refresh = tokio::time::interval_at(
+        tokio::time::Instant::now() + CATALOG_REFRESH,
+        CATALOG_REFRESH,
+    );
+    catalog_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
+            _ = catalog_refresh.tick() => {
+                for (url, _, _) in state.visible_backend_urls() {
+                    state.start_fetch(url, &internal_sender);
+                }
+                state.emit_snapshot(&frontend);
+            }
             message = receiver.recv() => {
                 let Some(message) = message else {
                     break;
@@ -2501,4 +2555,21 @@ pub async fn run(
 
     frontend.send(MessageToFrontend::Quit);
     Ok(())
+}
+
+#[cfg(test)]
+mod data_format_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn refuses_newer_data_and_marks_new_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(check_data_format(dir.path()).await.unwrap());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(DATA_FORMAT_FILE)).unwrap(),
+            format!("{DATA_FORMAT}\n")
+        );
+        std::fs::write(dir.path().join(DATA_FORMAT_FILE), "999\n").unwrap();
+        assert!(!check_data_format(dir.path()).await.unwrap());
+    }
 }

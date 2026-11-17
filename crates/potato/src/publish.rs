@@ -13,7 +13,10 @@ use crate::{
 };
 
 pub const MANIFEST_KEY: &str = "instance_manifest.json";
-pub const DEFAULT_GRACE_DAYS: u64 = 7;
+pub const DEFAULT_GRACE_HOURS: u64 = 2;
+/// Uploads no publish references yet (jars from `pull` or `mod add`) are already
+/// committed, and collaborators download them from storage before anyone publishes.
+const UNPUBLISHED_GRACE_DAYS: i64 = 7;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PublishRecord {
@@ -211,20 +214,23 @@ pub async fn unpublish(ctx: &mut Ctx) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn gc(ctx: &mut Ctx, grace_days: u64) -> anyhow::Result<()> {
+pub async fn gc(ctx: &mut Ctx, grace_hours: u64) -> anyhow::Result<()> {
     let config = ctx.config()?;
     let storage = storage::open(&config.publish.target)?;
     let storage = storage.as_ref();
-    let (objects, history) = storage::locked(storage, collect_garbage(storage, grace_days)).await?;
+    let (objects, history) =
+        storage::locked(storage, collect_garbage(storage, grace_hours)).await?;
     println!("removed {objects} objects and {history} old versions");
     Ok(())
 }
 
 pub async fn collect_garbage(
     storage: &dyn Storage,
-    grace_days: u64,
+    grace_hours: u64,
 ) -> anyhow::Result<(usize, usize)> {
-    let cutoff = now() - (grace_days * 24 * 60 * 60) as i64;
+    let cutoff = now() - (grace_hours * 60 * 60) as i64;
+    let upload_cutoff = now() - UNPUBLISHED_GRACE_DAYS * 24 * 60 * 60;
+    let mut expired = BTreeSet::new();
     let mut keep = BTreeSet::new();
     for entry in read_manifest(storage).await?.instances {
         if let Some(record) = read_record(storage, &entry.id).await? {
@@ -240,21 +246,26 @@ pub async fn collect_garbage(
             .and_then(|name| name.strip_suffix(".json"))
             .and_then(|time| time.parse::<i64>().ok())
             .unwrap_or(listed.modified);
+        let record = match storage.get(&listed.key).await? {
+            Some(content) => serde_json::from_slice::<PublishRecord>(&content).ok(),
+            None => None,
+        };
+        let objects = record.map(|record| record.objects).unwrap_or_default();
         if replaced_at < cutoff {
+            expired.extend(objects);
             old_history.push(listed.key);
-            continue;
-        }
-        if let Some(content) = storage.get(&listed.key).await?
-            && let Ok(record) = serde_json::from_slice::<PublishRecord>(&content)
-        {
-            keep.extend(record.objects);
+        } else {
+            keep.extend(objects);
         }
     }
     let garbage = storage
         .list("objects/")
         .await?
         .into_iter()
-        .filter(|listed| !keep.contains(&listed.key) && listed.modified < cutoff)
+        .filter(|listed| {
+            !keep.contains(&listed.key)
+                && (expired.contains(&listed.key) || listed.modified < upload_cutoff)
+        })
         .map(|listed| listed.key)
         .collect::<Vec<_>>();
     storage.delete(&garbage).await?;
@@ -326,6 +337,8 @@ mod tests {
         old("objects/dd/unreferenced");
         std::fs::create_dir_all(dir.path().join("objects/ee")).unwrap();
         std::fs::write(dir.path().join("objects/ee/fresh"), b"x").unwrap();
+        std::fs::create_dir_all(dir.path().join("objects/ff")).unwrap();
+        std::fs::write(dir.path().join("objects/ff/replaced-hours-ago"), b"x").unwrap();
 
         let manifest = serde_json::json!({"instances": [{
             "id": "a", "url": "https://x/instances/a/meta.json", "sha1": "0", "required_java_version": "21"
@@ -358,9 +371,16 @@ mod tests {
         )
         .await
         .unwrap();
+        put_json(
+            storage,
+            &history_key("a", now() - 3 * 3600),
+            &record(&["objects/ff/replaced-hours-ago"]),
+        )
+        .await
+        .unwrap();
 
-        let (objects, history) = collect_garbage(storage, 7).await.unwrap();
-        assert_eq!((objects, history), (2, 1));
+        let (objects, history) = collect_garbage(storage, DEFAULT_GRACE_HOURS).await.unwrap();
+        assert_eq!((objects, history), (3, 2));
         let left = storage
             .list("objects/")
             .await

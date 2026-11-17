@@ -96,8 +96,9 @@ enum Command {
     Unpublish,
     /// Delete stored files no published version needs.
     Gc {
-        #[arg(long, default_value_t = publish::DEFAULT_GRACE_DAYS)]
-        grace_days: u64,
+        /// How long a replaced version's files stay for launchers still on it.
+        #[arg(long, default_value_t = publish::DEFAULT_GRACE_HOURS)]
+        grace_hours: u64,
     },
     /// Upload launcher builds and regenerate the downloads page.
     PublishLauncher {
@@ -263,7 +264,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Publish { force } => publish::publish(&mut ctx, force).await,
         Command::Unpublish => publish::unpublish(&mut ctx).await,
-        Command::Gc { grace_days } => publish::gc(&mut ctx, grace_days).await,
+        Command::Gc { grace_hours } => publish::gc(&mut ctx, grace_hours).await,
         Command::Cache {
             action: CacheAction::Clean,
         } => commands::cache_clean(&ctx),

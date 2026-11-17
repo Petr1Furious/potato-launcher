@@ -311,8 +311,11 @@ shown as one line per group; `-v` lists every file.
 
 Published files are never deleted by `publish`. Run `potato gc` from any
 instance repo to delete stored files that no published instance uses
-anymore. Versions replaced in the last 7 days are kept for players still
-downloading them (`--grace-days` to change it).
+anymore. A replaced or unpublished version's files stay for 2 hours, for
+launchers still on it (`--grace-hours` to change it); open launchers refresh
+their instance list every hour. Jars uploaded by `pull` or `mod add` that no
+publish has used yet stay for 7 days, since collaborators may already be
+downloading them.
 
 ## Collaborating
 

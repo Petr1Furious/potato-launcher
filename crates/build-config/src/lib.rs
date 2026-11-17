@@ -10,8 +10,10 @@ pub fn lower_launcher_name() -> String {
     normalize_launcher_name(LAUNCHER_NAME)
 }
 
-pub fn data_dir_name() -> &'static str {
-    "potato-launcher"
+/// The folder under the user data dir; the lowercased launcher name unless
+/// `LAUNCHER_DATA_DIR` is set at build time.
+pub fn data_dir_name() -> String {
+    LAUNCHER_DATA_DIR.map_or_else(lower_launcher_name, str::to_string)
 }
 
 fn normalize_launcher_name(value: &str) -> String {

@@ -1027,6 +1027,7 @@ pub mod notifications {
             "accounts_reset_from_corruption" => Some(accounts_reset_from_corruption()),
             "already_launching_or_running" => Some(already_launching_or_running()),
             "authentication_cancelled" => Some(authentication_cancelled()),
+            "data_from_newer_launcher" => Some(data_from_newer_launcher()),
             "delete_all_data_busy" => Some(delete_all_data_busy()),
             "enter_offline_nickname" => Some(enter_offline_nickname()),
             "install_already_running" => Some(install_already_running()),
@@ -1073,6 +1074,12 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Ошибка авторизации: {error}"),
             _ => format!("Authentication failed: {error}"),
+        }
+    }
+    pub fn data_from_newer_launcher() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Данные лаунчера созданы более новой версией. Обновите лаунчер, чтобы продолжить",
+            _ => "This launcher data was created by a newer version. Update the launcher to use it",
         }
     }
     pub fn delete_all_data_busy() -> &'static str {

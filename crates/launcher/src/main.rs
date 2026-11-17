@@ -35,6 +35,9 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn launcher_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("POTATO_LAUNCHER_DATA_DIR").filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir);
+    }
     dirs::data_dir()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
         .join(data_dir_name())

@@ -148,7 +148,18 @@ async fn newer_release(
 ) -> anyhow::Result<Option<Release>> {
     let release = fetch_release(client, package).await?;
     let local = launcher_build_config::version().expect("version checked in should_check_updates");
-    Ok((release.version != local).then_some(release))
+    Ok(is_newer(&release.version, local).then_some(release))
+}
+
+/// Release tags compare as semver when both parse (a leading `v` is fine);
+/// other versions, like commit builds, update on any difference.
+fn is_newer(remote: &str, local: &str) -> bool {
+    let parse =
+        |version: &str| semver::Version::parse(version.strip_prefix('v').unwrap_or(version)).ok();
+    match (parse(remote), parse(local)) {
+        (Some(remote), Some(local)) => remote > local,
+        _ => remote != local,
+    }
 }
 
 async fn download(
@@ -321,5 +332,20 @@ async fn run(client: Client, frontend: FrontendSender) {
                 offline: is_connect_error(&e),
             }));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_newer;
+
+    #[test]
+    fn compares_release_tags() {
+        assert!(is_newer("v1.2.0", "v1.1.9"));
+        assert!(!is_newer("v1.1.0", "v1.2.0"));
+        assert!(!is_newer("v1.2.0", "v1.2.0"));
+        assert!(is_newer("v1.2.0", "v1.2.0-rc1"));
+        assert!(is_newer("v0.0.1-dev2", "v0.0.1-dev1"));
+        assert!(is_newer("v1.0.0", "3f2a9c1"));
     }
 }

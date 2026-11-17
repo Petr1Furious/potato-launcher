@@ -308,10 +308,13 @@ Removes this instance's entry from the instance list.
 
 ### `potato gc`
 
-Keeps objects listed by a current `publish.json`, by a history record newer
-than the grace period (default 7 days), or uploaded within the grace period
-(so jars uploaded by `pull prism` survive until they're published). Deletes
-everything else in `objects/` and history records older than the grace period.
+Keeps objects listed by a current `publish.json` or by a history record newer
+than the grace period (default 2 hours, `--grace-hours`). Deletes history
+records older than that, and the objects only they list. Other unreferenced
+objects (jars uploaded by `pull` or `mod add`, already committed but not yet
+published) are deleted only 7 days after upload. Launchers refresh their
+instance list hourly, so an open launcher never installs a version past the
+grace period.
 
 ### `potato publish-launcher`
 
