@@ -218,7 +218,11 @@ too. `--force` skips all of these checks. Otherwise it:
 - records `HEAD` as the new base
 
 It never touches anything the base didn't contain: server-only mods, their
-configs, and jars you put there by hand.
+configs, and jars you put there by hand. The exception is `--force` on a
+Prism target: it also deletes every file, jar and index file in the synced
+folders (managed paths and the pack folders that count) that `HEAD` doesn't
+have, so the instance matches the commit exactly. Disabled state is kept for
+mods that stay.
 
 On a server, potato runs on the server itself, against a clone of the repo.
 Loader installation is left to the server runtime (itzg).

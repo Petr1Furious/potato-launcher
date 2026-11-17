@@ -406,6 +406,40 @@ async fn packs_need_a_path() {
 }
 
 #[tokio::test]
+async fn forced_push_makes_prism_match() {
+    let mut s = Setup::new();
+    s.prism_mod("sodium", "sodium.jar", b"sodium", Some(MODRINTH_INDEX))
+        .await;
+    s.prism_mod("jei", "jei.jar.disabled", b"jei", Some(CURSEFORGE_INDEX))
+        .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    s.commit("pull");
+
+    write(&s.game.join("config/a.toml"), "a = 8\n");
+    write(&s.game.join("config/extra.toml"), "x\n");
+    write(&s.game.join("mods/extra.jar"), "extra");
+    write(&s.game.join("mods/old.jar.disabled"), "old");
+    write(
+        &s.game.join("mods/.index/extra.pw.toml"),
+        &MODRINTH_INDEX.replace("sodium.jar", "extra.jar"),
+    );
+    let err = sync::push(&mut s.ctx, "prism", false).await.unwrap_err();
+    assert!(err.to_string().contains("changed"), "{err}");
+
+    sync::push(&mut s.ctx, "prism", true).await.unwrap();
+    assert_eq!(read(&s.game.join("config/a.toml")), "a = 1\n");
+    assert!(!s.game.join("config/extra.toml").exists());
+    assert!(!s.game.join("mods/extra.jar").exists());
+    assert!(!s.game.join("mods/old.jar.disabled").exists());
+    assert!(!s.game.join("mods/.index/extra.pw.toml").exists());
+    assert!(s.game.join("mods/sodium.jar").exists());
+    assert!(
+        s.game.join("mods/jei.jar.disabled").exists(),
+        "keeps the disabled state"
+    );
+}
+
+#[tokio::test]
 async fn uncommitted_changes() {
     let mut s = Setup::new();
     sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();

@@ -222,16 +222,10 @@ pub async fn read_target(
     Ok(snapshot)
 }
 
-async fn read_prism(
-    ctx: &mut Ctx,
-    config: &Config,
-    target: &Target,
-    base_tree: &Files,
-    base_domain: &Files,
-    mode: Mode,
-    snapshot: &mut Snapshot,
-) -> anyhow::Result<()> {
-    let game_dir = &target.game_dir;
+/// Ordinary files under the managed paths of a Prism game folder: no index
+/// files, and no jars or zips directly in a pack folder.
+fn prism_managed_files(config: &Config, game_dir: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    let mut found = vec![];
     for root in config.managed_roots() {
         let full = game_dir.join(&root);
         let files = if full.is_dir() {
@@ -256,8 +250,24 @@ async fn read_prism(
             {
                 continue;
             }
-            snapshot.files.insert(rel, std::fs::read(&file)?);
+            found.push((rel, file));
         }
+    }
+    Ok(found)
+}
+
+async fn read_prism(
+    ctx: &mut Ctx,
+    config: &Config,
+    target: &Target,
+    base_tree: &Files,
+    base_domain: &Files,
+    mode: Mode,
+    snapshot: &mut Snapshot,
+) -> anyhow::Result<()> {
+    let game_dir = &target.game_dir;
+    for (rel, file) in prism_managed_files(config, game_dir)? {
+        snapshot.files.insert(rel, std::fs::read(&file)?);
     }
 
     for dir in INDEX_DIRS {
@@ -608,7 +618,17 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
             remove_if_exists(&target.game_dir.join(path))?;
         }
     }
-    apply_jars(ctx, &config, &target, &base_tree, &head_tree).await?;
+    // A forced push makes a Prism instance match the commit exactly; servers keep
+    // their own files, which never enter the repo.
+    let exact = force && target.is_prism();
+    if exact {
+        for (rel, file) in prism_managed_files(&config, &target.game_dir)? {
+            if !head_domain.contains_key(&rel) {
+                remove_if_exists(&file)?;
+            }
+        }
+    }
+    apply_jars(ctx, &config, &target, &base_tree, &head_tree, exact).await?;
     ctx.hashes.save()?;
 
     target.record_base(&head)?;
@@ -631,6 +651,7 @@ async fn apply_jars(
     target: &Target,
     base_tree: &Files,
     head_tree: &Files,
+    exact: bool,
 ) -> anyhow::Result<()> {
     let wanted = jar_entries(head_tree, config, target)?;
     let previous = jar_entries(base_tree, config, target)?;
@@ -736,6 +757,32 @@ async fn apply_jars(
                 remove_if_exists(&target.game_dir.join(index_path(dir, prism_name)))?;
             }
             remove_if_exists(&target.game_dir.join(path))?;
+        }
+    }
+
+    if exact {
+        for dir in INDEX_DIRS
+            .into_iter()
+            .filter(|dir| config.handles_index_dir(dir))
+        {
+            if let Ok(entries) = std::fs::read_dir(target.game_dir.join(dir)) {
+                for entry in entries {
+                    let entry = entry?;
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let filename = name.strip_suffix(DISABLED_SUFFIX).unwrap_or(&name);
+                    if entry.file_type()?.is_file()
+                        && is_indexed_binary(dir, &name)
+                        && !kept.contains(&(dir, filename.to_string()))
+                    {
+                        remove_if_exists(&entry.path())?;
+                    }
+                }
+            }
+            for (filename, (prism_name, _)) in &prism_indexes[dir] {
+                if !kept.contains(&(dir, filename.clone())) {
+                    remove_if_exists(&target.game_dir.join(index_path(dir, prism_name)))?;
+                }
+            }
         }
     }
     Ok(())

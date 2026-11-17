@@ -277,9 +277,14 @@ then drops your own uncommitted changes as well.
 the last sync, if this Prism instance was never synced with this repo (the
 first push on a new machine or from a fresh clone), or if pack files
 (`potato.toml`, index files, managed paths) have uncommitted changes, since
-those wouldn't be pushed. Other uncommitted files don't matter. `--force`
-overwrites anyway. It keeps your enabled/disabled choice for each mod, and new
-mods from an off-by-default optional set arrive disabled.
+those wouldn't be pushed. Other uncommitted files don't matter. It keeps your
+enabled/disabled choice for each mod, and new mods from an off-by-default
+optional set arrive disabled.
+
+`potato push prism --force` skips these checks and makes Prism match the last
+commit exactly: in the synced folders, anything the repo doesn't have is
+deleted, including disabled jars. On a server, `--force` only overwrites files
+the repo has; the server's own files stay.
 
 Each target's last sync is recorded in the repo's `.potato/synced/<name>`, so it
 is local to your clone.
@@ -323,7 +328,8 @@ Everyone works on the same repo through git:
 
 The first time, clone the repo, add your Prism instance with
 `potato target add prism <instance folder>`, and run
-`potato push prism --force`. After that:
+`potato push prism --force`. That removes anything in the synced folders the
+pack doesn't have, such as extra mods you had in that instance. After that:
 
 ```bash
 git pull
