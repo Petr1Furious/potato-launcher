@@ -21,6 +21,8 @@ pub struct RsyncStorage {
     port: Option<u16>,
     root: String,
     lock: Mutex<Option<Child>>,
+    /// Holds the socket every ssh call of this command shares.
+    control: tempfile::TempDir,
 }
 
 fn quote(value: &str) -> String {
@@ -44,6 +46,7 @@ impl RsyncStorage {
             port: url.port(),
             root,
             lock: Mutex::new(None),
+            control: tempfile::tempdir()?,
         })
     }
 
@@ -51,11 +54,29 @@ impl RsyncStorage {
         format!("{}/{key}", self.root)
     }
 
+    fn control_path(&self) -> String {
+        format!("ControlPath={}", self.control.path().join("ssh").display())
+    }
+
+    /// One ssh login per command: later calls reuse the first connection.
+    fn ssh_options(&self) -> Vec<String> {
+        let mut options = vec![
+            "-o".to_string(),
+            "ControlMaster=auto".to_string(),
+            "-o".to_string(),
+            self.control_path(),
+            "-o".to_string(),
+            "ControlPersist=60".to_string(),
+        ];
+        if let Some(port) = self.port {
+            options.extend(["-p".to_string(), port.to_string()]);
+        }
+        options
+    }
+
     fn ssh(&self, script: &str) -> Command {
         let mut command = Command::new("ssh");
-        if let Some(port) = self.port {
-            command.arg("-p").arg(port.to_string());
-        }
+        command.args(self.ssh_options());
         command.arg(&self.host).arg(script);
         command.kill_on_drop(true);
         command
@@ -110,6 +131,37 @@ impl RsyncStorage {
     }
 }
 
+impl Drop for RsyncStorage {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("ssh")
+            .args(["-o", &self.control_path(), "-O", "exit", &self.host])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// rsync 3.1+ has a single overall progress line; openrsync (macOS) doesn't.
+async fn supports_progress2() -> bool {
+    let Ok(output) = Command::new("rsync").arg("--version").output().await else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let Some(version) = text
+        .split_whitespace()
+        .skip_while(|word| *word != "version")
+        .nth(1)
+    else {
+        return false;
+    };
+    let mut parts = version
+        .split('.')
+        .map(|part| part.parse::<u32>().unwrap_or(0));
+    let (major, minor) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    (major, minor) >= (3, 1)
+}
+
 #[async_trait]
 impl Storage for RsyncStorage {
     async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
@@ -162,8 +214,11 @@ impl Storage for RsyncStorage {
             .arg("-r")
             .arg("--ignore-existing")
             .arg("--chmod=F644,D755");
-        if let Some(port) = self.port {
-            command.arg("-e").arg(format!("ssh -p {port}"));
+        command
+            .arg("-e")
+            .arg(format!("ssh {}", shell_words::join(self.ssh_options())));
+        if supports_progress2().await {
+            command.arg("--info=progress2");
         }
         command
             .arg(format!("{}/", staging.path().display()))

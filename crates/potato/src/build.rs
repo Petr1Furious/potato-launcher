@@ -21,7 +21,7 @@ use utils::{
 };
 
 use crate::{
-    config::{CONFIG_FILE, Config, object_key, under},
+    config::{CONFIG_FILE, Config, object_key},
     ctx::Ctx,
     index::{IndexFile, Side, index_dir_of, index_name},
     java_mirror::mirror_java_runtimes,
@@ -77,10 +77,10 @@ struct Entry {
     url: Url,
 }
 
-fn collect_entries(tree: &crate::git::Files) -> anyhow::Result<Vec<Entry>> {
+fn collect_entries(tree: &crate::git::Files, config: &Config) -> anyhow::Result<Vec<Entry>> {
     let mut entries = vec![];
     for (path, content) in tree {
-        if index_dir_of(path).is_none() {
+        if !index_dir_of(path).is_some_and(|dir| config.handles_index_dir(dir)) {
             continue;
         }
         let index = IndexFile::parse_bytes(content).with_context(|| path.clone())?;
@@ -181,7 +181,7 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
     let base = config.publish.base();
     let mirror = config.publish.mirror;
 
-    let entries = collect_entries(&tree)?;
+    let entries = collect_entries(&tree, &config)?;
     let wanted = entries
         .iter()
         .map(|entry| (entry.url.clone(), entry.sha1.clone()))
@@ -213,6 +213,12 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
             .filename()
             .with_context(|| format!("{} has no filename", entry.path))?;
         let cached_path = &cached[&entry.sha1];
+        // Jars only we host may have been garbage-collected before their first publish.
+        if entry.url == config.publish.object_url(&entry.sha1) {
+            let key = object_key(&entry.sha1);
+            let label = format!("{dir}/{filename}");
+            uploads.insert(key.clone(), Upload::new(key, cached_path.clone(), label));
+        }
         if dir == "mods" {
             let mod_id = mod_id_of(cached_path).await?;
             mod_ids.insert(index_name(&entry.path).to_string(), mod_id.clone());
@@ -245,9 +251,6 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
                 bail!("{}: os is only supported for mods", entry.path);
             }
             let rel = format!("{dir}/{filename}");
-            if !config.managed_roots().iter().any(|root| under(&rel, root)) {
-                bail!("{dir} has index files but no [[paths]] entry covers it");
-            }
             let full = source.join(&rel);
             std::fs::create_dir_all(full.parent().expect("has parent"))?;
             std::fs::copy(cached_path, full)?;

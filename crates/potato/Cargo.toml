@@ -27,7 +27,7 @@ serde.workspace = true
 serde_json.workspace = true
 shell-words = "1.1.1"
 tempfile = "3"
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 toml.workspace = true
 toml_edit.workspace = true
 url.workspace = true

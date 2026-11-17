@@ -90,8 +90,8 @@ exclude = ["config/somemod.toml"]   # shared files this server keeps its own ver
 ```
 
 `mods/` is always managed. Other index folders (`resourcepacks/` and so on)
-need a `[[paths]]` entry so clients know how to apply them; `build` fails
-without one.
+count only when a `[[paths]]` entry covers them; otherwise every command
+ignores them.
 
 ### `.potato/local.toml` (not committed)
 
@@ -253,11 +253,17 @@ hex characters of the sha1. That's Mojang's asset layout, so
 ### Storage targets
 
 - `file:///path`: local folder, `flock` on a lock file.
-- `rsync://user@host[:port]/path`: `rsync` and `ssh` subprocesses. The lock is
-  a long-lived `ssh host flock -n <lock> cat`. Needs GNU `find` and `flock` on
-  the host.
+- `rsync://user@host[:port]/path`: `rsync` and `ssh` subprocesses sharing one
+  ssh connection per command (`ControlMaster`). Objects go up in one
+  `rsync -r --ignore-existing` run, with `--info=progress2` when rsync is 3.1+.
+  The lock is a long-lived `ssh host flock -n <lock> cat`. Needs GNU `find` and
+  `flock` on the host.
 - `s3://bucket/prefix`: `object_store`, credentials from `AWS_*` or `~/.aws`.
-  The lock is an object created with a conditional write.
+  Objects are streamed up 16 at a time, in parts when large. The lock is an
+  object created with a conditional write.
+
+Ctrl-C releases the lock. A crash can leave the S3 lock object behind; delete
+`.potato-lock` from the bucket then.
 
 Every command that writes to storage (`publish`, `unpublish`, `pull prism`,
 `mod add`, `gc`) holds the lock for its whole run.
@@ -274,13 +280,16 @@ index entries unless `mirror = true`.
 
 ### `potato publish`
 
-Refuses unless `master` is checked out, pack files have no uncommitted changes,
-the last publish's `source_commit` is an ancestor of `HEAD`, and the instance id
-isn't published from another repo (`repo_root`, the repo's root commit).
-`--force` skips all but the `master` check. It always rebuilds, then:
+Refuses unless pack files have no uncommitted changes, the last publish's
+`source_commit` is an ancestor of `HEAD`, and the instance id isn't published
+from another repo (`repo_root`, the repo's root commit). The last two are
+checked before building and again under the lock. Any branch can publish.
+`--force` skips all of these. It always rebuilds, then:
 
 1. uploads objects not already in storage, and fails if a referenced object
-   is missing (a CurseForge or custom jar that was never uploaded)
+   is missing. Jars only we host (CurseForge without a URL, custom jars) are
+   queued from the local cache too, so ones `gc` removed before their first
+   publish come back
 2. writes `meta.json`
 3. moves the previous `publish.json` to `history/` and writes the new one
 4. updates this instance's entry in `instance_manifest.json`, sorted by

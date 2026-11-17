@@ -71,7 +71,8 @@ Credentials come from the usual places: your SSH config and agent for
 any HTTPS front (a public bucket URL or a CDN).
 
 Every command that writes to storage takes a lock, so two people publishing at
-once can't break the instance list.
+once can't break the instance list. Ctrl-C releases it. If potato crashes while
+publishing to S3, delete `.potato-lock` from the bucket.
 
 ## Backups
 

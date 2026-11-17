@@ -334,6 +334,28 @@ async fn os_variants_are_left_alone() {
 }
 
 #[tokio::test]
+async fn packs_need_a_path() {
+    let mut s = Setup::new();
+    write(&s.game.join("resourcepacks/pack.zip"), "zip");
+    write(
+        &s.game.join("resourcepacks/.index/pack.pw.toml"),
+        "filename = \"pack.zip\"\nname = \"Pack\"\n\n[download]\nurl = \"https://cdn.modrinth.com/data/p/pack.zip\"\nhash-format = \"sha1\"\nhash = \"x\"\n",
+    );
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    s.commit("pull");
+    assert!(!s.repo.join("resourcepacks").exists());
+
+    let config = read(&s.repo.join("potato.toml"));
+    write(
+        &s.repo.join("potato.toml"),
+        &format!("{config}\n[[paths]]\npath = \"resourcepacks\"\ntype = \"directory\"\n"),
+    );
+    s.commit("sync resourcepacks");
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    assert!(s.repo.join("resourcepacks/.index/pack.pw.toml").exists());
+}
+
+#[tokio::test]
 async fn uncommitted_changes() {
     let mut s = Setup::new();
     sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();

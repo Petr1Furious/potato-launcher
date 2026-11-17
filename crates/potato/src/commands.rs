@@ -163,6 +163,12 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
     if !INDEX_DIRS.contains(&options.dir.as_str()) {
         bail!("--dir must be one of {}", INDEX_DIRS.join(", "));
     }
+    if !config.handles_index_dir(&options.dir) {
+        bail!(
+            "{} isn't synced, add a [[paths]] entry for it first",
+            options.dir
+        );
+    }
     let os = options
         .os
         .iter()
@@ -251,6 +257,7 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
 }
 
 pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
+    let config = ctx.config()?;
     let mut rows = vec![(
         "NAME".to_string(),
         "MOD ID".to_string(),
@@ -259,7 +266,10 @@ pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
     )];
     let mut wanted = vec![];
     let mut entries = vec![];
-    for dir in INDEX_DIRS {
+    for dir in INDEX_DIRS
+        .into_iter()
+        .filter(|dir| config.handles_index_dir(dir))
+    {
         let Ok(dir_entries) = std::fs::read_dir(ctx.repo.join(dir).join(".index")) else {
             continue;
         };

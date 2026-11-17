@@ -181,8 +181,9 @@ Deeper paths win over shallower ones, so you can mark `config` as
 Mods live in `mods/.index/` as packwiz-style `.pw.toml` files, one per mod.
 Prism writes these when you install a mod through its browser.
 Resource packs, shader packs and datapacks work the same way in
-`resourcepacks/.index/`, `shaderpacks/.index/` and `datapacks/.index/`. Their
-folder needs a `[[paths]]` entry so clients know how to apply them.
+`resourcepacks/.index/`, `shaderpacks/.index/` and `datapacks/.index/`, but
+only once their folder has a `[[paths]]` entry. Without one, potato ignores
+the folder in every command.
 
 Every index file in the repo has a download URL and a sha1. `pull prism`
 converts Prism's files when needed:
@@ -286,14 +287,14 @@ potato publish
 `publish` builds the last commit (not uncommitted changes) and uploads it. It
 refuses to run unless:
 
-- `master` is checked out
 - pack files have no uncommitted changes
 - the last publish of this instance is in your history, so you can't revert
   someone else's publish
 - the instance id isn't published from a different repo
 
-`--force` skips all but the first. To roll back, check out an older commit
-and run `potato publish --force`.
+`--force` skips these checks. You can publish from any branch; once you do,
+a publish from a branch that doesn't contain yours refuses until it's merged.
+To roll back, check out an older commit and run `potato publish --force`.
 
 Uploads list each pack file and jar. Libraries, assets, Java and game jars are
 shown as one line per group; `-v` lists every file.

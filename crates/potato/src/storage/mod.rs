@@ -46,7 +46,11 @@ pub async fn locked<T>(
     job: impl Future<Output = anyhow::Result<T>>,
 ) -> anyhow::Result<T> {
     storage.lock().await?;
-    let result = job.await;
+    // Ctrl-C would otherwise leave an S3 lock behind.
+    let result = tokio::select! {
+        result = job => result,
+        _ = tokio::signal::ctrl_c() => Err(anyhow::anyhow!("interrupted")),
+    };
     let unlocked = storage.unlock().await;
     let value = result?;
     unlocked?;

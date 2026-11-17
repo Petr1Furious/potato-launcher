@@ -152,10 +152,15 @@ impl Config {
             .collect()
     }
 
+    /// `mods` always counts; the other pack folders only when `[[paths]]` covers them.
+    pub fn handles_index_dir(&self, dir: &str) -> bool {
+        dir == "mods" || self.managed_roots().iter().any(|root| under(dir, root))
+    }
+
     /// Whether `path` is synced or built: potato.toml, index files and managed files.
     pub fn is_pack_file(&self, path: &str) -> bool {
         path == CONFIG_FILE
-            || crate::index::index_dir_of(path).is_some()
+            || crate::index::index_dir_of(path).is_some_and(|dir| self.handles_index_dir(dir))
             || self.is_managed_file(path)
     }
 

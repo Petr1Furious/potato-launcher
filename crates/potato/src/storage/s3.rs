@@ -2,17 +2,21 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use async_trait::async_trait;
-use futures::TryStreamExt;
+use std::sync::Arc;
+
+use futures::{StreamExt, TryStreamExt};
 use object_store::{
-    ObjectStore, PutMode, PutOptions, PutPayload, aws::AmazonS3Builder, path::Path as StorePath,
+    ObjectStore, PutMode, PutOptions, PutPayload, aws::AmazonS3Builder, buffered::BufWriter,
+    path::Path as StorePath,
 };
+use tokio::io::AsyncWriteExt;
 
 use super::{LOCK_KEY, Listed, Storage, locked_error};
 
 /// `s3://bucket/prefix`. Credentials, region and endpoint come from the usual
 /// `AWS_*` environment variables.
 pub struct S3Storage {
-    store: Box<dyn ObjectStore>,
+    store: Arc<dyn ObjectStore>,
     prefix: String,
 }
 
@@ -25,7 +29,7 @@ impl S3Storage {
             .build()
             .context("can't set up s3")?;
         Ok(Self {
-            store: Box::new(store),
+            store: Arc::new(store),
             prefix: url.path().trim_matches('/').to_string(),
         })
     }
@@ -47,6 +51,25 @@ impl S3Storage {
                 .unwrap_or(full)
                 .to_string()
         }
+    }
+}
+
+const PARALLEL_UPLOADS: usize = 16;
+
+impl S3Storage {
+    /// Streams a file up, in parts when it's large, unless the key already exists.
+    async fn put_object(&self, key: &str, source: &Path) -> anyhow::Result<()> {
+        let path = self.path(key);
+        match self.store.head(&path).await {
+            Ok(_) => return Ok(()),
+            Err(object_store::Error::NotFound { .. }) => {}
+            Err(err) => return Err(err.into()),
+        }
+        let mut file = tokio::fs::File::open(source).await?;
+        let mut writer = BufWriter::new(self.store.clone(), path);
+        tokio::io::copy(&mut file, &mut writer).await?;
+        writer.shutdown().await?;
+        Ok(())
     }
 }
 
@@ -72,14 +95,14 @@ impl Storage for S3Storage {
     }
 
     async fn put_objects(&self, files: &[(String, PathBuf)]) -> anyhow::Result<()> {
-        for (key, source) in files {
-            match self.store.head(&self.path(key)).await {
-                Ok(_) => continue,
-                Err(object_store::Error::NotFound { .. }) => {}
-                Err(err) => return Err(err.into()),
-            }
-            self.put(key, tokio::fs::read(source).await?).await?;
-        }
+        let uploads = files
+            .iter()
+            .map(|(key, source)| self.put_object(key, source))
+            .collect::<Vec<_>>();
+        futures::stream::iter(uploads)
+            .buffer_unordered(PARALLEL_UPLOADS)
+            .try_collect::<Vec<()>>()
+            .await?;
         Ok(())
     }
 

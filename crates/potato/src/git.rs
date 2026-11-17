@@ -115,14 +115,6 @@ impl Git {
             .context("repo has no commits yet")
     }
 
-    pub fn branch(&self) -> anyhow::Result<Option<String>> {
-        let output = self.run(&["symbolic-ref", "--short", "-q", "HEAD"], &[], None)?;
-        Ok(output
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string()))
-    }
-
     pub fn root_commit(&self) -> anyhow::Result<String> {
         let out = self.out(&["rev-list", "--max-parents=0", "HEAD"])?;
         out.lines()

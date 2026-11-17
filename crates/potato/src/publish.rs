@@ -84,16 +84,39 @@ async fn put_json(storage: &dyn Storage, key: &str, value: &impl Serialize) -> a
     storage.put(key, serde_json::to_vec(value)?).await
 }
 
+/// Refuses to replace a publish from another repo, or one this history doesn't contain.
+fn check_previous(
+    ctx: &Ctx,
+    previous: Option<&PublishRecord>,
+    id: &str,
+    repo_root: &str,
+    head: &str,
+) -> anyhow::Result<()> {
+    let Some(previous) = previous else {
+        return Ok(());
+    };
+    if previous.repo_root != repo_root {
+        bail!("'{id}' is published from another repo, use --force to take it over");
+    }
+    if !ctx.git.is_ancestor(&previous.source_commit, head)? {
+        bail!(
+            "the last publish ({}) isn't in your history, pull first",
+            &previous.source_commit[..previous.source_commit.len().min(8)]
+        );
+    }
+    Ok(())
+}
+
 pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
+    let head = ctx.git.head()?;
+    let repo_root = ctx.git.root_commit()?;
     if !force {
         let config = ctx.config()?;
         sync::ensure_committed(&ctx.git, "published", |path| config.is_pack_file(path))?;
+        let storage = storage::open(&config.publish.target)?;
+        let previous = read_record(storage.as_ref(), &config.id).await?;
+        check_previous(ctx, previous.as_ref(), &config.id, &repo_root, &head)?;
     }
-    if ctx.git.branch()?.as_deref() != Some("master") {
-        bail!("publish from master");
-    }
-    let head = ctx.git.head()?;
-    let repo_root = ctx.git.root_commit()?;
     let output = Box::pin(build(ctx, &head)).await?;
     let config = &output.config;
     let id = config.id.clone();
@@ -102,18 +125,8 @@ pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
 
     let job = async {
         let previous = read_record(storage, &id).await?;
-        if let Some(previous) = &previous
-            && !force
-        {
-            if previous.repo_root != repo_root {
-                bail!("'{id}' is published from another repo, use --force to take it over");
-            }
-            if !ctx.git.is_ancestor(&previous.source_commit, &head)? {
-                bail!(
-                    "the last publish ({}) isn't in your history, pull first",
-                    &previous.source_commit[..previous.source_commit.len().min(8)]
-                );
-            }
+        if !force {
+            check_previous(ctx, previous.as_ref(), &id, &repo_root, &head)?;
         }
 
         let existing = storage
@@ -137,7 +150,7 @@ pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
             .filter(|key| !existing.contains(*key) && !output.uploads.contains_key(*key))
             .collect::<Vec<_>>();
         if let Some(key) = missing.first() {
-            bail!("{key} is missing from storage, run `potato pull prism` and publish again");
+            bail!("{key} is missing from storage and from your cache");
         }
 
         let time = now();

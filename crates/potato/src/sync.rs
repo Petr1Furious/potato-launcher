@@ -59,8 +59,8 @@ pub fn domain(tree: &Files, config: &Config, target: &Target) -> anyhow::Result<
     let os = current_os();
     let mut files = Files::new();
     for (path, content) in tree {
-        if index_dir_of(path).is_some() {
-            if !target.is_prism() {
+        if let Some(dir) = index_dir_of(path) {
+            if !target.is_prism() || !config.handles_index_dir(dir) {
                 continue;
             }
             let entry = IndexFile::parse_bytes(content).with_context(|| path.clone())?;
@@ -75,14 +75,18 @@ pub fn domain(tree: &Files, config: &Config, target: &Target) -> anyhow::Result<
 }
 
 /// Index entries whose files `target` should have.
-fn jar_entries(tree: &Files, target: &Target) -> anyhow::Result<Vec<(String, IndexFile)>> {
+fn jar_entries(
+    tree: &Files,
+    config: &Config,
+    target: &Target,
+) -> anyhow::Result<Vec<(String, IndexFile)>> {
     let os = current_os();
     let mut entries = vec![];
     for (path, content) in tree {
         let Some(dir) = index_dir_of(path) else {
             continue;
         };
-        if !target.is_prism() && dir != "mods" {
+        if (!target.is_prism() && dir != "mods") || !config.handles_index_dir(dir) {
             continue;
         }
         let entry = IndexFile::parse_bytes(content).with_context(|| path.clone())?;
@@ -257,6 +261,9 @@ async fn read_prism(
     }
 
     for dir in INDEX_DIRS {
+        if !config.handles_index_dir(dir) {
+            continue;
+        }
         let prism_indexes = read_prism_indexes(game_dir, dir)?;
         let mut base_by_filename = HashMap::new();
         for (path, content) in base_domain {
@@ -579,8 +586,8 @@ async fn apply_jars(
     base_tree: &Files,
     head_tree: &Files,
 ) -> anyhow::Result<()> {
-    let wanted = jar_entries(head_tree, target)?;
-    let previous = jar_entries(base_tree, target)?;
+    let wanted = jar_entries(head_tree, config, target)?;
+    let previous = jar_entries(base_tree, config, target)?;
 
     let mut downloads = vec![];
     for (path, entry) in &wanted {
