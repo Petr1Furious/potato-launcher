@@ -29,7 +29,16 @@ Install the loader the way your server runtime does it (for example, the
 `itzg/minecraft-server` image with `TYPE=NEOFORGE`). potato doesn't install
 loaders.
 
-The first push overwrites the managed files on the server:
+If the server already runs this pack and has changes you want to keep, pull
+first. It takes the server's versions of files the repo has, for review:
+
+```bash
+potato pull main
+git diff --cached
+git commit
+```
+
+Otherwise, the first push overwrites the managed files on the server:
 
 ```bash
 potato push main --force

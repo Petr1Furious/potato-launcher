@@ -98,10 +98,13 @@ without one.
 Written by `potato target add`:
 
 ```toml
-prism = "~/.local/share/PrismLauncher/instances/minigames"
+[targets.prism]
+kind = "prism"
+path = "/home/me/.local/share/PrismLauncher/instances/minigames"
 
-[servers]
-main = "/srv/minecraft/minigames"
+[targets.main]
+kind = "server"
+path = "/srv/minecraft/minigames"
 ```
 
 ## Index files: packwiz `.pw.toml`
@@ -162,11 +165,16 @@ Both directions need a clean repo tree.
 
 1. Builds a **snapshot commit** on top of the base: the base tree with the
    managed paths replaced by what's in the target now.
-2. Merges it into `HEAD` with `--no-ff --no-commit`. Git does a three-way
-   merge: changes made only in the target apply, changes made only in the repo
-   stay, and changes made on both sides become normal git conflicts.
-3. Sets the target's base to the snapshot. You review and commit; after the
-   commit the snapshot is in `HEAD`'s history.
+2. Applies it to `HEAD` with `git cherry-pick --no-commit`, so the three-way
+   base is the old base: changes made only in the target apply, changes made
+   only in the repo stay, and changes made on both sides become normal git
+   conflicts. Pending cherry-pick state is cleared (`--quit`), so the result is
+   plain staged changes and your commit is an ordinary one-parent commit.
+3. Sets the target's base to the snapshot. The snapshot never enters shared
+   history; `refs/potato/<target>` keeps it from being garbage-collected.
+
+Discarding a pull (`git reset --hard`) means the repo wins: the target still
+matches its base, so the next `push` overwrites those changes.
 
 What gets read:
 
@@ -174,18 +182,21 @@ What gets read:
   files, with index files compared by jar. It also reads `mmc-pack.json` into
   `potato.toml`, and uploads (under the storage lock) CurseForge jars without a
   URL and jars without an index file. Unindexed jars are looked up on Modrinth
-  (`/version_file/{sha1}`) first. With no base yet, the snapshot is built on
-  `HEAD`.
+  (`/version_file/{sha1}`) first.
 - **A server:** only changes to and deletions of files the base already has,
   plus paths given with `--add`. New files are ignored, because they're almost
-  always server-only mod configs. Excluded paths and jars are never read. A
-  server must be pushed once with `--force` before it can be pulled.
+  always server-only mod configs. Excluded paths and jars are never read.
+
+With no base yet (either kind, or a base this clone doesn't have), files are
+compared against `HEAD`. The snapshot is a root commit, so differences become
+additions or conflicts, and deletions don't apply, so they aren't listed.
 
 ### `potato push <target>`
 
 Refuses if the target's managed files changed since the base ("pull first"),
-if the last pull isn't committed, or, for servers, while the world's
-`session.lock` is held. A target that was never synced needs `--force` too. `--force` skips all of these checks. Otherwise it:
+or, for servers, while the world's `session.lock` is held. A target with no
+base in this repo (never synced, or synced from another clone) needs `--force`
+too. `--force` skips all of these checks. Otherwise it:
 
 - writes `HEAD`'s managed files, minus that server's `exclude`
 - for `prism`, also writes index files (skipped when Prism's describes the same
@@ -293,16 +304,20 @@ regenerates `index.html`. CI runs it on `v*` tags.
 
 - `potato init [--id] [--prism]`: `potato.toml` template, `.gitignore`,
   `.potato/local.toml`, versions from Prism.
-- `potato target add <name> <folder>`, `target list`, `target remove <name>`:
-  the name `prism` sets the Prism instance, any other adds a server. `add`
-  checks the folder (Prism: has a `minecraft/` folder) and stores an absolute
+- `potato target add <name> <folder> [--prism|--server]`, `target list`,
+  `target remove <name>`. Names are free; `init --prism` names its target
+  `prism`. Without a flag, a folder with `mmc-pack.json` is Prism and anything
+  else a server; the output names the kind. `add` checks the folder (Prism: has
+  a `minecraft/` folder; server: no `mmc-pack.json`) and stores an absolute
   path.
 - `potato mod add <file|url> [--os] [--side] [--dir] [--name]`
 - `potato mod list`: index name, mod id, side and OS of every entry.
 - `potato mod id <jar | modrinth:slug>`
 - `potato cache clean`. The cache is in the user cache dir, overridable with
   `POTATO_CACHE_DIR`.
-- Global `-C/--repo <dir>`.
+- Global `-C/--repo <dir>`, and `-v` to list every uploaded file. Without it,
+  uploads list pack files and jars by path and runtime files (libraries,
+  assets, Java, game jars) as one line per group.
 
 ## Launcher self-update
 

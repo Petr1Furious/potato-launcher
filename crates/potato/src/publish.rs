@@ -9,6 +9,7 @@ use crate::{
     build::build,
     ctx::Ctx,
     storage::{self, Storage},
+    upload,
 };
 
 pub const MANIFEST_KEY: &str = "instance_manifest.json";
@@ -120,14 +121,13 @@ pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
             .collect::<HashSet<_>>();
         let uploads = output
             .uploads
-            .iter()
-            .filter(|(key, _)| !existing.contains(*key))
-            .map(|(key, path)| (key.clone(), path.clone()))
+            .values()
+            .filter(|upload| !existing.contains(&upload.key))
             .collect::<Vec<_>>();
-        if !uploads.is_empty() {
-            println!("uploading {} files", uploads.len());
-        }
-        storage.put_objects(&uploads).await?;
+        upload::print(uploads.iter().copied(), ctx.verbose);
+        storage
+            .put_objects(&upload::pairs(uploads.iter().copied()))
+            .await?;
         let missing = output
             .referenced
             .iter()

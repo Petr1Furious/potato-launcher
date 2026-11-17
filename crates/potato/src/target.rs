@@ -4,10 +4,11 @@ use anyhow::{Context, bail};
 use serde::Deserialize;
 
 use crate::{
-    config::{Config, LoaderName, LocalConfig, under},
+    config::{Config, LoaderName, LocalConfig, TargetType, under},
     index::Side,
 };
 
+/// The name `init --prism` gives the Prism target.
 pub const PRISM: &str = "prism";
 
 pub enum TargetKind {
@@ -26,46 +27,41 @@ pub struct Target {
 
 impl Target {
     pub fn resolve(name: &str, config: &Config, local: &LocalConfig) -> anyhow::Result<Self> {
-        if name == PRISM {
-            let root = local.prism.clone().context(
-                "no prism target; add it with `potato target add prism <instance folder>`",
-            )?;
-            let game_dir = prism_game_dir(&root)?;
-            return Ok(Self {
-                name: name.to_string(),
-                kind: TargetKind::Prism,
-                root,
-                game_dir,
-            });
+        let local_target = local.targets.get(name).with_context(|| {
+            format!("unknown target '{name}'; add it with `potato target add {name} <folder> --prism` or `--server`")
+        })?;
+        let root = local_target.path.clone();
+        match local_target.kind {
+            TargetType::Prism => {
+                let game_dir = prism_game_dir(&root)?;
+                Ok(Self {
+                    name: name.to_string(),
+                    kind: TargetKind::Prism,
+                    root,
+                    game_dir,
+                })
+            }
+            TargetType::Server => {
+                if !root.is_dir() {
+                    bail!("{} doesn't exist", root.display());
+                }
+                let exclude = config
+                    .servers
+                    .get(name)
+                    .map(|server| server.exclude.clone())
+                    .unwrap_or_default();
+                Ok(Self {
+                    name: name.to_string(),
+                    kind: TargetKind::Server { exclude },
+                    game_dir: root.clone(),
+                    root,
+                })
+            }
         }
-        let Some(root) = local.servers.get(name) else {
-            bail!(
-                "unknown target '{name}'; add it with `potato target add {name} <server folder>`"
-            );
-        };
-        if !root.is_dir() {
-            bail!("{} doesn't exist", root.display());
-        }
-        let exclude = config
-            .servers
-            .get(name)
-            .map(|server| server.exclude.clone())
-            .unwrap_or_default();
-        Ok(Self {
-            name: name.to_string(),
-            kind: TargetKind::Server { exclude },
-            root: root.clone(),
-            game_dir: root.clone(),
-        })
     }
 
     pub fn names(local: &LocalConfig) -> Vec<String> {
-        let mut names = vec![];
-        if local.prism.is_some() {
-            names.push(PRISM.to_string());
-        }
-        names.extend(local.servers.keys().cloned());
-        names
+        local.targets.keys().cloned().collect()
     }
 
     pub fn is_prism(&self) -> bool {
@@ -152,14 +148,22 @@ fn prism_game_dir(root: &Path) -> anyhow::Result<PathBuf> {
 }
 
 /// Checks a folder for `target add` and returns it as an absolute path.
-pub fn check_folder(name: &str, path: &Path) -> anyhow::Result<PathBuf> {
+pub fn check_folder(kind: TargetType, path: &Path) -> anyhow::Result<PathBuf> {
     let path = path
         .canonicalize()
         .with_context(|| format!("{} doesn't exist", path.display()))?;
-    if name == PRISM {
-        prism_game_dir(&path)?;
-    } else if !path.is_dir() {
-        bail!("{} isn't a folder", path.display());
+    match kind {
+        TargetType::Prism => {
+            prism_game_dir(&path)?;
+        }
+        TargetType::Server => {
+            if !path.is_dir() {
+                bail!("{} isn't a folder", path.display());
+            }
+            if path.join("mmc-pack.json").exists() {
+                bail!("{} is a Prism instance, use --prism", path.display());
+            }
+        }
     }
     Ok(path)
 }

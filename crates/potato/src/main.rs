@@ -14,6 +14,7 @@ mod publish;
 mod storage;
 mod sync;
 mod target;
+mod upload;
 
 #[cfg(test)]
 mod tests;
@@ -21,6 +22,7 @@ mod tests;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use config::TargetType;
 use log::LevelFilter;
 
 pub fn http_client() -> reqwest::Client {
@@ -36,6 +38,9 @@ struct Cli {
     /// Pack repo to work in.
     #[arg(short = 'C', long = "repo", default_value = ".", global = true)]
     repo: PathBuf,
+    /// List every uploaded file.
+    #[arg(short, long, global = true)]
+    verbose: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -111,8 +116,19 @@ enum Command {
 
 #[derive(Subcommand)]
 enum TargetAction {
-    /// Add or change a target. The name `prism` sets the Prism instance, any other name adds a server.
-    Add { name: String, path: PathBuf },
+    /// Add or change a target.
+    /// Without --prism or --server, a folder with mmc-pack.json is a Prism instance.
+    #[command(group(clap::ArgGroup::new("kind")))]
+    Add {
+        name: String,
+        path: PathBuf,
+        /// A Prism (or Prism fork) instance folder.
+        #[arg(long, group = "kind")]
+        prism: bool,
+        /// A server folder.
+        #[arg(long, group = "kind")]
+        server: bool,
+    },
     /// List targets.
     List,
     /// Forget a target. Its folder is left as it is.
@@ -154,7 +170,19 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     }
     if let Command::Target { action } = &cli.command {
         return match action {
-            TargetAction::Add { name, path } => commands::target_add(&cli.repo, name, path),
+            TargetAction::Add {
+                name,
+                path,
+                prism,
+                server,
+            } => {
+                let kind = match (prism, server) {
+                    (true, _) => Some(TargetType::Prism),
+                    (_, true) => Some(TargetType::Server),
+                    _ => None,
+                };
+                commands::target_add(&cli.repo, name, kind, path)
+            }
             TargetAction::List => commands::target_list(&cli.repo),
             TargetAction::Remove { name } => commands::target_remove(&cli.repo, name),
         };
@@ -169,6 +197,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         return launcher::publish_launcher(target, name, version, files).await;
     }
     let mut ctx = ctx::Ctx::new(&cli.repo)?;
+    ctx.verbose = cli.verbose;
     utils::logging::setup_logger(&ctx.cache_dir.join("potato.log"), true, LevelFilter::Warn)?;
     match cli.command {
         Command::Init { .. } | Command::Target { .. } | Command::PublishLauncher { .. } => {

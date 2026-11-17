@@ -4,12 +4,16 @@ use anyhow::{Context, bail};
 
 use crate::{
     build::{mod_id_of, modrinth_mod_id},
-    config::{CONFIG_FILE, INDEX_DIRS, LocalConfig, object_key, set_local_target, set_versions},
+    config::{
+        CONFIG_FILE, INDEX_DIRS, LocalConfig, TargetType, object_key, set_local_target,
+        set_versions,
+    },
     ctx::Ctx,
     git::Git,
     index::{IndexFile, Side, index_dir_of, index_name, index_path, normalize_os},
     modrinth, storage,
     target::{PRISM, check_folder, parse_mmc_pack, synced_file},
+    upload::{self, Upload},
 };
 
 const TEMPLATE: &str = r#"id = "{id}"
@@ -35,7 +39,9 @@ pub fn init(repo: &Path, id: Option<String>, prism: Option<PathBuf>) -> anyhow::
     if config_path.exists() {
         bail!("{CONFIG_FILE} already exists");
     }
-    let prism = prism.map(|prism| check_folder(PRISM, &prism)).transpose()?;
+    let prism = prism
+        .map(|prism| check_folder(TargetType::Prism, &prism))
+        .transpose()?;
     let repo = repo.canonicalize()?;
     let id = match id {
         Some(id) => id,
@@ -58,7 +64,7 @@ pub fn init(repo: &Path, id: Option<String>, prism: Option<PathBuf>) -> anyhow::
         std::fs::write(&gitignore, format!("{existing}.potato/\n"))?;
     }
     if let Some(prism) = prism {
-        set_local_target(&repo, PRISM, Some(&prism))?;
+        set_local_target(&repo, PRISM, Some((TargetType::Prism, &prism)))?;
         if let Ok(content) = std::fs::read(prism.join("mmc-pack.json")) {
             let (minecraft, loader, loader_version) = parse_mmc_pack(&content)?;
             set_versions(&repo, &minecraft, loader, loader_version.as_deref())?;
@@ -68,7 +74,12 @@ pub fn init(repo: &Path, id: Option<String>, prism: Option<PathBuf>) -> anyhow::
     Ok(())
 }
 
-pub fn target_add(repo: &Path, name: &str, path: &Path) -> anyhow::Result<()> {
+pub fn target_add(
+    repo: &Path,
+    name: &str,
+    kind: Option<TargetType>,
+    path: &Path,
+) -> anyhow::Result<()> {
     if !repo.join(CONFIG_FILE).exists() {
         bail!("no {CONFIG_FILE} here, run `potato init` first");
     }
@@ -79,53 +90,47 @@ pub fn target_add(repo: &Path, name: &str, path: &Path) -> anyhow::Result<()> {
     {
         bail!("target names use letters, digits, - and _");
     }
-    let path = check_folder(name, path)?;
-    set_local_target(repo, name, Some(&path))?;
-    println!("{name}: {}", path.display());
+    let kind = kind.unwrap_or(if path.join("mmc-pack.json").exists() {
+        TargetType::Prism
+    } else {
+        TargetType::Server
+    });
+    let path = check_folder(kind, path)?;
+    set_local_target(repo, name, Some((kind, &path)))?;
+    println!("{name} ({}): {}", kind.as_str(), path.display());
     Ok(())
 }
 
 pub fn target_list(repo: &Path) -> anyhow::Result<()> {
     let local = LocalConfig::load(repo)?;
+    if local.targets.is_empty() {
+        println!(
+            "no targets; add one with `potato target add <name> <folder> --prism` or `--server`"
+        );
+        return Ok(());
+    }
     let rows = local
-        .prism
+        .targets
         .iter()
-        .map(|path| (PRISM, path))
-        .chain(
-            local
-                .servers
-                .iter()
-                .map(|(name, path)| (name.as_str(), path)),
-        )
-        .map(|(name, path)| {
-            let state = if synced_file(path).exists() {
+        .map(|(name, target)| {
+            let state = if synced_file(&target.path).exists() {
                 "synced"
             } else {
                 "never synced"
             };
-            (name, state, path.display().to_string())
+            (name, target.kind.as_str(), state, target.path.display())
         })
         .collect::<Vec<_>>();
-    if rows.is_empty() {
-        println!("no targets; add one with `potato target add <name> <folder>`");
-        return Ok(());
-    }
     let name_width = rows.iter().map(|row| row.0.len()).max().unwrap_or(0);
-    let state_width = rows.iter().map(|row| row.1.len()).max().unwrap_or(0);
-    for (name, state, path) in rows {
-        println!("{name:name_width$}  {state:state_width$}  {path}");
+    let state_width = rows.iter().map(|row| row.2.len()).max().unwrap_or(0);
+    for (name, kind, state, path) in rows {
+        println!("{name:name_width$}  {kind:6}  {state:state_width$}  {path}");
     }
     Ok(())
 }
 
 pub fn target_remove(repo: &Path, name: &str) -> anyhow::Result<()> {
-    let local = LocalConfig::load(repo)?;
-    let known = if name == PRISM {
-        local.prism.is_some()
-    } else {
-        local.servers.contains_key(name)
-    };
-    if !known {
+    if !LocalConfig::load(repo)?.targets.contains_key(name) {
         bail!("unknown target '{name}'");
     }
     set_local_target(repo, name, None)
@@ -189,7 +194,16 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
             Some(url) => IndexFile::new(&stem, &filename, url.as_str(), &sha1),
             None => {
                 let storage = storage::open(&config.publish.target)?;
-                let files = [(object_key(&sha1), path.clone())];
+                let upload = Upload {
+                    note: Some("not on Modrinth"),
+                    ..Upload::new(
+                        object_key(&sha1),
+                        path.clone(),
+                        format!("{}/{filename}", options.dir),
+                    )
+                };
+                upload::print([&upload], ctx.verbose);
+                let files = upload::pairs([&upload]);
                 storage::locked(storage.as_ref(), storage.put_objects(&files)).await?;
                 IndexFile::new(
                     &stem,

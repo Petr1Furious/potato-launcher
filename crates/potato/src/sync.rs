@@ -15,6 +15,7 @@ use crate::{
     },
     modrinth, storage,
     target::Target,
+    upload::{self, Upload},
 };
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -132,7 +133,7 @@ pub enum Mode {
 
 pub struct Snapshot {
     pub files: Files,
-    pub uploads: Vec<(String, PathBuf)>,
+    pub uploads: Vec<Upload>,
 }
 
 fn file_stem(filename: &str) -> &str {
@@ -345,7 +346,7 @@ async fn make_entry(
         if entry.url().is_none() {
             snapshot
                 .uploads
-                .push((object_key(sha1), path.to_path_buf()));
+                .push(jar_upload(sha1, path, filename, "no download URL"));
         }
         entry.convert(sha1, &object_url);
         return Ok((name.clone(), entry));
@@ -364,34 +365,34 @@ async fn make_entry(
     }
     snapshot
         .uploads
-        .push((object_key(sha1), path.to_path_buf()));
+        .push(jar_upload(sha1, path, filename, "not on Modrinth"));
     Ok((
         name.clone(),
         IndexFile::new(&name, filename, &object_url, sha1),
     ))
 }
 
-/// The last commit known to match the target and contained in `HEAD`'s history.
-pub fn effective_base(git: &Git, target: &Target) -> anyhow::Result<Option<String>> {
-    let Some(mut commit) = target.recorded_base() else {
-        return Ok(None);
-    };
-    let head = git.head()?;
-    loop {
-        if !git.commit_exists(&commit) {
-            return Ok(None);
-        }
-        if git.is_ancestor(&commit, &head)? {
-            return Ok(Some(commit));
-        }
-        if !git.message(&commit)?.starts_with(SNAPSHOT_PREFIX) {
-            return Ok(None);
-        }
-        match git.parent(&commit)? {
-            Some(parent) => commit = parent,
-            None => return Ok(None),
-        }
+fn jar_upload(sha1: &str, path: &Path, filename: &str, note: &'static str) -> Upload {
+    let dir = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("mods");
+    Upload {
+        note: Some(note),
+        ..Upload::new(
+            object_key(sha1),
+            path.to_path_buf(),
+            format!("{dir}/{filename}"),
+        )
     }
+}
+
+/// The commit the target last matched, if this repo has it.
+pub fn effective_base(git: &Git, target: &Target) -> anyhow::Result<Option<String>> {
+    Ok(target
+        .recorded_base()
+        .filter(|commit| git.commit_exists(commit)))
 }
 
 fn print_changes(changes: &[Change]) {
@@ -405,9 +406,6 @@ pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String]) -> anyhow::Result<(
     let config = ctx.config()?;
     let target = Target::resolve(name, &config, &ctx.local()?)?;
     let base = effective_base(&ctx.git, &target)?;
-    if base.is_none() && !target.is_prism() {
-        bail!("{name} hasn't been synced yet, run `potato push {name} --force` first");
-    }
     // Without a base, compare against HEAD so unchanged files merge cleanly.
     let base_tree = match &base {
         Some(base) => ctx.git.read_tree(base)?,
@@ -432,11 +430,16 @@ pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String]) -> anyhow::Result<(
 
     if !snapshot.uploads.is_empty() {
         let storage = storage::open(&config.publish.target)?;
-        println!("uploading {} files", snapshot.uploads.len());
-        storage::locked(storage.as_ref(), storage.put_objects(&snapshot.uploads)).await?;
+        upload::print(&snapshot.uploads, ctx.verbose);
+        let files = upload::pairs(&snapshot.uploads);
+        storage::locked(storage.as_ref(), storage.put_objects(&files)).await?;
     }
 
-    let changes = diff(&base_domain, &snapshot.files);
+    let mut changes = diff(&base_domain, &snapshot.files);
+    if base.is_none() {
+        // The snapshot merges as unrelated history, so deletions don't apply.
+        changes.retain(|change| !matches!(change, Change::Deleted(_)));
+    }
     if changes.is_empty() {
         println!("{name}: nothing to pull");
     } else {
@@ -452,7 +455,7 @@ pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String]) -> anyhow::Result<(
             &tree,
             &format!("{SNAPSHOT_PREFIX}: {name}"),
         )?;
-        let merged = ctx.git.merge_no_commit(&commit, &format!("Pull {name}"))?;
+        let merged = ctx.git.cherry_pick_no_commit(&commit)?;
         ctx.git.update_ref(&target.ref_name(), &commit)?;
         target.record_base(&commit)?;
         println!("{name}:");
@@ -480,14 +483,10 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     if !force && target.is_running() {
         bail!("{name} is running, stop it first");
     }
-    let recorded = target.recorded_base();
-    let base = match &recorded {
-        None if !force => bail!("{name} hasn't been synced yet, use --force to overwrite it"),
-        Some(commit) if !force && !ctx.git.is_ancestor(commit, &head)? => {
-            bail!("the last pull from {name} isn't committed, commit it or pull again")
-        }
-        _ => effective_base(&ctx.git, &target)?,
-    };
+    let base = effective_base(&ctx.git, &target)?;
+    if base.is_none() && !force {
+        bail!("{name} hasn't been synced with this repo yet, use --force to overwrite it");
+    }
     let base_tree = match &base {
         Some(base) => ctx.git.read_tree(base)?,
         None => Files::new(),
@@ -684,9 +683,6 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
             println!("{name}: never synced");
             continue;
         };
-        if target.recorded_base().as_deref() != Some(base.as_str()) {
-            println!("{name}: last pull isn't committed");
-        }
         let base_tree = ctx.git.read_tree(&base)?;
         let base_domain = domain(&base_tree, &config, &target)?;
         let snapshot = read_target(

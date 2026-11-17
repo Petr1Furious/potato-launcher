@@ -136,15 +136,6 @@ impl Git {
         Ok(output.status.success())
     }
 
-    pub fn message(&self, commit: &str) -> anyhow::Result<String> {
-        self.out(&["log", "-1", "--format=%s", commit])
-    }
-
-    pub fn parent(&self, commit: &str) -> anyhow::Result<Option<String>> {
-        let out = self.out(&["rev-list", "--parents", "-n", "1", commit])?;
-        Ok(out.split_whitespace().nth(1).map(str::to_string))
-    }
-
     pub fn read_tree(&self, commit: &str) -> anyhow::Result<Files> {
         let listing = self.checked(&["ls-tree", "-r", "-z", "--full-tree", commit], &[], None)?;
         let mut entries = vec![];
@@ -234,28 +225,18 @@ impl Git {
         Ok(String::from_utf8(commit)?.trim().to_string())
     }
 
-    /// Merges without committing. Returns false when there are conflicts.
-    pub fn merge_no_commit(&self, commit: &str, message: &str) -> anyhow::Result<bool> {
-        let output = self.run(
-            &[
-                "merge",
-                "--no-ff",
-                "--no-commit",
-                "--allow-unrelated-histories",
-                "-m",
-                message,
-                commit,
-            ],
-            &[],
-            None,
-        )?;
+    /// Stages `commit`'s changes without committing. Returns false when there are conflicts.
+    pub fn cherry_pick_no_commit(&self, commit: &str) -> anyhow::Result<bool> {
+        let output = self.run(&["cherry-pick", "--no-commit", commit], &[], None)?;
+        // A pending cherry-pick would make `git commit` reuse the snapshot's message and author.
+        let _ = self.run(&["cherry-pick", "--quit"], &[], None);
         if output.status.success() {
             return Ok(true);
         }
         let conflicts = self.out(&["diff", "--name-only", "--diff-filter=U"])?;
         if conflicts.is_empty() {
             bail!(
-                "git merge failed: {}",
+                "git cherry-pick failed: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             );
         }

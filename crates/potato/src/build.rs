@@ -27,13 +27,14 @@ use crate::{
     java_mirror::mirror_java_runtimes,
     modrinth,
     progress::TerminalProgress,
+    upload::Upload,
 };
 
 pub struct BuildOutput {
     pub config: Config,
     pub metadata: InstanceMetadata,
     /// Local files to upload, by object key.
-    pub uploads: BTreeMap<String, PathBuf>,
+    pub uploads: BTreeMap<String, Upload>,
     /// Every object key the metadata needs.
     pub referenced: BTreeSet<String>,
 }
@@ -148,6 +149,23 @@ fn replace_strings(value: &mut serde_json::Value, mapping: &HashMap<String, Stri
     }
 }
 
+/// Pack files are listed by their path in the game folder, runtime files by group.
+fn staged_upload(key: String, path: PathBuf, rel: &str, id: &str) -> Upload {
+    let pack_prefix = format!("instances/{id}/minecraft/");
+    if let Some(pack_path) = rel.strip_prefix(&pack_prefix) {
+        return Upload::new(key, path, pack_path.to_string());
+    }
+    let group = match rel.split('/').next().unwrap_or(rel) {
+        "java_mirror" => "java",
+        "versions" | "versions_replaced" => "game jars",
+        other => other,
+    };
+    Upload {
+        group: Some(group.to_string()),
+        ..Upload::new(key, path, rel.to_string())
+    }
+}
+
 fn decode(rel: &str) -> String {
     percent_encoding::percent_decode_str(rel)
         .decode_utf8_lossy()
@@ -199,7 +217,9 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
             let mod_id = mod_id_of(cached_path).await?;
             mod_ids.insert(index_name(&entry.path).to_string(), mod_id.clone());
             let url = if mirror {
-                uploads.insert(object_key(&entry.sha1), cached_path.clone());
+                let key = object_key(&entry.sha1);
+                let label = format!("{dir}/{filename}");
+                uploads.insert(key.clone(), Upload::new(key, cached_path.clone(), label));
                 config.publish.object_url(&entry.sha1)
             } else {
                 entry.url.clone()
@@ -369,7 +389,8 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
         let url = match upstream.get(&sha1) {
             Some(url) if !mirror => url.to_string(),
             _ => {
-                uploads.insert(object_key(&sha1), path);
+                let key = object_key(&sha1);
+                uploads.insert(key.clone(), staged_upload(key, path, &rel, &config.id));
                 config.publish.object_url(&sha1).to_string()
             }
         };
@@ -392,7 +413,12 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
             };
             let key = format!("objects/{parent}/{name}");
             referenced.insert(key.clone());
-            uploads.insert(key, file);
+            let label = format!("assets/{parent}/{name}");
+            let upload = Upload {
+                group: Some("assets".to_string()),
+                ..Upload::new(key.clone(), file, label)
+            };
+            uploads.insert(key, upload);
         }
     }
     visit_strings(&value, &mut |s| {

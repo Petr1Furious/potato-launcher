@@ -239,8 +239,8 @@ potato push prism    # repo -> Prism
 potato status        # what pull and push would change, for every target
 ```
 
-`init --prism` sets the Prism instance. To change it later, or to see and
-remove targets:
+`init --prism` adds the Prism instance as a target named `prism`. To change it
+later, or to see and remove targets:
 
 ```bash
 potato target add prism <instance folder>
@@ -248,14 +248,18 @@ potato target list
 potato target remove <name>
 ```
 
-`pull` needs a clean repo. It merges Prism's state into the repo without
-committing. Changes made only in Prism apply, changes made only in the repo
-stay, and changes made in both show up as normal git conflicts. Review with
-`git diff --cached` and commit.
+`target add` picks the kind from the folder: one with `mmc-pack.json` is a Prism
+instance, anything else a server. `--prism` or `--server` sets it explicitly.
+
+`pull` needs a clean repo. It stages Prism's changes since the last sync in the
+repo, without committing: changes made only in Prism apply, changes made only
+in the repo stay, and changes made in both show up as normal git conflicts.
+Review with `git diff --cached` and commit. To drop the pulled changes, run
+`git reset --hard`; the next `push` then overwrites them in Prism.
 
 `push` writes the last commit into Prism. It refuses if Prism changed since
-the last sync, if the last pull isn't committed yet, or if this Prism instance
-was never synced (the first push on a new machine). `--force` overwrites
+the last sync, or if this Prism instance was never synced with this repo (the
+first push on a new machine or from a fresh clone). `--force` overwrites
 anyway. It keeps your enabled/disabled choice for each mod, and new mods from
 an off-by-default optional set arrive disabled.
 
@@ -279,6 +283,8 @@ refuses to run unless:
 `--force` skips the last two checks. To roll back, check out an older commit
 and run `potato publish --force`.
 
+Uploads list each pack file and jar. Libraries, assets, Java and game jars are
+shown as one line per group; `-v` lists every file.
 `potato unpublish` removes the instance from the instance list.
 
 ### Cleaning up storage

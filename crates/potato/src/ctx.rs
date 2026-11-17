@@ -14,6 +14,7 @@ pub struct Ctx {
     pub cache_dir: PathBuf,
     pub hashes: HashCache,
     pub files: FileCache,
+    pub verbose: bool,
 }
 
 impl Ctx {
@@ -28,6 +29,7 @@ impl Ctx {
             client: crate::http_client(),
             hashes: HashCache::load(&cache_dir),
             files: FileCache::new(&cache_dir),
+            verbose: false,
             cache_dir,
         }
     }

@@ -92,7 +92,7 @@ exclude = ["config/excluded.toml"]
         write(
             &repo.join(".potato/local.toml"),
             &format!(
-                "prism = {}\n[servers]\nmain = {}\n",
+                "[targets.prism]\nkind = \"prism\"\npath = {}\n[targets.main]\nkind = \"server\"\npath = {}\n",
                 toml_edit::value(prism.to_string_lossy().as_ref()),
                 toml_edit::value(server.to_string_lossy().as_ref())
             ),
@@ -237,6 +237,12 @@ async fn pull_push_and_status() {
     write(&s.game.join("kubejs/s.js"), "two\n");
     sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     s.commit("merge");
+    let parents = git(&s.repo, &["rev-list", "--parents", "-n", "1", "HEAD"]);
+    assert_eq!(
+        parents.split_whitespace().count(),
+        2,
+        "pulls make one-parent commits"
+    );
     assert_eq!(read(&s.repo.join("kubejs/s.js")), "two\n");
     assert_eq!(read(&s.repo.join("config/a.toml")), "a = 2\n");
     assert_eq!(
@@ -256,8 +262,17 @@ async fn pull_push_and_status() {
     write(&s.game.join("config/a.toml"), "a = 4\n");
     sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     assert!(git(&s.repo, &["diff", "--name-only", "--diff-filter=U"]).contains("config/a.toml"));
+    assert!(!s.repo.join(".git/CHERRY_PICK_HEAD").exists());
     write(&s.repo.join("config/a.toml"), "a = 4\n");
     s.commit("resolve");
+    assert_eq!(git(&s.repo, &["log", "-1", "--format=%an"]).trim(), "t");
+
+    // The same edit on both sides pulls cleanly to nothing.
+    write(&s.repo.join("config/a.toml"), "a = 5\n");
+    s.commit("repo a=5");
+    write(&s.game.join("config/a.toml"), "a = 5\n");
+    sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
+    assert!(s.ctx.git.is_clean().unwrap());
 
     // Removing a mod in the repo removes its jar and index file from Prism.
     std::fs::remove_file(s.repo.join("mods/.index/jei.pw.toml")).unwrap();
@@ -328,8 +343,9 @@ async fn server_sync() {
     sync::pull(&mut s.ctx, "prism", &[]).await.unwrap();
     s.commit("pull");
 
-    let err = sync::pull(&mut s.ctx, "main", &[]).await.unwrap_err();
-    assert!(err.to_string().contains("--force"), "{err}");
+    // A never-synced server can be pulled; it has nothing the repo lacks.
+    sync::pull(&mut s.ctx, "main", &[]).await.unwrap();
+    assert!(s.repo.join("config/a.toml").exists());
     let err = sync::push(&mut s.ctx, "main", false).await.unwrap_err();
     assert!(err.to_string().contains("--force"), "{err}");
 
