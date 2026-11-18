@@ -9,6 +9,7 @@ mod index;
 mod java_mirror;
 mod launcher;
 mod modrinth;
+mod pack;
 mod progress;
 mod publish;
 mod storage;

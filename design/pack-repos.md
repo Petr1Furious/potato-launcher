@@ -121,8 +121,9 @@ Extra fields potato reads:
   and `both`; servers get `server` and `both`.
 - `os = ["windows", "macos", "linux"]` (missing means all). Only for mods.
 
-Every index file in the repo has a `[download] url` and a sha1 hash, so potato
-only ever checks sha1. Prism's own files don't always look like that: it
+An index file with a `[download] url` always has a sha1 hash too, so potato
+only ever checks sha1. One without a download describes a committed jar (see
+below). Prism's own files don't always look like that: it
 writes sha512 for Modrinth mods, sha1 or md5 (older files: murmur2) for
 CurseForge mods, and no URL for CurseForge mods.
 
@@ -130,14 +131,31 @@ Two index files are **equal when they describe the same jar** (same sha1 of
 the jar), however they're written:
 
 - `pull prism` keeps the repo's file if it describes the same jar as Prism's.
-  Otherwise it writes a converted copy: sha1 instead of Prism's hash, and
-  `<base_url>/objects/<ab>/<sha1>` as the URL if Prism's has none (the jar is
-  uploaded there). When the jar changed, the repo's `side` and `os` are kept.
+  Otherwise it writes a converted copy with sha1 instead of Prism's hash. A jar
+  with no URL anywhere (Prism's has none, Modrinth doesn't know it) is
+  committed instead, or with `[pull] jars = "storage"` uploaded to
+  `<base_url>/objects/<ab>/<sha1>` and pointed at. When the jar changed, the
+  repo's `side` and `os` are kept.
 - `push prism` writes an index file only if Prism has none for that mod or its
   file describes a different jar.
 
 Jar hashes are cached by path, size and modification time.
 
+### Committed jars
+
+A jar or zip directly in a pack folder (`mods/x.jar`, `resourcepacks/x.zip`) is
+part of the pack. An index file without a download for the same filename sets
+its `side`, `os` and project ids (`potato mod set` writes one); without one it
+is for both sides and every OS. A committed file and an index file *with* a
+download URL for the same filename is an error.
+
+potato never loads committed jars into memory with the rest of a tree: it
+lists them by blob id and only fetches the bytes (`git cat-file`, or
+`git lfs smudge` when the blob is an LFS pointer) into the sha1 cache when
+`push` or `build` needs them. Their sha1 is cached by blob id. Jars from Prism
+go in with `git hash-object -w --path`, so the repo's LFS rules apply.
+`pull` and `mod add` commit jars nobody else hosts unless `[pull] jars =
+"storage"`; `build` uploads committed files as objects at publish.
 ### OS variants
 
 Mods with one jar per OS (same mod id) get one index file per variant, each

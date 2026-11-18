@@ -23,9 +23,10 @@ use utils::{
 use crate::{
     config::{CONFIG_FILE, Config, object_key},
     ctx::Ctx,
-    index::{IndexFile, Side, index_dir_of, index_name},
+    index::Side,
     java_mirror::mirror_java_runtimes,
     modrinth,
+    pack::{PackFile, Source, pack_files},
     progress::TerminalProgress,
     upload::Upload,
 };
@@ -71,36 +72,50 @@ pub async fn modrinth_mod_id(ctx: &Ctx, slug: &str) -> anyhow::Result<String> {
 }
 
 struct Entry {
-    path: String,
-    index: IndexFile,
+    file: PackFile,
     sha1: String,
     url: Url,
+    cached: PathBuf,
 }
 
-fn collect_entries(tree: &crate::git::Files, config: &Config) -> anyhow::Result<Vec<Entry>> {
+/// Client-side jars and zips, each with its sha1, download URL and cached copy.
+async fn collect_entries(
+    ctx: &mut Ctx,
+    tree: &crate::git::Files,
+    config: &Config,
+) -> anyhow::Result<Vec<Entry>> {
+    let files = pack_files(tree, config)?
+        .into_iter()
+        .filter_map(|file| match file.side() {
+            Ok(side) => side.includes(Side::Client).then_some(Ok(file)),
+            Err(err) => Some(Err(err)),
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut downloads = vec![];
+    for file in &files {
+        if let Source::Url { url, sha1 } = &file.source {
+            let url: Url = url
+                .parse()
+                .with_context(|| format!("{}/{}: bad url", file.dir, file.filename))?;
+            downloads.push((url, sha1.clone()));
+        }
+    }
+    let cached = ctx.files.ensure(&downloads).await?;
     let mut entries = vec![];
-    for (path, content) in tree {
-        if !index_dir_of(path).is_some_and(|dir| config.handles_index_dir(dir)) {
-            continue;
-        }
-        let index = IndexFile::parse_bytes(content).with_context(|| path.clone())?;
-        if !index.side()?.includes(Side::Client) {
-            continue;
-        }
-        let sha1 = index
-            .sha1()
-            .with_context(|| format!("{path} has no sha1, pull from prism again"))?
-            .to_string();
-        let url = index
-            .url()
-            .with_context(|| format!("{path} has no url"))?
-            .parse()
-            .with_context(|| format!("{path}: bad url"))?;
+    for file in files {
+        let (sha1, url, cached_path) = match &file.source {
+            Source::Url { url, sha1 } => (sha1.clone(), url.parse()?, cached[sha1].clone()),
+            Source::Committed { path, blob } => {
+                let (sha1, cached_path) = ctx.committed(blob, path).await?;
+                let url = config.publish.object_url(&sha1);
+                (sha1, url, cached_path)
+            }
+        };
         entries.push(Entry {
-            path: path.clone(),
-            index,
+            file,
             sha1,
             url,
+            cached: cached_path,
         });
     }
     Ok(entries)
@@ -181,12 +196,7 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
     let base = config.publish.base();
     let mirror = config.publish.mirror;
 
-    let entries = collect_entries(&tree, &config)?;
-    let wanted = entries
-        .iter()
-        .map(|entry| (entry.url.clone(), entry.sha1.clone()))
-        .collect::<Vec<_>>();
-    let cached = ctx.files.ensure(&wanted).await?;
+    let entries = collect_entries(ctx, &tree, &config).await?;
 
     let staging = ctx.cache_dir.join("staging").join(&config.id);
     let source = staging.join("source");
@@ -207,13 +217,11 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
     let mut mod_entries = vec![];
     let mut mod_ids = HashMap::new();
     for entry in &entries {
-        let dir = index_dir_of(&entry.path).expect("index entry");
-        let filename = entry
-            .index
-            .filename()
-            .with_context(|| format!("{} has no filename", entry.path))?;
-        let cached_path = &cached[&entry.sha1];
-        // Jars only we host may have been garbage-collected before their first publish.
+        let dir = entry.file.dir;
+        let filename = entry.file.filename.as_str();
+        let cached_path = &entry.cached;
+        // Jars only we host: committed ones, and uploaded ones `gc` may have removed
+        // before their first publish.
         if entry.url == config.publish.object_url(&entry.sha1) {
             let key = object_key(&entry.sha1);
             let label = format!("{dir}/{filename}");
@@ -221,7 +229,7 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
         }
         if dir == "mods" {
             let mod_id = mod_id_of(cached_path).await?;
-            mod_ids.insert(index_name(&entry.path).to_string(), mod_id.clone());
+            mod_ids.insert(entry.file.name(), mod_id.clone());
             let url = if mirror {
                 let key = object_key(&entry.sha1);
                 let label = format!("{dir}/{filename}");
@@ -231,7 +239,7 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
                 entry.url.clone()
             };
             let os = entry
-                .index
+                .file
                 .os()?
                 .into_iter()
                 .map(|os| if os == "macos" { "osx" } else { os }.to_string())
@@ -247,8 +255,8 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
                 os,
             });
         } else {
-            if !entry.index.os()?.is_empty() {
-                bail!("{}: os is only supported for mods", entry.path);
+            if !entry.file.os()?.is_empty() {
+                bail!("{dir}/{filename}: os is only supported for mods");
             }
             let rel = format!("{dir}/{filename}");
             let full = source.join(&rel);

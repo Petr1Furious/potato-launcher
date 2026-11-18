@@ -6,14 +6,17 @@ use std::{
 use anyhow::{Context, bail};
 
 use crate::{
+    config::JarStore,
     config::{Config, INDEX_DIRS, LOCAL_DIR, object_key, set_versions},
     ctx::Ctx,
-    git::{Files, Git, SNAPSHOT_PREFIX},
+    git::{Files, Git, SNAPSHOT_PREFIX, as_blob_ref, blob_ref, is_committed_binary},
     index::{
         DISABLED_SUFFIX, INDEX_SUFFIX, IndexFile, Side, current_os, index_dir_of, index_name,
         index_path, is_indexed_binary,
     },
-    modrinth, storage,
+    modrinth,
+    pack::{PackFile, Source, pack_files},
+    storage,
     target::Target,
     upload::{self, Upload},
 };
@@ -54,44 +57,42 @@ pub fn diff(old: &Files, new: &Files) -> Vec<Change> {
 }
 
 /// Files of `tree` that `target` holds: managed files plus, for Prism, the
-/// index files that apply to it. Servers hold jars but no index files.
+/// index files and committed jars that apply to it. Servers get jars, but
+/// they're handled separately.
 pub fn domain(tree: &Files, config: &Config, target: &Target) -> anyhow::Result<Files> {
     let os = current_os();
     let mut files = Files::new();
     for (path, content) in tree {
-        if let Some(dir) = index_dir_of(path) {
-            if !target.is_prism() || !config.handles_index_dir(dir) {
+        if config.is_managed_file(path) && !target.is_excluded(path) {
+            files.insert(path.clone(), content.clone());
+        }
+    }
+    if target.is_prism() {
+        for file in pack_files(tree, config)? {
+            if !(file.side()?.includes(Side::Client) && file.applies_to_os(os)?) {
                 continue;
             }
-            let entry = IndexFile::parse_bytes(content).with_context(|| path.clone())?;
-            if entry.side()?.includes(Side::Client) && entry.applies_to_os(os)? {
-                files.insert(path.clone(), content.clone());
+            if let Some((path, _)) = &file.index {
+                files.insert(path.clone(), tree[path].clone());
             }
-        } else if config.is_managed_file(path) && !target.is_excluded(path) {
-            files.insert(path.clone(), content.clone());
+            if let Source::Committed { path, .. } = &file.source {
+                files.insert(path.clone(), tree[path].clone());
+            }
         }
     }
     Ok(files)
 }
 
-/// Index entries whose files `target` should have.
-fn jar_entries(
-    tree: &Files,
-    config: &Config,
-    target: &Target,
-) -> anyhow::Result<Vec<(String, IndexFile)>> {
+/// Jars and zips `target` should have.
+fn jar_entries(tree: &Files, config: &Config, target: &Target) -> anyhow::Result<Vec<PackFile>> {
     let os = current_os();
     let mut entries = vec![];
-    for (path, content) in tree {
-        let Some(dir) = index_dir_of(path) else {
-            continue;
-        };
-        if (!target.is_prism() && dir != "mods") || !config.handles_index_dir(dir) {
-            continue;
-        }
-        let entry = IndexFile::parse_bytes(content).with_context(|| path.clone())?;
-        if entry.side()?.includes(target.side()) && entry.applies_to_os(os)? {
-            entries.push((path.clone(), entry));
+    for file in pack_files(tree, config)? {
+        if (target.is_prism() || file.dir == "mods")
+            && file.side()?.includes(target.side())
+            && file.applies_to_os(os)?
+        {
+            entries.push(file);
         }
     }
     Ok(entries)
@@ -185,7 +186,7 @@ pub async fn read_target(
         uploads: vec![],
     };
     if target.is_prism() {
-        read_prism(
+        Box::pin(read_prism(
             ctx,
             config,
             target,
@@ -193,7 +194,7 @@ pub async fn read_target(
             base_domain,
             mode,
             &mut snapshot,
-        )
+        ))
         .await?;
     } else {
         for path in base_domain.keys() {
@@ -276,6 +277,7 @@ async fn read_prism(
         }
         let prism_indexes = read_prism_indexes(game_dir, dir)?;
         let mut base_by_filename = HashMap::new();
+        let mut base_committed = HashMap::new();
         for (path, content) in base_domain {
             if index_dir_of(path) == Some(dir) {
                 let entry = IndexFile::parse_bytes(content)?;
@@ -283,6 +285,15 @@ async fn read_prism(
                     base_by_filename
                         .insert(filename.to_string(), (path.clone(), entry, content.clone()));
                 }
+            } else if is_committed_binary(path)
+                && let Some((path_dir, filename)) = path.split_once('/')
+                && path_dir == dir
+                && let Some(blob) = as_blob_ref(content)
+            {
+                base_committed.insert(
+                    filename.to_string(),
+                    (path.clone(), blob.to_string(), content.clone()),
+                );
             }
         }
         let Ok(dir_entries) = std::fs::read_dir(game_dir.join(dir)) else {
@@ -316,30 +327,36 @@ async fn read_prism(
                 .strip_suffix(DISABLED_SUFFIX)
                 .unwrap_or(&name)
                 .to_string();
+            let rel = format!("{dir}/{filename}");
             let sha1 = ctx.hashes.sha1(&path).await?;
-            if let Some((base_path, base_entry, base_content)) = base_by_filename.get(&filename) {
-                if base_entry.sha1() == Some(sha1.as_str()) {
+
+            // A committed file stays committed: the same bytes keep the repo's blob.
+            if let Some((base_path, blob, content)) = base_committed.get(&filename) {
+                let (base_sha1, _) = ctx.committed(blob, base_path).await?;
+                let content = if base_sha1 == sha1 {
+                    content.clone()
+                } else {
+                    store_blob(ctx, mode, &rel, &path, &sha1)?
+                };
+                snapshot.files.insert(base_path.clone(), content);
+                if let Some((index_path, _, index_content)) = base_by_filename.get(&filename) {
                     snapshot
                         .files
-                        .insert(base_path.clone(), base_content.clone());
-                    continue;
+                        .insert(index_path.clone(), index_content.clone());
                 }
-                let (_, mut entry) = make_entry(
-                    ctx,
-                    config,
-                    prism_indexes.get(&filename),
-                    &filename,
-                    &sha1,
-                    &path,
-                    mode,
-                    snapshot,
-                )
-                .await?;
-                entry.carry_overrides(base_entry);
-                snapshot.files.insert(base_path.clone(), entry.to_bytes());
                 continue;
             }
-            let (name, entry) = make_entry(
+
+            if let Some((base_path, base_entry, base_content)) = base_by_filename.get(&filename)
+                && base_entry.sha1() == Some(sha1.as_str())
+            {
+                snapshot
+                    .files
+                    .insert(base_path.clone(), base_content.clone());
+                continue;
+            }
+
+            let found = Box::pin(make_entry(
                 ctx,
                 config,
                 prism_indexes.get(&filename),
@@ -348,13 +365,53 @@ async fn read_prism(
                 &path,
                 mode,
                 snapshot,
-            )
+            ))
             .await?;
+            if let Some((base_path, base_entry, _)) = base_by_filename.get(&filename) {
+                let mut entry = match found {
+                    Found::Index(_, entry) => entry,
+                    Found::Committed(index) => {
+                        snapshot
+                            .files
+                            .insert(rel.clone(), store_blob(ctx, mode, &rel, &path, &sha1)?);
+                        index.map_or_else(
+                            || IndexFile::metadata(file_stem(&filename), &filename),
+                            |(_, index)| index,
+                        )
+                    }
+                };
+                entry.carry_overrides(base_entry);
+                snapshot.files.insert(base_path.clone(), entry.to_bytes());
+                continue;
+            }
+
+            let (name, entry, write_new) = match found {
+                Found::Index(name, entry) => (name, entry, true),
+                Found::Committed(index) => {
+                    snapshot
+                        .files
+                        .insert(rel.clone(), store_blob(ctx, mode, &rel, &path, &sha1)?);
+                    match index {
+                        Some((name, index)) => (name, index, true),
+                        None => {
+                            let stem = file_stem(&filename);
+                            (
+                                stem.to_string(),
+                                IndexFile::metadata(stem, &filename),
+                                false,
+                            )
+                        }
+                    }
+                }
+            };
             if let Some(position) = find_update(&vanished, &entry, &name) {
                 let (base_path, base_entry) = vanished.remove(position);
                 let mut entry = entry;
                 entry.carry_overrides(&base_entry);
                 snapshot.files.insert(base_path, entry.to_bytes());
+                continue;
+            }
+            if !write_new {
                 continue;
             }
             let mut index = index_path(dir, &name);
@@ -392,6 +449,15 @@ fn find_update(vanished: &[(String, IndexFile)], entry: &IndexFile, name: &str) 
     )
 }
 
+/// What a jar or zip found in Prism becomes in the repo.
+enum Found {
+    /// An index file that downloads it.
+    Index(String, IndexFile),
+    /// The file itself, committed, with Prism's index file (minus its download)
+    /// for side, os and project ids.
+    Committed(Option<(String, IndexFile)>),
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn make_entry(
     ctx: &Ctx,
@@ -402,21 +468,26 @@ async fn make_entry(
     path: &Path,
     mode: Mode,
     snapshot: &mut Snapshot,
-) -> anyhow::Result<(String, IndexFile)> {
+) -> anyhow::Result<Found> {
+    let to_storage = config.pull.jars == JarStore::Storage;
     let object_url = config.publish.object_url(sha1).to_string();
     if let Some((name, index)) = prism_index {
         let mut entry = index.clone();
         if entry.url().is_none() {
+            if !to_storage {
+                entry.strip_download();
+                return Ok(Found::Committed(Some((name.clone(), entry))));
+            }
             snapshot
                 .uploads
                 .push(jar_upload(sha1, path, filename, "no download URL"));
         }
         entry.convert(sha1, &object_url);
-        return Ok((name.clone(), entry));
+        return Ok(Found::Index(name.clone(), entry));
     }
     let name = file_stem(filename).to_string();
     if mode == Mode::Check {
-        return Ok((
+        return Ok(Found::Index(
             name,
             IndexFile::new(file_stem(filename), filename, "unindexed", sha1),
         ));
@@ -424,15 +495,34 @@ async fn make_entry(
     if let Some(found) = modrinth::file_by_sha1(&ctx.client, sha1).await? {
         let mut entry = IndexFile::new(&name, filename, &found.url, sha1);
         entry.set_modrinth(&found.project_id, &found.version_id);
-        return Ok((name, entry));
+        return Ok(Found::Index(name, entry));
+    }
+    if !to_storage {
+        return Ok(Found::Committed(None));
     }
     snapshot
         .uploads
         .push(jar_upload(sha1, path, filename, "not on Modrinth"));
-    Ok((
+    Ok(Found::Index(
         name.clone(),
         IndexFile::new(&name, filename, &object_url, sha1),
     ))
+}
+
+/// The blob for a Prism file that goes into the repo as a committed file.
+fn store_blob(
+    ctx: &mut Ctx,
+    mode: Mode,
+    rel: &str,
+    path: &Path,
+    sha1: &str,
+) -> anyhow::Result<Vec<u8>> {
+    if mode == Mode::Check {
+        return Ok(blob_ref("unsynced"));
+    }
+    let blob = ctx.git.store_file(rel, path)?;
+    ctx.hashes.set_blob_sha1(&blob, sha1);
+    Ok(blob_ref(&blob))
 }
 
 fn jar_upload(sha1: &str, path: &Path, filename: &str, note: &'static str) -> Upload {
@@ -602,7 +692,7 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     let head_tree = ctx.git.read_tree(&head)?;
     let head_domain = domain(&head_tree, &config, &target)?;
     for (path, content) in &head_domain {
-        if index_dir_of(path).is_some() {
+        if index_dir_of(path).is_some() || is_committed_binary(path) {
             continue;
         }
         let full = target.game_dir.join(path);
@@ -614,7 +704,10 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
         }
     }
     for path in base_domain.keys() {
-        if index_dir_of(path).is_none() && !head_domain.contains_key(path) {
+        if index_dir_of(path).is_none()
+            && !is_committed_binary(path)
+            && !head_domain.contains_key(path)
+        {
             remove_if_exists(&target.game_dir.join(path))?;
         }
     }
@@ -657,17 +750,28 @@ async fn apply_jars(
     let previous = jar_entries(base_tree, config, target)?;
 
     let mut downloads = vec![];
-    for (path, entry) in &wanted {
-        let sha1 = entry
-            .sha1()
-            .with_context(|| format!("{path} has no sha1, pull from prism again"))?;
-        let url = entry.url().with_context(|| format!("{path} has no url"))?;
-        downloads.push((
-            url.parse().with_context(|| format!("{path}: bad url"))?,
-            sha1.to_string(),
-        ));
+    for file in &wanted {
+        if let Source::Url { url, sha1 } = &file.source {
+            downloads.push((
+                url.parse()
+                    .with_context(|| format!("{}/{}: bad url", file.dir, file.filename))?,
+                sha1.clone(),
+            ));
+        }
     }
-    let cached = ctx.files.ensure(&downloads).await?;
+    let mut cached = ctx.files.ensure(&downloads).await?;
+    let mut wanted_sha1 = vec![];
+    for file in &wanted {
+        let sha1 = match &file.source {
+            Source::Url { sha1, .. } => sha1.clone(),
+            Source::Committed { path, blob } => {
+                let (sha1, cached_path) = ctx.committed(blob, path).await?;
+                cached.insert(sha1.clone(), cached_path);
+                sha1
+            }
+        };
+        wanted_sha1.push(sha1);
+    }
 
     let off_by_default = config
         .client
@@ -685,13 +789,10 @@ async fn apply_jars(
     }
 
     let mut kept = HashSet::new();
-    for (path, entry) in &wanted {
-        let dir = index_dir_of(path).expect("jar entries are index files");
-        let filename = entry
-            .filename()
-            .with_context(|| format!("{path} has no filename"))?;
+    for (file, sha1) in wanted.iter().zip(&wanted_sha1) {
+        let dir = file.dir;
+        let filename = file.filename.as_str();
         kept.insert((dir, filename.to_string()));
-        let sha1 = entry.sha1().expect("checked above");
         let enabled = target.game_dir.join(dir).join(filename);
         let disabled = target
             .game_dir
@@ -702,15 +803,13 @@ async fn apply_jars(
             .find(|p| p.exists())
             .cloned();
         let up_to_date = match &existing {
-            Some(existing) => ctx.hashes.sha1(existing).await? == sha1,
+            Some(existing) => &ctx.hashes.sha1(existing).await? == sha1,
             None => false,
         };
         if !up_to_date {
             let new_disabled = match &existing {
                 Some(existing) => existing == &disabled,
-                None => {
-                    target.is_prism() && dir == "mods" && off_by_default.contains(index_name(path))
-                }
+                None => target.is_prism() && dir == "mods" && off_by_default.contains(&file.name()),
             };
             let (dest, other) = if new_disabled {
                 (&disabled, &enabled)
@@ -721,7 +820,10 @@ async fn apply_jars(
             std::fs::copy(&cached[sha1], dest)?;
             remove_if_exists(other)?;
         }
-        if target.is_prism() {
+        // Prism gets index files only when they can download the file.
+        if target.is_prism()
+            && let Some((path, entry)) = file.download_index()
+        {
             let ours = target.game_dir.join(path);
             if let Some((prism_name, _)) = prism_indexes[dir].get(filename) {
                 let prism_path = target.game_dir.join(index_path(dir, prism_name));
@@ -737,11 +839,9 @@ async fn apply_jars(
         }
     }
 
-    for (path, entry) in &previous {
-        let dir = index_dir_of(path).expect("jar entries are index files");
-        let Some(filename) = entry.filename() else {
-            continue;
-        };
+    for file in &previous {
+        let dir = file.dir;
+        let filename = file.filename.as_str();
         if kept.contains(&(dir, filename.to_string())) {
             continue;
         }
@@ -756,7 +856,9 @@ async fn apply_jars(
             if let Some((prism_name, _)) = prism_indexes[dir].get(filename) {
                 remove_if_exists(&target.game_dir.join(index_path(dir, prism_name)))?;
             }
-            remove_if_exists(&target.game_dir.join(path))?;
+            if let Some((path, _)) = &file.index {
+                remove_if_exists(&target.game_dir.join(path))?;
+            }
         }
     }
 

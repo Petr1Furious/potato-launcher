@@ -17,6 +17,9 @@ struct Entry {
 pub struct HashCache {
     path: PathBuf,
     entries: HashMap<String, Entry>,
+    /// sha1 of committed jars, by git blob id.
+    blobs_path: PathBuf,
+    blobs: HashMap<String, String>,
     dirty: bool,
 }
 
@@ -27,9 +30,16 @@ impl HashCache {
             .ok()
             .and_then(|content| serde_json::from_slice(&content).ok())
             .unwrap_or_default();
+        let blobs_path = cache_dir.join("blobs.json");
+        let blobs = std::fs::read(&blobs_path)
+            .ok()
+            .and_then(|content| serde_json::from_slice(&content).ok())
+            .unwrap_or_default();
         Self {
             path,
             entries,
+            blobs_path,
+            blobs,
             dirty: false,
         }
     }
@@ -61,6 +71,15 @@ impl HashCache {
         Ok(sha1)
     }
 
+    pub fn blob_sha1(&self, blob: &str) -> Option<&str> {
+        self.blobs.get(blob).map(String::as_str)
+    }
+
+    pub fn set_blob_sha1(&mut self, blob: &str, sha1: &str) {
+        self.blobs.insert(blob.to_string(), sha1.to_string());
+        self.dirty = true;
+    }
+
     pub fn save(&mut self) -> anyhow::Result<()> {
         if !self.dirty {
             return Ok(());
@@ -69,6 +88,7 @@ impl HashCache {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(&self.path, serde_json::to_vec(&self.entries)?)?;
+        std::fs::write(&self.blobs_path, serde_json::to_vec(&self.blobs)?)?;
         self.dirty = false;
         Ok(())
     }

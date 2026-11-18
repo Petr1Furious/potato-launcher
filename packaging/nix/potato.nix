@@ -3,6 +3,7 @@
   rustPlatform,
   makeWrapper,
   git,
+  git-lfs,
   rsync,
   openssh,
 }:
@@ -20,12 +21,16 @@ rustPlatform.buildRustPackage {
     "potato"
   ];
   nativeBuildInputs = [ makeWrapper ];
-  nativeCheckInputs = [ git ];
+  nativeCheckInputs = [
+    git
+    git-lfs
+  ];
   postFixup = ''
     wrapProgram $out/bin/potato \
       --prefix PATH : "${
         lib.makeBinPath [
           git
+          git-lfs
           rsync
           openssh
         ]

@@ -98,6 +98,19 @@ impl IndexFile {
         Self::parse(std::str::from_utf8(content).context("index file isn't utf-8")?)
     }
 
+    /// An index file for a committed jar: no download, only what the jar is.
+    pub fn metadata(name: &str, filename: &str) -> Self {
+        let mut doc = DocumentMut::new();
+        doc["name"] = value(name);
+        doc["filename"] = value(filename);
+        Self { doc }
+    }
+
+    /// Turns a downloadable index file into one describing a committed jar.
+    pub fn strip_download(&mut self) {
+        self.doc.remove("download");
+    }
+
     pub fn new(name: &str, filename: &str, url: &str, sha1: &str) -> Self {
         let mut doc = DocumentMut::new();
         doc["name"] = value(name);

@@ -7,7 +7,38 @@ use std::{
 
 use anyhow::{Context, bail};
 
+use crate::{
+    config::INDEX_DIRS,
+    index::{DISABLED_SUFFIX, is_indexed_binary},
+};
+
 pub type Files = BTreeMap<String, Vec<u8>>;
+
+/// Stands in for a committed jar or zip inside `Files`: its blob id, so trees can
+/// be compared and rewritten without reading the file itself.
+const BLOB_REF: &[u8] = b"\0potato-blob ";
+
+pub fn blob_ref(id: &str) -> Vec<u8> {
+    [BLOB_REF, id.as_bytes()].concat()
+}
+
+pub fn as_blob_ref(content: &[u8]) -> Option<&str> {
+    content
+        .strip_prefix(BLOB_REF)
+        .and_then(|id| std::str::from_utf8(id).ok())
+}
+
+/// A jar or zip directly in a pack folder, such as `mods/x.jar`.
+pub fn is_committed_binary(path: &str) -> bool {
+    path.split_once('/').is_some_and(|(dir, name)| {
+        INDEX_DIRS.contains(&dir)
+            && !name.contains('/')
+            && !name.ends_with(DISABLED_SUFFIX)
+            && is_indexed_binary(dir, name)
+    })
+}
+
+const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/v1";
 
 /// Prefix of commits potato creates to record a target's state.
 pub const SNAPSHOT_PREFIX: &str = "potato snapshot";
@@ -147,16 +178,19 @@ impl Git {
     pub fn read_tree(&self, commit: &str) -> anyhow::Result<Files> {
         let listing = self.checked(&["ls-tree", "-r", "-z", "--full-tree", commit], &[], None)?;
         let mut entries = vec![];
+        let mut binaries = vec![];
         for record in listing.split(|byte| *byte == 0).filter(|r| !r.is_empty()) {
             let record = std::str::from_utf8(record)?;
             let (meta, path) = record.split_once('\t').context("bad ls-tree output")?;
             let mut parts = meta.split_whitespace();
             let (_, kind, sha) = (parts.next(), parts.next(), parts.next());
-            if kind == Some("blob") {
-                entries.push((
-                    path.to_string(),
-                    sha.context("bad ls-tree output")?.to_string(),
-                ));
+            let Some(sha) = sha.filter(|_| kind == Some("blob")) else {
+                continue;
+            };
+            if is_committed_binary(path) {
+                binaries.push((path.to_string(), sha.to_string()));
+            } else {
+                entries.push((path.to_string(), sha.to_string()));
             }
         }
         let input = entries
@@ -164,7 +198,10 @@ impl Git {
             .map(|(_, sha)| format!("{sha}\n"))
             .collect::<String>();
         let output = self.checked(&["cat-file", "--batch"], &[], Some(input.as_bytes()))?;
-        let mut files = Files::new();
+        let mut files = binaries
+            .into_iter()
+            .map(|(path, sha)| (path, blob_ref(&sha)))
+            .collect::<Files>();
         let mut rest = output.as_slice();
         for (path, _) in entries {
             let header_end = rest
@@ -202,11 +239,18 @@ impl Git {
             ("GIT_COMMITTER_EMAIL", "potato@localhost"),
         ];
         let mut paths = String::new();
-        for (index, content) in files.values().enumerate() {
-            let path = temp.path().join(index.to_string());
-            std::fs::write(&path, content)?;
-            paths.push_str(&path.to_string_lossy());
+        let mut text = vec![];
+        let mut index_info = String::new();
+        for (path, content) in files {
+            if let Some(id) = as_blob_ref(content) {
+                index_info.push_str(&format!("100644 {id}\t{path}\n"));
+                continue;
+            }
+            let file = temp.path().join(text.len().to_string());
+            std::fs::write(&file, content)?;
+            paths.push_str(&file.to_string_lossy());
             paths.push('\n');
+            text.push(path);
         }
         let hashes = self.checked(
             &["hash-object", "-w", "--no-filters", "--stdin-paths"],
@@ -214,8 +258,7 @@ impl Git {
             Some(paths.as_bytes()),
         )?;
         let hashes = String::from_utf8(hashes)?;
-        let mut index_info = String::new();
-        for (path, sha) in files.keys().zip(hashes.lines()) {
+        for (path, sha) in text.iter().zip(hashes.lines()) {
             index_info.push_str(&format!("100644 {sha}\t{path}\n"));
         }
         self.checked(&["read-tree", "--empty"], &env, None)?;
@@ -249,6 +292,45 @@ impl Git {
             );
         }
         Ok(false)
+    }
+
+    /// Stores `file` as the blob for `path` through the repo's filters, so with
+    /// Git LFS the blob is a pointer and the jar goes to LFS's own store.
+    pub fn store_file(&self, path: &str, file: &Path) -> anyhow::Result<String> {
+        let file = file.to_string_lossy();
+        self.out(&["hash-object", "-w", "--path", path, &file])
+    }
+
+    /// Writes a committed jar to `dest`, fetching it through Git LFS when the
+    /// blob is a pointer.
+    pub fn blob_to_file(&self, id: &str, path: &str, dest: &Path) -> anyhow::Result<()> {
+        let status = self
+            .command(&["cat-file", "blob", id])
+            .stdin(Stdio::null())
+            .stdout(std::fs::File::create(dest)?)
+            .status()
+            .context("can't run git")?;
+        if !status.success() {
+            bail!("can't read {path} from git");
+        }
+        let is_pointer =
+            std::fs::metadata(dest)?.len() < 1024 && std::fs::read(dest)?.starts_with(LFS_POINTER);
+        if !is_pointer {
+            return Ok(());
+        }
+        let fetched = dest.with_extension("lfs-tmp");
+        let status = self
+            .command(&["lfs", "smudge", "--", path])
+            .stdin(std::fs::File::open(dest)?)
+            .stdout(std::fs::File::create(&fetched)?)
+            .status()
+            .context("can't run git")?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&fetched);
+            bail!("{path} is stored with Git LFS and couldn't be fetched; is git-lfs installed?");
+        }
+        std::fs::rename(&fetched, dest)?;
+        Ok(())
     }
 
     pub fn update_ref(&self, name: &str, commit: &str) -> anyhow::Result<()> {

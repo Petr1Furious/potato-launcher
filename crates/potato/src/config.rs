@@ -18,6 +18,23 @@ pub const LOCAL_DIR: &str = ".potato";
 pub const LOCAL_FILE: &str = ".potato/local.toml";
 pub const INDEX_DIRS: [&str; 4] = ["mods", "resourcepacks", "shaderpacks", "datapacks"];
 
+/// Where `pull` and `mod add` put jars nobody else hosts.
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum JarStore {
+    /// Committed in the repo's pack folders.
+    #[default]
+    Repo,
+    /// Uploaded to `[publish] target`, with an index file pointing there.
+    Storage,
+}
+
+#[derive(Deserialize, Default, Clone)]
+pub struct PullConfig {
+    #[serde(default)]
+    pub jars: JarStore,
+}
+
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LoaderName {
@@ -120,6 +137,8 @@ pub struct Config {
     #[serde(default)]
     pub client: ClientConfig,
     #[serde(default)]
+    pub pull: PullConfig,
+    #[serde(default)]
     pub paths: Vec<ContentRule>,
     #[serde(default)]
     pub servers: BTreeMap<String, ServerConfig>,
@@ -161,12 +180,16 @@ impl Config {
     pub fn is_pack_file(&self, path: &str) -> bool {
         path == CONFIG_FILE
             || crate::index::index_dir_of(path).is_some_and(|dir| self.handles_index_dir(dir))
+            || (crate::git::is_committed_binary(path)
+                && path
+                    .split_once('/')
+                    .is_some_and(|(dir, _)| self.handles_index_dir(dir)))
             || self.is_managed_file(path)
     }
 
     /// Whether `path` is a managed non-index file.
     pub fn is_managed_file(&self, path: &str) -> bool {
-        if crate::index::index_dir_of(path).is_some() {
+        if crate::index::index_dir_of(path).is_some() || crate::git::is_committed_binary(path) {
             return false;
         }
         self.managed_roots().iter().any(|root| under(path, root))

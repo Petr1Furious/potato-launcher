@@ -41,4 +41,25 @@ impl Ctx {
     pub fn local(&self) -> anyhow::Result<LocalConfig> {
         LocalConfig::load(&self.repo)
     }
+
+    /// sha1 and cached copy of a committed jar, by its blob id.
+    pub async fn committed(&mut self, blob: &str, path: &str) -> anyhow::Result<(String, PathBuf)> {
+        if let Some(sha1) = self.hashes.blob_sha1(blob) {
+            let cached = self.files.path(sha1);
+            if cached.exists() {
+                return Ok((sha1.to_string(), cached));
+            }
+        }
+        std::fs::create_dir_all(&self.cache_dir)?;
+        let temp = tempfile::NamedTempFile::new_in(&self.cache_dir)?;
+        self.git.blob_to_file(blob, path, temp.path())?;
+        let sha1 = utils::files::hash_file(temp.path()).await?;
+        let cached = self.files.path(&sha1);
+        if let Some(parent) = cached.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        temp.persist(&cached)?;
+        self.hashes.set_blob_sha1(blob, &sha1);
+        Ok((sha1, cached))
+    }
 }

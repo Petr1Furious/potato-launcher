@@ -5,7 +5,7 @@ use anyhow::{Context, bail};
 use crate::{
     build::{mod_id_of, modrinth_mod_id},
     config::{
-        CONFIG_FILE, INDEX_DIRS, LocalConfig, TargetType, object_key, set_local_target,
+        CONFIG_FILE, INDEX_DIRS, JarStore, LocalConfig, TargetType, object_key, set_local_target,
         set_versions,
     },
     ctx::Ctx,
@@ -213,6 +213,20 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
         }
         None => match source_url {
             Some(url) => IndexFile::new(&stem, &filename, url.as_str(), &sha1),
+            None if config.pull.jars == JarStore::Repo => {
+                let rel = format!("{}/{filename}", options.dir);
+                let dest = ctx.repo.join(&rel);
+                if dest.exists() {
+                    bail!("{rel} already exists");
+                }
+                std::fs::create_dir_all(dest.parent().expect("has parent"))?;
+                std::fs::copy(&path, &dest)?;
+                println!("added {rel}");
+                if side.is_none() && os.is_empty() {
+                    return Ok(());
+                }
+                IndexFile::metadata(&stem, &filename)
+            }
             None => {
                 let storage = storage::open(&config.publish.target)?;
                 let upload = Upload {
@@ -294,13 +308,41 @@ pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
             entries.push((rel, entry));
         }
     }
+    // Committed jars no index file describes.
+    for dir in INDEX_DIRS
+        .into_iter()
+        .filter(|dir| config.handles_index_dir(dir))
+    {
+        let Ok(dir_entries) = std::fs::read_dir(ctx.repo.join(dir)) else {
+            continue;
+        };
+        for item in dir_entries {
+            let filename = item?.file_name().to_string_lossy().into_owned();
+            let described = entries.iter().any(|(rel, entry): &(String, IndexFile)| {
+                rel.starts_with(&format!("{dir}/")) && entry.filename() == Some(filename.as_str())
+            });
+            if described || !crate::git::is_committed_binary(&format!("{dir}/{filename}")) {
+                continue;
+            }
+            let stem = filename
+                .rsplit_once('.')
+                .map_or(filename.as_str(), |(stem, _)| stem);
+            entries.push((index_path(dir, stem), IndexFile::metadata(stem, &filename)));
+        }
+    }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     let cached = ctx.files.ensure(&wanted).await?;
     for (rel, entry) in entries {
-        let mod_id = match entry.sha1().and_then(|sha1| cached.get(sha1)) {
-            Some(path) if rel.starts_with("mods/") => {
-                mod_id_of(path).await.unwrap_or_else(|_| "?".into())
-            }
+        let dir = rel.split('/').next().unwrap_or_default();
+        let jar = match entry.sha1().and_then(|sha1| cached.get(sha1)) {
+            Some(path) => Some(path.clone()),
+            None => entry
+                .filename()
+                .map(|filename| ctx.repo.join(dir).join(filename))
+                .filter(|path| path.is_file()),
+        };
+        let mod_id = match jar {
+            Some(path) if dir == "mods" => mod_id_of(&path).await.unwrap_or_else(|_| "?".into()),
             _ => "-".into(),
         };
         let os = entry.os()?.join(",");
@@ -352,13 +394,30 @@ pub fn mod_set(ctx: &Ctx, name: &str, os: &[String], side: Option<&str>) -> anyh
         bail!("pass --os or --side");
     }
     let (dir, name) = name.split_once('/').unwrap_or(("mods", name));
-    let rel = index_path(dir, name);
-    let full = ctx.repo.join(&rel);
-    let mut entry = IndexFile::parse(
-        &std::fs::read_to_string(&full)
-            .with_context(|| format!("no {rel}, see `potato mod list`"))?,
-    )
-    .with_context(|| rel.clone())?;
+    let mut rel = index_path(dir, name);
+    let mut full = ctx.repo.join(&rel);
+    let mut entry = match std::fs::read_to_string(&full) {
+        Ok(content) => IndexFile::parse(&content).with_context(|| rel.clone())?,
+        // A committed jar without an index file gets one that only describes it.
+        Err(_) => {
+            let filename = [
+                name.to_string(),
+                format!("{name}.jar"),
+                format!("{name}.zip"),
+            ]
+            .into_iter()
+            .find(|filename| ctx.repo.join(dir).join(filename).is_file())
+            .with_context(|| {
+                format!("no {rel} or committed {dir}/{name}, see `potato mod list`")
+            })?;
+            let stem = filename
+                .rsplit_once('.')
+                .map_or(filename.as_str(), |(stem, _)| stem);
+            rel = index_path(dir, stem);
+            full = ctx.repo.join(&rel);
+            IndexFile::metadata(stem, &filename)
+        }
+    };
     if !os.is_empty() {
         if dir != "mods" {
             bail!("os is only supported for mods");
@@ -376,6 +435,7 @@ pub fn mod_set(ctx: &Ctx, name: &str, os: &[String], side: Option<&str>) -> anyh
     if let Some(side) = side {
         entry.set_side(Side::parse(side)?);
     }
+    std::fs::create_dir_all(full.parent().expect("has parent"))?;
     std::fs::write(&full, entry.to_bytes())?;
     let os = entry.os()?;
     println!(

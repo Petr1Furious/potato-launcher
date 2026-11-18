@@ -198,20 +198,10 @@ async fn pull_push_and_status() {
         sodium.url(),
         Some("https://cdn.modrinth.com/data/x/sodium.jar")
     );
-    let jei_sha1 = sha1(b"jei");
-    let jei = s.repo_index("jei");
-    assert_eq!(
-        jei.url().unwrap(),
-        format!(
-            "https://mc.example.com/data/objects/{}/{jei_sha1}",
-            &jei_sha1[..2]
-        )
-    );
-    assert!(
-        s.storage
-            .join(format!("objects/{}/{jei_sha1}", &jei_sha1[..2]))
-            .exists()
-    );
+    // The CurseForge jar has no URL, so it's committed, and its index file only describes it.
+    assert_eq!(read(&s.repo.join("mods/jei.jar")), "jei");
+    assert_eq!(s.repo_index("jei").url(), None);
+    assert!(!s.storage.join("objects").exists());
     let config = s.ctx.config().unwrap();
     assert_eq!(config.minecraft, "1.21.4");
     assert_eq!(config.loader_version.as_deref(), Some("0.16.9"));
@@ -276,6 +266,7 @@ async fn pull_push_and_status() {
 
     // Removing a mod in the repo removes its jar and index file from Prism.
     std::fs::remove_file(s.repo.join("mods/.index/jei.pw.toml")).unwrap();
+    std::fs::remove_file(s.repo.join("mods/jei.jar")).unwrap();
     // A new mod in an off-by-default optional set arrives disabled.
     let extra_sha1 = sha1(b"extra");
     write(
@@ -534,6 +525,7 @@ async fn server_sync() {
 
     // Removing a mod deletes only the jar potato put there.
     std::fs::remove_file(s.repo.join("mods/.index/jei.pw.toml")).unwrap();
+    std::fs::remove_file(s.repo.join("mods/jei.jar")).unwrap();
     s.commit("remove jei");
     sync::push(&mut s.ctx, "main", false).await.unwrap();
     assert!(!s.server.join("mods/jei.jar").exists());
@@ -568,10 +560,15 @@ target = "{storage_url}"
 [[paths]]
 path = "config"
 type = "directory"
+
+[[paths]]
+path = "resourcepacks"
+type = "directory"
 "#
         ),
     );
     write(&repo.join("config/my file.toml"), "a = 1\n");
+    write(&repo.join("resourcepacks/pack.zip"), "committed pack");
     write(&repo.join(".gitignore"), ".potato/\n");
     git(&repo, &["init", "-q", "-b", "master"]);
     git(&repo, &["config", "user.name", "t"]);
@@ -618,6 +615,14 @@ type = "directory"
             .join(format!("objects/{}/{config_sha1}", &config_sha1[..2]))
             .exists()
     );
+    // A committed pack is uploaded like any file only we host.
+    let pack_sha1 = sha1(b"committed pack");
+    assert!(
+        storage
+            .join(format!("objects/{}/{pack_sha1}", &pack_sha1[..2]))
+            .exists()
+    );
+    assert!(rule_url.contains(&pack_sha1), "{rule_url}");
 
     // Republishing the same commit works; the history keeps the old record.
     Box::pin(crate::publish::publish(&mut ctx, false))
@@ -657,4 +662,103 @@ fn publishes_fabric_instance() {
 #[ignore = "uses the network and runs the NeoForge installer"]
 fn publishes_neoforge_instance() {
     crate::block_on_big_stack(publish_real_instance("neoforge", "21.1.77"));
+}
+
+#[tokio::test]
+async fn committed_jars_need_no_pull() {
+    let mut s = Setup::new();
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    s.commit("pull");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+
+    // A jar built straight into the repo goes out with the next push.
+    write(&s.repo.join("mods/mymod.jar"), "v1");
+    s.commit("mymod");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+    assert_eq!(read(&s.game.join("mods/mymod.jar")), "v1");
+    assert!(!s.game.join("mods/.index/mymod.pw.toml").exists());
+
+    write(&s.repo.join("mods/mymod.jar"), "v2");
+    let err = sync::push(&mut s.ctx, "prism", false).await.unwrap_err();
+    assert!(err.to_string().contains("mods/mymod.jar"), "{err}");
+    s.commit("mymod v2");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+    assert_eq!(read(&s.game.join("mods/mymod.jar")), "v2");
+
+    // A build dropped into Prism instead comes back as the committed file.
+    write(&s.game.join("mods/mymod.jar"), "v3");
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    assert_eq!(read(&s.repo.join("mods/mymod.jar")), "v3");
+    s.commit("mymod v3");
+
+    // An index file without a URL sets its side; servers then don't get it.
+    crate::commands::mod_set(&s.ctx, "mymod", &[], Some("client")).unwrap();
+    let index = s.repo_index("mymod");
+    assert_eq!(index.url(), None);
+    assert_eq!(index.filename(), Some("mymod.jar"));
+    s.commit("mymod is client-only");
+    sync::push(&mut s.ctx, "main", true).await.unwrap();
+    assert!(!s.server.join("mods/mymod.jar").exists());
+}
+
+#[tokio::test]
+async fn committed_jar_and_download_url_conflict() {
+    let mut s = Setup::new();
+    write(&s.repo.join("mods/sodium.jar"), "sodium");
+    write(&s.repo.join("mods/.index/sodium.pw.toml"), MODRINTH_INDEX);
+    s.commit("both");
+    let err = sync::push(&mut s.ctx, "prism", true).await.unwrap_err();
+    assert!(err.to_string().contains("remove one"), "{err}");
+}
+
+#[tokio::test]
+async fn storage_mode_uploads_jars() {
+    let mut s = Setup::new();
+    let config = read(&s.repo.join("potato.toml"));
+    write(
+        &s.repo.join("potato.toml"),
+        &format!("{config}\n[pull]\njars = \"storage\"\n"),
+    );
+    s.commit("storage mode");
+    s.prism_mod("jei", "jei.jar", b"jei", Some(CURSEFORGE_INDEX))
+        .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    let jei_sha1 = sha1(b"jei");
+    let object = format!("objects/{}/{jei_sha1}", &jei_sha1[..2]);
+    assert_eq!(
+        s.repo_index("jei").url().unwrap(),
+        format!("https://mc.example.com/data/{object}")
+    );
+    assert!(s.storage.join(object).exists());
+    assert!(!s.repo.join("mods/jei.jar").exists());
+}
+
+#[tokio::test]
+async fn committed_jars_work_with_git_lfs() {
+    let has_lfs = Command::new("git")
+        .args(["lfs", "version"])
+        .output()
+        .is_ok_and(|output| output.status.success());
+    if !has_lfs {
+        return;
+    }
+    let mut s = Setup::new();
+    git(&s.repo, &["lfs", "install", "--local"]);
+    write(
+        &s.repo.join(".gitattributes"),
+        "mods/*.jar filter=lfs diff=lfs merge=lfs -text\n",
+    );
+    s.commit("lfs");
+    s.prism_mod("jei", "jei.jar", b"jei", Some(CURSEFORGE_INDEX))
+        .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    s.commit("pull");
+    assert_eq!(read(&s.repo.join("mods/jei.jar")), "jei");
+    let stored = git(&s.repo, &["cat-file", "-p", "HEAD:mods/jei.jar"]);
+    assert!(stored.starts_with("version https://git-lfs"), "{stored}");
+
+    // Pushing reads the jar back through LFS, not the pointer.
+    std::fs::remove_file(s.game.join("mods/jei.jar")).unwrap();
+    sync::push(&mut s.ctx, "prism", true).await.unwrap();
+    assert_eq!(read(&s.game.join("mods/jei.jar")), "jei");
 }

@@ -46,6 +46,7 @@ The repo mirrors the game folder, but only for managed paths:
 potato.toml
 .gitignore                  # .potato/
 mods/.index/*.pw.toml
+mods/*.jar                  # jars only you host, committed
 resourcepacks/.index/*.pw.toml
 config/...
 kubejs/...
@@ -119,6 +120,14 @@ exclude = ["config/somemod.toml"]
   and Azul. Use it when those are blocked or slow for your players. Default:
   `false`.
 
+### `[pull]`
+
+- **jars**: where `pull` and `mod add` put jars nobody else hosts (CurseForge
+  jars without a download URL, your own jars). `"repo"` (default) commits them
+  in `mods/`, so only publishing needs access to your host. `"storage"` uploads
+  them to your host and writes an index file pointing there, which keeps big
+  packs out of git.
+
 ### `[client]`
 
 - **resource_sync**: when the launcher checks the client jar, libraries and
@@ -178,22 +187,54 @@ Deeper paths win over shallower ones, so you can mark `config` as
 
 ## Mods and packs
 
-Mods live in `mods/.index/` as packwiz-style `.pw.toml` files, one per mod.
-Prism writes these when you install a mod through its browser.
+A mod is either an index file in `mods/.index/` (a packwiz-style `.pw.toml`
+file that says where to download the jar) or a jar committed in `mods/`. Prism
+writes index files when you install a mod through its browser.
 Resource packs, shader packs and datapacks work the same way in
 `resourcepacks/.index/`, `shaderpacks/.index/` and `datapacks/.index/`, but
 only once their folder has a `[[paths]]` entry. Without one, potato ignores
 the folder in every command.
 
-Every index file in the repo has a download URL and a sha1. `pull prism`
-converts Prism's files when needed:
+`pull prism` decides for each jar in Prism:
 
-- a mod already in the repo with the same jar keeps the repo's file, so your
+- a mod already in the repo with the same jar keeps the repo's files, so your
   edits to it (like `side`) are kept
-- otherwise the file is copied with its hash replaced by sha1
-- CurseForge mods (Prism writes them without a URL) and jars without an index
-  file are uploaded to your host, and their index file points there. Jars
-  found on Modrinth by hash point at Modrinth instead.
+- a jar with a download URL (Modrinth, or anything else Prism knows a URL for)
+  becomes an index file, with its hash replaced by sha1
+- a jar without one is looked up on Modrinth by hash; if it's there, its index
+  file points at Modrinth
+- anything else (CurseForge mods, which Prism writes without a URL, and your
+  own jars) is committed in `mods/`. If Prism has an index file for it, that
+  file is kept next to it, minus the download, for its side and project ids.
+
+### Committed jars
+
+A jar or zip committed directly in a pack folder is part of the pack, like a
+config file. If you build a mod yourself, build it straight into `mods/` and
+commit it: `push` and `publish` use it, no `pull` needed, and nobody needs
+access to your host until someone publishes.
+
+An index file without a download URL next to it sets its `side` and `os`:
+
+```bash
+potato mod set mymod --side client
+```
+
+A committed jar and an index file with a download URL for the same file is an
+error; remove one.
+
+Jars make the git history grow with every new version. Git LFS keeps them out
+of it, and potato reads LFS files transparently:
+
+```bash
+git lfs install
+git lfs track "mods/*.jar"
+git add .gitattributes
+```
+
+GitHub's free LFS quota is small, so for packs with many CurseForge jars set
+`[pull] jars = "storage"` instead (see below). Committed jars still work then;
+only `pull` and `mod add` change.
 
 Extra fields potato reads:
 
@@ -237,7 +278,8 @@ potato mod add <file or URL> [--side server] [--os linux] [--dir resourcepacks] 
 ```
 
 The jar is looked up on Modrinth by hash. If it isn't there, a URL source
-keeps its URL and a local file is uploaded to your host.
+keeps its URL and a local file is committed in its folder (with an index file
+only if you pass `--side` or `--os`).
 
 ## Syncing with Prism
 
@@ -318,9 +360,9 @@ Published files are never deleted by `publish`. Run `potato gc` from any
 instance repo to delete stored files that no published instance uses
 anymore. A replaced or unpublished version's files stay for 2 hours, for
 launchers still on it (`--grace-hours` to change it); open launchers refresh
-their instance list every hour. Jars uploaded by `pull` or `mod add` that no
-publish has used yet stay for 7 days, since collaborators may already be
-downloading them.
+their instance list every hour. With `[pull] jars = "storage"`, jars uploaded
+by `pull` or `mod add` that no publish has used yet stay for 7 days, since
+collaborators may already be downloading them.
 
 ## Collaborating
 
