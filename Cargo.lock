@@ -5242,6 +5242,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "async_zip",
  "bytes",
  "clap",
  "dirs 7.0.0",

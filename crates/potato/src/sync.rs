@@ -6,7 +6,8 @@ use std::{
 use anyhow::{Context, bail};
 
 use crate::{
-    config::JarStore,
+    build::mod_id_of,
+    config::SelfHosted,
     config::{Config, INDEX_DIRS, LOCAL_DIR, object_key, set_versions},
     ctx::Ctx,
     git::{Files, Git, SNAPSHOT_PREFIX, as_blob_ref, blob_ref, is_committed_binary},
@@ -404,7 +405,17 @@ async fn read_prism(
                     }
                 }
             };
-            if let Some(position) = find_update(&vanished, &entry, &name) {
+            let mut position = find_update(&vanished, &entry, &name);
+            if position.is_none() && dir == "mods" && mode == Mode::Pull {
+                position = Box::pin(find_update_by_mod_id(
+                    ctx,
+                    &vanished,
+                    &base_committed,
+                    &path,
+                ))
+                .await;
+            }
+            if let Some(position) = position {
                 let (base_path, base_entry) = vanished.remove(position);
                 let mut entry = entry;
                 entry.carry_overrides(&base_entry);
@@ -458,6 +469,48 @@ enum Found {
     Committed(Option<(String, IndexFile)>),
 }
 
+/// Like `find_update`, for jars without a shared project or name: the only
+/// vanished entry whose jar has the same mod id. Jars it can't read don't match.
+async fn find_update_by_mod_id(
+    ctx: &mut Ctx,
+    vanished: &[(String, IndexFile)],
+    base_committed: &HashMap<String, (String, String, Vec<u8>)>,
+    jar: &Path,
+) -> Option<usize> {
+    let new_id = mod_id_of(jar).await.ok()?;
+    let mut matches = vec![];
+    for (position, (_, base)) in vanished.iter().enumerate() {
+        let old_jar = match (base.url(), base.sha1()) {
+            (Some(url), Some(sha1)) => {
+                let Ok(url) = url.parse() else {
+                    continue;
+                };
+                match ctx.files.ensure(&[(url, sha1.to_string())]).await {
+                    Ok(mut cached) => cached.remove(sha1),
+                    Err(_) => None,
+                }
+            }
+            _ => match base
+                .filename()
+                .and_then(|filename| base_committed.get(filename))
+            {
+                Some((path, blob, _)) => ctx
+                    .committed(blob, path)
+                    .await
+                    .ok()
+                    .map(|(_, cached)| cached),
+                None => None,
+            },
+        };
+        if let Some(old_jar) = old_jar
+            && mod_id_of(&old_jar).await.ok().as_deref() == Some(new_id.as_str())
+        {
+            matches.push(position);
+        }
+    }
+    (matches.len() == 1).then(|| matches[0])
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn make_entry(
     ctx: &Ctx,
@@ -469,7 +522,7 @@ async fn make_entry(
     mode: Mode,
     snapshot: &mut Snapshot,
 ) -> anyhow::Result<Found> {
-    let to_storage = config.pull.jars == JarStore::Storage;
+    let to_storage = config.self_hosted == SelfHosted::Storage;
     let object_url = config.publish.object_url(sha1).to_string();
     if let Some((name, index)) = prism_index {
         let mut entry = index.clone();
@@ -562,6 +615,31 @@ pub fn ensure_committed(
     bail!("uncommitted changes to {list} won't be {action}; commit them first or use --force");
 }
 
+/// Index files describing the jar the repo already has at the same path keep the
+/// repo's bytes, so a mod updated the same way on both sides can't conflict.
+fn align_with_head(files: &mut Files, head_tree: &Files) {
+    for (path, content) in files.iter_mut() {
+        if index_dir_of(path).is_none() {
+            continue;
+        }
+        let Some(head) = head_tree.get(path).filter(|head| *head != content) else {
+            continue;
+        };
+        let (Ok(ours), Ok(theirs)) = (
+            IndexFile::parse_bytes(head),
+            IndexFile::parse_bytes(content),
+        ) else {
+            continue;
+        };
+        if ours.sha1().is_some()
+            && ours.sha1() == theirs.sha1()
+            && ours.filename() == theirs.filename()
+        {
+            *content = head.clone();
+        }
+    }
+}
+
 /// The commit the target last matched, if this repo has it.
 pub fn effective_base(git: &Git, target: &Target) -> anyhow::Result<Option<String>> {
     Ok(target
@@ -593,7 +671,7 @@ pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String], force: bool) -> any
         None => ctx.git.read_tree(&ctx.git.head()?)?,
     };
     let base_domain = domain(&reference_tree, &config, &target)?;
-    let snapshot = read_target(
+    let mut snapshot = read_target(
         ctx,
         &config,
         &target,
@@ -604,6 +682,8 @@ pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String], force: bool) -> any
     )
     .await?;
     ctx.hashes.save()?;
+    let head_tree = ctx.git.read_tree(&ctx.git.head()?)?;
+    align_with_head(&mut snapshot.files, &head_tree);
 
     if !snapshot.uploads.is_empty() {
         let storage = storage::open(&config.publish.target)?;
@@ -788,6 +868,16 @@ async fn apply_jars(
         }
     }
 
+    // Index files a renamed update keeps: its old jar's file name, by index path.
+    let previous_by_index = previous
+        .iter()
+        .filter_map(|file| {
+            file.index
+                .as_ref()
+                .map(|(path, _)| (path.clone(), file.filename.clone()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut written = HashSet::new();
     let mut kept = HashSet::new();
     for (file, sha1) in wanted.iter().zip(&wanted_sha1) {
         let dir = file.dir;
@@ -807,9 +897,25 @@ async fn apply_jars(
             None => false,
         };
         if !up_to_date {
+            let renamed_from_disabled = file
+                .index
+                .as_ref()
+                .and_then(|(path, _)| previous_by_index.get(path))
+                .is_some_and(|old| {
+                    target
+                        .game_dir
+                        .join(dir)
+                        .join(format!("{old}{DISABLED_SUFFIX}"))
+                        .exists()
+                });
             let new_disabled = match &existing {
                 Some(existing) => existing == &disabled,
-                None => target.is_prism() && dir == "mods" && off_by_default.contains(&file.name()),
+                None => {
+                    renamed_from_disabled
+                        || (target.is_prism()
+                            && dir == "mods"
+                            && off_by_default.contains(&file.name()))
+                }
             };
             let (dest, other) = if new_disabled {
                 (&disabled, &enabled)
@@ -836,6 +942,7 @@ async fn apply_jars(
             }
             std::fs::create_dir_all(ours.parent().expect("has parent"))?;
             std::fs::write(&ours, entry.to_bytes())?;
+            written.insert(ours);
         }
     }
 
@@ -853,11 +960,16 @@ async fn apply_jars(
                 .join(format!("{filename}{DISABLED_SUFFIX}")),
         )?;
         if target.is_prism() {
+            let mut stale = vec![];
             if let Some((prism_name, _)) = prism_indexes[dir].get(filename) {
-                remove_if_exists(&target.game_dir.join(index_path(dir, prism_name)))?;
+                stale.push(target.game_dir.join(index_path(dir, prism_name)));
             }
             if let Some((path, _)) = &file.index {
-                remove_if_exists(&target.game_dir.join(path))?;
+                stale.push(target.game_dir.join(path));
+            }
+            // A renamed update just wrote its index file under the same name.
+            for path in stale.into_iter().filter(|path| !written.contains(path)) {
+                remove_if_exists(&path)?;
             }
         }
     }
@@ -881,8 +993,9 @@ async fn apply_jars(
                 }
             }
             for (filename, (prism_name, _)) in &prism_indexes[dir] {
-                if !kept.contains(&(dir, filename.clone())) {
-                    remove_if_exists(&target.game_dir.join(index_path(dir, prism_name)))?;
+                let path = target.game_dir.join(index_path(dir, prism_name));
+                if !kept.contains(&(dir, filename.clone())) && !written.contains(&path) {
+                    remove_if_exists(&path)?;
                 }
             }
         }

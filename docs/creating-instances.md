@@ -36,7 +36,9 @@ potato publish
 
 `init` creates `potato.toml`, a `.gitignore` with `.potato/`, and
 `.potato/local.toml` with the Prism path. It reads the Minecraft and loader
-versions from Prism's `mmc-pack.json`.
+versions from Prism's `mmc-pack.json`. `--self-hosted storage`
+sets [`self_hosted`](#top-level) to upload files only you host instead of
+committing them; you can change it in `potato.toml` later.
 
 ## Repo layout
 
@@ -109,6 +111,11 @@ exclude = ["config/somemod.toml"]
 - **default_xmx**: default `-Xmx`, e.g. `4G`.
 - **auth_backend**: auth provider for this instance. Omit to allow any.
 - **order**: sort key in the instance list. Ties and unset values sort by id.
+- **self_hosted**: where `pull` and `mod add` put files only you host: jars and
+  pack zips with no download URL anywhere else (CurseForge files, your own
+  builds). `"repo"` (default) commits them in their folder, so only publishing
+  needs access to your host. `"storage"` uploads them to your host and writes
+  an index file pointing there, which keeps big packs out of git.
 
 ### `[publish]`
 
@@ -119,14 +126,6 @@ exclude = ["config/somemod.toml"]
   on your host too, instead of players downloading them from Mojang, Modrinth
   and Azul. Use it when those are blocked or slow for your players. Default:
   `false`.
-
-### `[pull]`
-
-- **jars**: where `pull` and `mod add` put jars nobody else hosts (CurseForge
-  jars without a download URL, your own jars). `"repo"` (default) commits them
-  in `mods/`, so only publishing needs access to your host. `"storage"` uploads
-  them to your host and writes an index file pointing there, which keeps big
-  packs out of git.
 
 ### `[client]`
 
@@ -233,7 +232,7 @@ git add .gitattributes
 ```
 
 GitHub's free LFS quota is small, so for packs with many CurseForge jars set
-`[pull] jars = "storage"` instead (see below). Committed jars still work then;
+`self_hosted = "storage"` instead. Committed jars still work then;
 only `pull` and `mod add` change.
 
 Extra fields potato reads:
@@ -257,7 +256,10 @@ potato mod add <windows jar or URL> --os windows --name voxy-windows
 collaborator on another OS doesn't replace your variant with theirs. When
 Prism updates a mod under a new jar name, `pull` keeps it in the same index
 file with the same `side` and `os`: it matches the new jar to the entry whose
-jar disappeared, by Modrinth or CurseForge project, or else by index name.
+jar disappeared, by Modrinth or CurseForge project, else by index name, else
+(for mods) by the mod id inside the jars. `push` keeps a mod disabled in Prism
+disabled when it's updated, even under a new file name. If the repo and Prism
+were updated to the same jar, `pull` doesn't produce a conflict.
 
 `potato mod set <name> [--os <os>]... [--side <side>]` changes these fields;
 `--os all` makes a mod apply to every OS again.
@@ -360,7 +362,7 @@ Published files are never deleted by `publish`. Run `potato gc` from any
 instance repo to delete stored files that no published instance uses
 anymore. A replaced or unpublished version's files stay for 2 hours, for
 launchers still on it (`--grace-hours` to change it); open launchers refresh
-their instance list every hour. With `[pull] jars = "storage"`, jars uploaded
+their instance list every hour. With `self_hosted = "storage"`, files uploaded
 by `pull` or `mod add` that no publish has used yet stay for 7 days, since
 collaborators may already be downloading them.
 

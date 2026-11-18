@@ -717,7 +717,7 @@ async fn storage_mode_uploads_jars() {
     let config = read(&s.repo.join("potato.toml"));
     write(
         &s.repo.join("potato.toml"),
-        &format!("{config}\n[pull]\njars = \"storage\"\n"),
+        &format!("self_hosted = \"storage\"\n{config}"),
     );
     s.commit("storage mode");
     s.prism_mod("jei", "jei.jar", b"jei", Some(CURSEFORGE_INDEX))
@@ -761,4 +761,122 @@ async fn committed_jars_work_with_git_lfs() {
     std::fs::remove_file(s.game.join("mods/jei.jar")).unwrap();
     sync::push(&mut s.ctx, "prism", true).await.unwrap();
     assert_eq!(read(&s.game.join("mods/jei.jar")), "jei");
+}
+
+async fn fabric_jar(mod_id: &str, version: &str) -> Vec<u8> {
+    use async_zip::{Compression, ZipEntryBuilder, base::write::ZipFileWriter};
+    let json = format!(r#"{{"schemaVersion":1,"id":"{mod_id}","version":"{version}"}}"#);
+    let mut writer = ZipFileWriter::new(Vec::<u8>::new());
+    let entry = ZipEntryBuilder::new("fabric.mod.json".into(), Compression::Stored);
+    writer
+        .write_entry_whole(entry, json.as_bytes())
+        .await
+        .unwrap();
+    writer.close().await.unwrap()
+}
+
+#[tokio::test]
+async fn renamed_update_keeps_index_and_disabled_state() {
+    let mut s = Setup::new();
+    s.prism_mod(
+        "sodium",
+        "sodium-1.jar.disabled",
+        b"sodium 1",
+        Some(&MODRINTH_INDEX.replace("sodium.jar", "sodium-1.jar")),
+    )
+    .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    s.commit("pull");
+
+    let new_sha1 = sha1(b"sodium 2");
+    let jar = s.repo.join("../sodium-2.jar");
+    std::fs::write(&jar, b"sodium 2").unwrap();
+    s.ctx.files.insert(&jar, &new_sha1).await.unwrap();
+    let update = IndexFile::new(
+        "Sodium",
+        "sodium-2.jar",
+        "https://cdn.modrinth.com/data/x/sodium-2.jar",
+        &new_sha1,
+    );
+    std::fs::write(s.repo.join("mods/.index/sodium.pw.toml"), update.to_bytes()).unwrap();
+    s.commit("update sodium");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+
+    assert!(s.game.join("mods/sodium-2.jar.disabled").exists());
+    assert!(!s.game.join("mods/sodium-1.jar.disabled").exists());
+    let index = read(&s.game.join("mods/.index/sodium.pw.toml"));
+    assert!(index.contains("sodium-2.jar"), "{index}");
+}
+
+#[tokio::test]
+async fn same_update_on_both_sides_merges_cleanly() {
+    let mut s = Setup::new();
+    s.prism_mod(
+        "sodium",
+        "sodium-1.jar",
+        b"sodium 1",
+        Some(&MODRINTH_INDEX.replace("sodium.jar", "sodium-1.jar")),
+    )
+    .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    s.commit("pull");
+
+    // A collaborator's update, written differently from what Prism writes.
+    let update = IndexFile::new(
+        "Sodium",
+        "sodium-2.jar",
+        "https://cdn.modrinth.com/data/x/sodium-2.jar",
+        &sha1(b"sodium 2"),
+    );
+    std::fs::write(s.repo.join("mods/.index/sodium.pw.toml"), update.to_bytes()).unwrap();
+    s.commit("update sodium");
+    let committed = read(&s.repo.join("mods/.index/sodium.pw.toml"));
+
+    // The same update made in Prism.
+    std::fs::remove_file(s.game.join("mods/sodium-1.jar")).unwrap();
+    s.prism_mod(
+        "sodium",
+        "sodium-2.jar",
+        b"sodium 2",
+        Some(&MODRINTH_INDEX.replace("sodium.jar", "sodium-2.jar")),
+    )
+    .await;
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+    assert!(git(&s.repo, &["diff", "--name-only", "--diff-filter=U"]).is_empty());
+    assert_eq!(read(&s.repo.join("mods/.index/sodium.pw.toml")), committed);
+}
+
+#[tokio::test]
+async fn renamed_committed_jar_matches_by_mod_id() {
+    let mut s = Setup::new();
+    std::fs::create_dir_all(s.repo.join("mods")).unwrap();
+    std::fs::write(
+        s.repo.join("mods/mymod-1.0.jar"),
+        fabric_jar("mymod", "1.0").await,
+    )
+    .unwrap();
+    crate::commands::mod_set(&s.ctx, "mymod-1.0", &[], Some("client")).unwrap();
+    s.commit("mymod");
+    sync::push(&mut s.ctx, "prism", true).await.unwrap();
+    assert!(s.game.join("mods/mymod-1.0.jar").exists());
+
+    // A new build under a new name, with an unrelated Prism index file.
+    std::fs::remove_file(s.game.join("mods/mymod-1.0.jar")).unwrap();
+    std::fs::write(
+        s.game.join("mods/mymod-1.1.jar"),
+        fabric_jar("mymod", "1.1").await,
+    )
+    .unwrap();
+    write(
+        &s.game.join("mods/.index/something-else.pw.toml"),
+        "filename = \"mymod-1.1.jar\"\nname = \"My Mod\"\n",
+    );
+    sync::pull(&mut s.ctx, "prism", &[], false).await.unwrap();
+
+    assert!(!s.repo.join("mods/mymod-1.0.jar").exists());
+    assert!(s.repo.join("mods/mymod-1.1.jar").exists());
+    let index = s.repo_index("mymod-1.0");
+    assert_eq!(index.filename(), Some("mymod-1.1.jar"));
+    assert_eq!(index.side().unwrap(), crate::index::Side::Client);
+    assert!(!s.repo.join("mods/.index/something-else.pw.toml").exists());
 }

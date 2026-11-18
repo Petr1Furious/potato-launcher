@@ -77,6 +77,6 @@ publishing to S3, delete `.potato-lock` from the bucket.
 ## Backups
 
 The whole site can be rebuilt by publishing each instance repo again: jars only
-you host are committed in the repos. The exception is repos with `[pull] jars =
-"storage"`, whose CurseForge and custom jars only exist in `data/objects/` and
+you host are committed in the repos. The exception is repos with
+`self_hosted = "storage"`, whose CurseForge and custom files only exist in `data/objects/` and
 in the Prism instance they came from. Back up `data/objects/` for those.

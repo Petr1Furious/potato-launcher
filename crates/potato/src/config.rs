@@ -18,10 +18,11 @@ pub const LOCAL_DIR: &str = ".potato";
 pub const LOCAL_FILE: &str = ".potato/local.toml";
 pub const INDEX_DIRS: [&str; 4] = ["mods", "resourcepacks", "shaderpacks", "datapacks"];
 
-/// Where `pull` and `mod add` put jars nobody else hosts.
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// Where `pull` and `mod add` put files only you host: jars and zips with no
+/// download URL anywhere else.
+#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
-pub enum JarStore {
+pub enum SelfHosted {
     /// Committed in the repo's pack folders.
     #[default]
     Repo,
@@ -29,10 +30,13 @@ pub enum JarStore {
     Storage,
 }
 
-#[derive(Deserialize, Default, Clone)]
-pub struct PullConfig {
-    #[serde(default)]
-    pub jars: JarStore,
+impl SelfHosted {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SelfHosted::Repo => "repo",
+            SelfHosted::Storage => "storage",
+        }
+    }
 }
 
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -137,7 +141,7 @@ pub struct Config {
     #[serde(default)]
     pub client: ClientConfig,
     #[serde(default)]
-    pub pull: PullConfig,
+    pub self_hosted: SelfHosted,
     #[serde(default)]
     pub paths: Vec<ContentRule>,
     #[serde(default)]

@@ -37,5 +37,6 @@ utils = { path = "../utils" }
 libc = "0.2.190"
 
 [dev-dependencies]
+async_zip.workspace = true
 hex = "0.4.3"
 sha1.workspace = true

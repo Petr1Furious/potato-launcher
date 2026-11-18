@@ -133,7 +133,7 @@ the jar), however they're written:
 - `pull prism` keeps the repo's file if it describes the same jar as Prism's.
   Otherwise it writes a converted copy with sha1 instead of Prism's hash. A jar
   with no URL anywhere (Prism's has none, Modrinth doesn't know it) is
-  committed instead, or with `[pull] jars = "storage"` uploaded to
+  committed instead, or with `self_hosted = "storage"` uploaded to
   `<base_url>/objects/<ab>/<sha1>` and pointed at. When the jar changed, the
   repo's `side` and `os` are kept.
 - `push prism` writes an index file only if Prism has none for that mod or its
@@ -154,8 +154,8 @@ lists them by blob id and only fetches the bytes (`git cat-file`, or
 `git lfs smudge` when the blob is an LFS pointer) into the sha1 cache when
 `push` or `build` needs them. Their sha1 is cached by blob id. Jars from Prism
 go in with `git hash-object -w --path`, so the repo's LFS rules apply.
-`pull` and `mod add` commit jars nobody else hosts unless `[pull] jars =
-"storage"`; `build` uploads committed files as objects at publish.
+`pull` and `mod add` commit files only you host unless
+`self_hosted = "storage"`; `build` uploads committed files as objects at publish.
 ### OS variants
 
 Mods with one jar per OS (same mod id) get one index file per variant, each
@@ -165,8 +165,13 @@ and `potato mod set <name> --os <os>|all --side <side>` edits the fields.
 
 A jar with a new filename is an update, not a new mod, when it matches exactly
 one entry for the current OS whose jar disappeared: same Modrinth or
-CurseForge project, or else same index name. The update keeps that entry's
-file name, `side` and `os`. Ambiguous cases count as a new mod.
+CurseForge project, else same index name, else (for mods) the same mod id read
+from both jars. The update keeps that entry's file name, `side` and `os`.
+Ambiguous cases count as a new mod. On `push`, an update that replaces a
+disabled jar arrives disabled, and an index file it writes is never removed
+as the old version's. On `pull`, an index file describing the jar the repo
+already has at that path (same filename and sha1) keeps the repo's bytes, so
+the same update on both sides merges without a conflict.
 
 ### Disabled mods
 
@@ -348,7 +353,7 @@ regenerates `index.html`. CI runs it on `v*` tags.
 
 ## Other commands
 
-- `potato init [--id] [--prism]`: `potato.toml` template, `.gitignore`,
+- `potato init [--id] [--prism] [--self-hosted repo|storage]`: `potato.toml` template, `.gitignore`,
   `.potato/local.toml`, versions from Prism.
 - `potato target add <name> <folder> [--prism|--server]`, `target list`,
   `target remove <name>`. Names are free; `init --prism` names its target
