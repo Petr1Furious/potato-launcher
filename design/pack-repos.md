@@ -211,16 +211,13 @@ Discarding a pull (`git reset --hard`) means the repo wins: the target still
 matches its base, so the next `push` overwrites those changes. `pull --force`
 ignores the base and compares the target with `HEAD`, which brings them back.
 
-What gets read:
-
-- **`prism`:** everything under the managed paths, including new and deleted
-  files, with index files compared by jar. It also reads `mmc-pack.json` into
-  `potato.toml`, and uploads (under the storage lock) CurseForge jars without a
-  URL and jars without an index file. Unindexed jars are looked up on Modrinth
-  (`/version_file/{sha1}`) first.
-- **A server:** only changes to and deletions of files the base already has,
-  plus paths given with `--add`. New files are ignored, because they're almost
-  always server-only mod configs. Excluded paths and jars are never read.
+Only Prism targets can be pulled: changes start in Prism, go into the repo and
+then onto servers, so `pull <server>` refuses. A pull reads everything under the
+managed paths, including new and deleted files, with index files compared by
+jar. It also reads `mmc-pack.json` into `potato.toml`. Jars without an index
+file are looked up on Modrinth (`/version_file/{sha1}`); jars with no URL
+anywhere are committed, or uploaded under the storage lock with
+`self_hosted = "storage"`.
 
 With no base yet (either kind, or a base this clone doesn't have), files are
 compared against `HEAD`. The snapshot is a root commit, so differences become
@@ -228,8 +225,9 @@ additions or conflicts, and deletions don't apply, so they aren't listed.
 
 ### `potato push <target>`
 
-Refuses if the target's managed files changed since the base ("pull first"),
-or, for servers, while the world's `session.lock` is held. A target with no
+Refuses if the target has changes since the base that the commit doesn't have,
+since pushing would lose them (Prism: "pull first"; a server names the files to
+copy into the repo), or, for servers, while the world's `session.lock` is held. A target with no
 base in this repo (never synced, or synced from another clone) needs `--force`
 too. `--force` skips all of these checks. Otherwise it:
 
@@ -396,8 +394,8 @@ potato publish
 **Collaborator picking up changes:** `git pull`, then `potato push prism`.
 
 **Server update** (on the server): `git pull`, stop the server,
-`potato push main`, start it. If shared files were edited on the server,
-`push` refuses: `potato pull main`, commit, `git push`, push again.
+`potato push main`, start it. If a shared file was edited on the server, `push`
+refuses and names it: copy the change into the repo, commit, push again.
 
 **Server-only mod:** drop the jar and its config on the server, or
 `potato mod add <jar> --side server`.

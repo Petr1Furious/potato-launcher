@@ -317,8 +317,8 @@ Other uncommitted changes are fine too. git refuses a pull that would overwrite
 unstaged edits to the same file. Note that `git reset --hard` to drop a pull
 then drops your own uncommitted changes as well.
 
-`push` writes the last commit into Prism. It refuses if Prism changed since
-the last sync, if this Prism instance was never synced with this repo (the
+`push` writes the last commit into Prism. It refuses if Prism has changes
+since the last sync that the commit doesn't have, if this Prism instance was never synced with this repo (the
 first push on a new machine or from a fresh clone), or if pack files
 (`potato.toml`, index files, managed paths) have uncommitted changes, since
 those wouldn't be pushed. Other uncommitted files don't matter. It keeps your

@@ -29,6 +29,14 @@ pub enum Change {
     Deleted(String),
 }
 
+impl Change {
+    pub fn path(&self) -> &str {
+        match self {
+            Change::Added(path) | Change::Modified(path) | Change::Deleted(path) => path,
+        }
+    }
+}
+
 impl std::fmt::Display for Change {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -180,7 +188,6 @@ pub async fn read_target(
     base_tree: &Files,
     base_domain: &Files,
     mode: Mode,
-    add: &[String],
 ) -> anyhow::Result<Snapshot> {
     let mut snapshot = Snapshot {
         files: Files::new(),
@@ -201,23 +208,6 @@ pub async fn read_target(
         for path in base_domain.keys() {
             if let Ok(content) = std::fs::read(target.game_dir.join(path)) {
                 snapshot.files.insert(path.clone(), content);
-            }
-        }
-        for path in add {
-            let path = path.trim_end_matches('/');
-            let full = target.game_dir.join(path);
-            let files = if full.is_dir() {
-                walk(&full)?
-            } else {
-                vec![full]
-            };
-            for file in files {
-                let rel = rel_path(&target.game_dir, &file)?;
-                if !config.is_managed_file(&rel) {
-                    bail!("{rel} isn't under a managed path");
-                }
-                let content = std::fs::read(&file).with_context(|| format!("can't read {rel}"))?;
-                snapshot.files.insert(rel, content);
             }
         }
     }
@@ -653,9 +643,14 @@ fn print_changes(changes: &[Change]) {
     }
 }
 
-pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String], force: bool) -> anyhow::Result<()> {
+pub async fn pull(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> {
     let config = ctx.config()?;
     let target = Target::resolve(&ctx.repo, name, &config, &ctx.local()?)?;
+    if !target.is_prism() {
+        bail!(
+            "{name} is a server; servers only get pushes, so copy changes made there into the repo"
+        );
+    }
     let base = if force {
         None
     } else {
@@ -678,7 +673,6 @@ pub async fn pull(ctx: &mut Ctx, name: &str, add: &[String], force: bool) -> any
         &reference_tree,
         &base_domain,
         Mode::Pull,
-        add,
     )
     .await?;
     ctx.hashes.save()?;
@@ -753,24 +747,34 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
         None => Files::new(),
     };
     let base_domain = domain(&base_tree, &config, &target)?;
+    let head_tree = ctx.git.read_tree(&head)?;
+    let head_domain = domain(&head_tree, &config, &target)?;
     if !force && base.is_some() {
-        let snapshot = read_target(
-            ctx,
-            &config,
-            &target,
-            &base_tree,
-            &base_domain,
-            Mode::Check,
-            &[],
-        )
-        .await?;
-        if !diff(&base_domain, &snapshot.files).is_empty() {
-            bail!("{name} changed since the last sync, run `potato pull {name}` first");
+        let snapshot =
+            read_target(ctx, &config, &target, &base_tree, &base_domain, Mode::Check).await?;
+        // Only changes the commit doesn't already have would be lost.
+        let mut changes = diff(&base_domain, &snapshot.files);
+        changes
+            .retain(|change| snapshot.files.get(change.path()) != head_domain.get(change.path()));
+        if !changes.is_empty() {
+            if target.is_prism() {
+                bail!("{name} changed since the last sync, run `potato pull {name}` first");
+            }
+            let mut list = changes
+                .iter()
+                .take(5)
+                .map(Change::path)
+                .collect::<Vec<_>>()
+                .join(", ");
+            if changes.len() > 5 {
+                list.push_str(&format!(" and {} more", changes.len() - 5));
+            }
+            bail!(
+                "{list} changed on {name} since the last push; copy the changes into the repo or use --force"
+            );
         }
     }
 
-    let head_tree = ctx.git.read_tree(&head)?;
-    let head_domain = domain(&head_tree, &config, &target)?;
     for (path, content) in &head_domain {
         if index_dir_of(path).is_some() || is_committed_binary(path) {
             continue;
@@ -1028,16 +1032,8 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
         };
         let base_tree = ctx.git.read_tree(&base)?;
         let base_domain = domain(&base_tree, &config, &target)?;
-        let snapshot = read_target(
-            ctx,
-            &config,
-            &target,
-            &base_tree,
-            &base_domain,
-            Mode::Check,
-            &[],
-        )
-        .await?;
+        let snapshot =
+            read_target(ctx, &config, &target, &base_tree, &base_domain, Mode::Check).await?;
         let to_pull = diff(&base_domain, &snapshot.files);
         let to_push = diff(&base_domain, &domain(&head_tree, &config, &target)?);
         if to_pull.is_empty() && to_push.is_empty() {
@@ -1046,7 +1042,14 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
         }
         println!("{name}:");
         if !to_pull.is_empty() {
-            println!(" to pull:");
+            println!(
+                "{}",
+                if target.is_prism() {
+                    " to pull:"
+                } else {
+                    " changed there:"
+                }
+            );
             print_changes(&to_pull);
         }
         if !to_push.is_empty() {

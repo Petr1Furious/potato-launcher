@@ -29,16 +29,10 @@ Install the loader the way your server runtime does it (for example, the
 `itzg/minecraft-server` image with `TYPE=NEOFORGE`). potato doesn't install
 loaders.
 
-If the server already runs this pack and has changes you want to keep, pull
-first. It takes the server's versions of files the repo has, for review:
-
-```bash
-potato pull main
-git diff --cached
-git commit
-```
-
-Otherwise, the first push overwrites the managed files on the server:
+Servers only get pushes: changes start in Prism, go into the repo, and then
+onto the server. If the server already runs this pack and has edits you want
+to keep, copy them into the repo first. The first push overwrites the managed
+files on the server:
 
 ```bash
 potato push main --force
@@ -54,29 +48,20 @@ potato push main
 ```
 
 `push` refuses while the server is running (the world's `session.lock` is
-held; not detected on Windows hosts). `--force` skips the checks. It writes the managed files from the last commit, downloads missing
-jars, and deletes only files and jars that the last sync had and the repo has
-since removed. Jars and configs potato never wrote are left alone.
+held; not detected on Windows hosts). `--force` skips the checks. It writes the
+managed files from the last commit, downloads missing jars, and deletes only
+files and jars that the last push had and the repo has since removed. Jars and
+configs potato never wrote are left alone.
 
 ## Editing files on the server
 
 If you change a managed file directly on the server, the next `push` refuses
-until you bring the change into the repo:
+and names it, so the edit isn't lost. Copy the change into the repo (potato
+runs on the server host, so that's a `cp`), commit, and push again; or run
+`push --force` to drop it.
 
-```bash
-potato pull main
-git diff --cached
-git commit && git push
-potato push main
-```
-
-Pulling from a server only takes changes to files the repo already has. New
-files in managed folders are ignored, since they're almost always configs of
-server-only mods. Take one anyway with `--add`:
-
-```bash
-potato pull main --add config/newmod.toml
-```
+A config that only a server-side mod creates on first start isn't managed
+until you copy it into the repo too.
 
 ## Server-only mods
 

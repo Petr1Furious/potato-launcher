@@ -59,12 +59,9 @@ enum Command {
         #[arg(long, value_enum, default_value_t = SelfHosted::Repo)]
         self_hosted: SelfHosted,
     },
-    /// Bring changes from a target (prism or a server) into the repo.
+    /// Bring changes made in a Prism target into the repo.
     Pull {
         target: String,
-        /// Also take a new file or folder from a server.
-        #[arg(long = "add")]
-        add: Vec<String>,
         /// Ignore the last sync and compare the target with the last commit.
         #[arg(long)]
         force: bool,
@@ -227,7 +224,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Init { .. } | Command::Target { .. } | Command::PublishLauncher { .. } => {
             unreachable!()
         }
-        Command::Pull { target, add, force } => sync::pull(&mut ctx, &target, &add, force).await,
+        Command::Pull { target, force } => sync::pull(&mut ctx, &target, force).await,
         Command::Push { target, force } => sync::push(&mut ctx, &target, force).await,
         Command::Status => sync::status(&mut ctx).await,
         Command::Mod {
