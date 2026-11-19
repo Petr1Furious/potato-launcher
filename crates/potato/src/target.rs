@@ -8,7 +8,6 @@ use crate::{
     index::Side,
 };
 
-/// The name `init --prism` gives the Prism target.
 pub const PRISM: &str = "prism";
 
 pub enum TargetKind {
@@ -19,11 +18,9 @@ pub enum TargetKind {
 pub struct Target {
     pub name: String,
     pub kind: TargetKind,
-    /// Where `.potato/` lives: the Prism instance folder or the server folder.
+    /// The Prism instance folder or the server folder.
     pub root: PathBuf,
-    /// The game folder.
     pub game_dir: PathBuf,
-    /// The repo file holding the commit the target last matched.
     record: PathBuf,
 }
 
@@ -36,7 +33,7 @@ impl Target {
     ) -> anyhow::Result<Self> {
         let record = synced_file(repo, name);
         let local_target = local.targets.get(name).with_context(|| {
-            format!("unknown target '{name}'; add it with `potato target add {name} <folder> --prism` or `--server`")
+            format!("unknown target '{name}', add it with `potato target add {name} <folder>`")
         })?;
         let root = local_target.path.clone();
         match local_target.kind {
@@ -152,7 +149,6 @@ fn prism_game_dir(root: &Path) -> anyhow::Result<PathBuf> {
         .with_context(|| format!("no minecraft folder in {}", root.display()))
 }
 
-/// Checks a folder for `target add` and returns it as an absolute path.
 pub fn check_folder(kind: TargetType, path: &Path) -> anyhow::Result<PathBuf> {
     let path = path
         .canonicalize()

@@ -1645,7 +1645,6 @@ fn instance_card(
         .child(card_actions(action, settings))
 }
 
-/// "1.21.1 · NeoForge", or just the version for vanilla.
 fn game_label(instance: &InstanceView) -> Option<String> {
     match (&instance.minecraft_version, &instance.loader) {
         (Some(minecraft), Some(loader)) => Some(format!("{minecraft} · {loader}")),

@@ -1,23 +1,25 @@
 # Servers
 
-A modded server is another target of the pack repo, like Prism. potato keeps
-only the shared parts in sync: mods with `side` `server` or `both`, and the
-managed paths from `[[paths]]`. Everything else stays the server's own and
-never enters the repo: `server.properties`, server-only mods and their
-configs, permissions, the world, ops and whitelist.
+A modded server is another target of the pack repo. potato only keeps the shared parts in sync: mods with `side` set to `server` or `both`, and the managed paths from `[[paths]]`. Everything else (such as `server.properties`) belongs to the server and never enters the repo.
 
-Paper and other plugin servers aren't supported.
+It is only possible to push to servers. The idea behind this is that changes start in Prism, go into the repo, and then onto the server.
+
+::: info
+Paper and other plugin servers aren't supported, because usually there is nothing to keep in sync between the clients and the server.
+:::
 
 ## Setup
 
-potato runs on the server host, against a clone of the pack repo:
+potato runs on the server host, against a clone of the pack repo.
+
+1. Clone the repo:
 
 ```bash
 git clone <pack repo> ~/packs/minigames
 cd ~/packs/minigames
 ```
 
-Add the server folder as a target. The name is up to you:
+2. Add the server folder as a target. You can pick any name:
 
 ```bash
 potato target add main /srv/minecraft/minigames
@@ -25,14 +27,9 @@ potato target add main /srv/minecraft/minigames
 
 Targets are stored in `.potato/local.toml`, which isn't committed.
 
-Install the loader the way your server runtime does it (for example, the
-`itzg/minecraft-server` image with `TYPE=NEOFORGE`). potato doesn't install
-loaders.
+3. Install the loader the way your server runtime does it, for example with the `itzg/minecraft-server` image and `TYPE=NEOFORGE`. potato doesn't install loaders.
 
-Servers only get pushes: changes start in Prism, go into the repo, and then
-onto the server. If the server already runs this pack and has edits you want
-to keep, copy them into the repo first. The first push overwrites the managed
-files on the server:
+4. Push the pack. If the server already runs it and has edits you want to keep, copy them into the repo first. The first push has to be `--force`, which overwrites the managed files on the server:
 
 ```bash
 potato push main --force
@@ -47,26 +44,17 @@ potato push main
 # start the server
 ```
 
-`push` refuses while the server is running (the world's `session.lock` is
-held; not detected on Windows hosts). `--force` skips the checks. It writes the
-managed files from the last commit, downloads missing jars, and deletes only
-files and jars that the last push had and the repo has since removed. Jars and
-configs potato never wrote are left alone.
+`push` writes the managed files from the last commit, downloads missing jars, and deletes only the files and jars that the last push had and the repo has since removed. Jars and configs potato never wrote are left alone.
+
+`push` refuses to run while the server is running, which it detects by the world's `session.lock`. This doesn't work on Windows hosts. `--force` skips this check and the one for edits made on the server.
 
 ## Editing files on the server
 
-If you change a managed file directly on the server, the next `push` refuses
-and names it, so the edit isn't lost. Copy the change into the repo (potato
-runs on the server host, so that's a `cp`), commit, and push again; or run
-`push --force` to drop it.
-
-A config that only a server-side mod creates on first start isn't managed
-until you copy it into the repo too.
+If you change a managed file directly on the server, the next `push` refuses and names it. Copy the change into the repo, commit and push again, or run `push --force` to drop it.
 
 ## Server-only mods
 
-Drop the jar and its config into the server folder. potato never touches
-them. To track one in the repo instead:
+Put the jar and its config into the server folder, and potato won't touch them. You can also track one in the repo:
 
 ```bash
 potato mod add <file or URL> --side server
@@ -81,10 +69,8 @@ Add it to that server's `exclude` in `potato.toml`:
 exclude = ["config/somemod.toml"]
 ```
 
-potato then never writes or reads it on that server. If the file is missing,
-the mod writes its defaults on first start, and you edit it on the server.
+potato then never writes it on that server. If the file is missing, the mod writes its defaults on first start, and you can edit it on the server.
 
 ## Several servers
 
-Add each server with its own name (`potato target add <name> <folder>`). Its
-`exclude` list goes in its own `[servers.<name>]` section of `potato.toml`.
+Add each server as a target with its own name (`potato target add <name> <folder>`). Its `exclude` list goes in its own `[servers.<name>]` section of `potato.toml`.

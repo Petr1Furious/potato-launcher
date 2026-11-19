@@ -71,7 +71,6 @@ pub fn index_name(path: &str) -> &str {
     file.strip_suffix(INDEX_SUFFIX).unwrap_or(file)
 }
 
-/// Files that index entries stand for, by extension.
 pub fn is_indexed_binary(dir: &str, file_name: &str) -> bool {
     let name = file_name.strip_suffix(DISABLED_SUFFIX).unwrap_or(file_name);
     if dir == "mods" {
@@ -98,7 +97,7 @@ impl IndexFile {
         Self::parse(std::str::from_utf8(content).context("index file isn't utf-8")?)
     }
 
-    /// An index file for a committed jar: no download, only what the jar is.
+    /// For a committed jar: no download.
     pub fn metadata(name: &str, filename: &str) -> Self {
         let mut doc = DocumentMut::new();
         doc["name"] = value(name);
@@ -106,7 +105,6 @@ impl IndexFile {
         Self { doc }
     }
 
-    /// Turns a downloadable index file into one describing a committed jar.
     pub fn strip_download(&mut self) {
         self.doc.remove("download");
     }
@@ -167,7 +165,6 @@ impl IndexFile {
         self.download_field("url")
     }
 
-    /// The jar's sha1, if the file records one.
     pub fn sha1(&self) -> Option<&str> {
         (self.download_field("hash-format") == Some("sha1"))
             .then(|| self.download_field("hash"))
@@ -190,8 +187,7 @@ impl IndexFile {
         }
     }
 
-    /// The Modrinth or CurseForge project this file belongs to, as `modrinth:<id>`
-    /// or `curseforge:<id>`.
+    /// `modrinth:<id>` or `curseforge:<id>`.
     pub fn project(&self) -> Option<String> {
         let update = self.doc.get("update")?;
         if let Some(id) = update
@@ -219,7 +215,6 @@ impl IndexFile {
         self.doc["update"] = Item::Table(update);
     }
 
-    /// Makes the file record `sha1`, and `url` when it has none.
     pub fn convert(&mut self, sha1: &str, fallback_url: &str) {
         if !self.doc.contains_key("download") {
             self.doc["download"] = Item::Table(Table::new());
@@ -235,7 +230,6 @@ impl IndexFile {
         download["hash"] = value(sha1);
     }
 
-    /// Keeps repo-side overrides of an entry that is being replaced.
     pub fn carry_overrides(&mut self, previous: &IndexFile) {
         for key in ["side", "os"] {
             match previous.doc.get(key) {

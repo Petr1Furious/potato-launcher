@@ -8,32 +8,6 @@ If you are not using `build.env`, export the variables yourself before building.
 
 ## Building
 
-The launcher and `potato` are regular Rust binaries. Install rustup from [rustup.rs](https://rustup.rs), then:
+The launcher and `potato` can be built like any other Rust project.
 
-- `cargo run --bin launcher` runs the launcher in debug mode
-- `cargo build --bin launcher --release` builds a release binary
-- `cargo run -p potato -- --help` runs the pack CLI
-
-Checks CI runs:
-
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
-
-`cargo test -p potato -- --ignored` runs the online tests: they build real
-instances and talk to Modrinth and Mojang.
-
-## Testing end to end
-
-`docker-compose-dev.yml` serves `./dev-site` on port 8000 with the same nginx
-config as production:
-
-```bash
-docker compose -f docker-compose-dev.yml up -d
-```
-
-In a pack repo, set `[publish] target = "file:///<repo>/dev-site/data"` and
-`base_url = "http://localhost:8000/data"`, then `potato publish`. Build the
-launcher with `INSTANCE_MANIFEST_URLS=http://localhost:8000/data/instance_manifest.json`.
+If you aren't familiar with Rust tooling, start by installing rustup from [rustup.rs](https://rustup.rs). Then, use `cargo run --bin launcher` to build and run the launcher in debug configuration, or `cargo build --bin launcher --release` to create a release binary. To run `potato`, use `cargo run -p potato -- --help`.

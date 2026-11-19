@@ -21,7 +21,7 @@ pub struct RsyncStorage {
     port: Option<u16>,
     root: String,
     lock: Mutex<Option<Child>>,
-    /// Holds the socket every ssh call of this command shares.
+    /// Socket of the ssh connection all calls share.
     control: tempfile::TempDir,
 }
 
@@ -58,7 +58,6 @@ impl RsyncStorage {
         format!("ControlPath={}", self.control.path().join("ssh").display())
     }
 
-    /// One ssh login per command: later calls reuse the first connection.
     fn ssh_options(&self) -> Vec<String> {
         let mut options = vec![
             "-o".to_string(),

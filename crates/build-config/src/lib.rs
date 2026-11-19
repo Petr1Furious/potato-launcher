@@ -10,8 +10,6 @@ pub fn lower_launcher_name() -> String {
     normalize_launcher_name(LAUNCHER_NAME)
 }
 
-/// The folder under the user data dir; the lowercased launcher name unless
-/// `LAUNCHER_DATA_DIR` is set at build time.
 pub fn data_dir_name() -> String {
     LAUNCHER_DATA_DIR.map_or_else(lower_launcher_name, str::to_string)
 }
@@ -67,8 +65,7 @@ pub fn update_source() -> Option<UpdateSource> {
     LAUNCHER_UPDATE_GITHUB.map(UpdateSource::GitHub)
 }
 
-/// Matches `LOWER_LAUNCHER_NAME` in `scripts/ci/set-build-env.sh`, which names
-/// the published release files.
+/// Same as `LOWER_LAUNCHER_NAME` in scripts/ci/set-build-env.sh.
 pub fn release_lower_name() -> String {
     release_lower(LAUNCHER_NAME)
 }

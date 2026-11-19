@@ -13,8 +13,7 @@ use tokio::io::AsyncWriteExt;
 
 use super::{LOCK_KEY, Listed, Storage, locked_error};
 
-/// `s3://bucket/prefix`. Credentials, region and endpoint come from the usual
-/// `AWS_*` environment variables.
+/// `s3://bucket/prefix`, configured by the usual `AWS_*` variables.
 pub struct S3Storage {
     store: Arc<dyn ObjectStore>,
     prefix: String,
@@ -57,7 +56,6 @@ impl S3Storage {
 const PARALLEL_UPLOADS: usize = 16;
 
 impl S3Storage {
-    /// Streams a file up, in parts when it's large, unless the key already exists.
     async fn put_object(&self, key: &str, source: &Path) -> anyhow::Result<()> {
         let path = self.path(key);
         match self.store.head(&path).await {

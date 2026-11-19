@@ -349,13 +349,11 @@ impl InstanceMetadata {
         })
     }
 
-    /// The vanilla version at the root of the version chain.
     pub fn minecraft_version(&self) -> Option<String> {
         self.versions.first().map(|version| version.id.clone())
     }
 
-    /// Loader name from the last version id in the chain, such as
-    /// `fabric-loader-0.16.9-1.21.1`, `neoforge-21.1.77` or `1.20.1-forge-47.2.0`.
+    /// From ids like `fabric-loader-0.16.9-1.21.1`, `neoforge-21.1.77` or `1.20.1-forge-47.2.0`.
     pub fn loader_name(&self) -> Option<String> {
         if self.versions.len() < 2 {
             return None;

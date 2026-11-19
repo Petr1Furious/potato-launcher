@@ -454,7 +454,7 @@ async fn uncommitted_changes() {
     assert_eq!(read(&s.repo.join("kubejs/s.js")), "one\n");
     assert_eq!(read(&s.repo.join("config/a.toml")), "a = 9\n");
     let err = sync::push(&mut s.ctx, "prism", false).await.unwrap_err();
-    assert!(err.to_string().contains("won't be pushed"), "{err}");
+    assert!(err.to_string().contains("uncommitted changes"), "{err}");
 }
 
 #[tokio::test]
@@ -487,7 +487,10 @@ async fn server_sync() {
 
     // Servers only get pushes; the first one needs --force.
     let err = sync::pull(&mut s.ctx, "main", false).await.unwrap_err();
-    assert!(err.to_string().contains("only get pushes"), "{err}");
+    assert!(
+        err.to_string().contains("can't pull from a server"),
+        "{err}"
+    );
     let err = sync::push(&mut s.ctx, "main", false).await.unwrap_err();
     assert!(err.to_string().contains("--force"), "{err}");
 

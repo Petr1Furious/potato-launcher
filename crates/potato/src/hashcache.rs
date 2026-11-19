@@ -13,11 +13,9 @@ struct Entry {
     sha1: String,
 }
 
-/// sha1 of files, cached by path, size and modification time.
 pub struct HashCache {
     path: PathBuf,
     entries: HashMap<String, Entry>,
-    /// sha1 of committed jars, by git blob id.
     blobs_path: PathBuf,
     blobs: HashMap<String, String>,
     dirty: bool,

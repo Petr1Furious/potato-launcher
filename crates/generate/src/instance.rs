@@ -532,8 +532,7 @@ impl InstanceGenerator {
             .await
     }
 
-    /// Like `generate`, but with `mod_entries` set the `mods/` dir of `source_root`
-    /// is not scanned and the given entries are used as is.
+    /// With `mod_entries`, `source_root`'s `mods/` isn't scanned.
     pub async fn generate_with_mod_entries(
         self,
         instance_dir: &InstanceDirFS,

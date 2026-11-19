@@ -34,9 +34,8 @@ use crate::{
 pub struct BuildOutput {
     pub config: Config,
     pub metadata: InstanceMetadata,
-    /// Local files to upload, by object key.
     pub uploads: BTreeMap<String, Upload>,
-    /// Every object key the metadata needs.
+    /// Object keys the metadata points at.
     pub referenced: BTreeSet<String>,
 }
 
@@ -47,7 +46,6 @@ pub async fn mod_id_of(path: &Path) -> anyhow::Result<String> {
         .with_context(|| format!("can't read the mod id of {}", path.display()))
 }
 
-/// Mod id of a Modrinth project's latest file, cached by slug.
 pub async fn modrinth_mod_id(ctx: &Ctx, slug: &str) -> anyhow::Result<String> {
     let cache_path = ctx.cache_dir.join("modrinth-mod-ids.json");
     let mut cache: HashMap<String, String> = std::fs::read(&cache_path)
@@ -78,7 +76,6 @@ struct Entry {
     cached: PathBuf,
 }
 
-/// Client-side jars and zips, each with its sha1, download URL and cached copy.
 async fn collect_entries(
     ctx: &mut Ctx,
     tree: &crate::git::Files,
@@ -164,7 +161,6 @@ fn replace_strings(value: &mut serde_json::Value, mapping: &HashMap<String, Stri
     }
 }
 
-/// Pack files are listed by their path in the game folder, runtime files by group.
 fn staged_upload(key: String, path: PathBuf, rel: &str, id: &str) -> Upload {
     let pack_prefix = format!("instances/{id}/minecraft/");
     if let Some(pack_path) = rel.strip_prefix(&pack_prefix) {
@@ -220,8 +216,7 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
         let dir = entry.file.dir;
         let filename = entry.file.filename.as_str();
         let cached_path = &entry.cached;
-        // Jars only we host: committed ones, and uploaded ones `gc` may have removed
-        // before their first publish.
+        // An uploaded jar may have been removed by `gc` before its first publish.
         if entry.url == config.publish.object_url(&entry.sha1) {
             let key = object_key(&entry.sha1);
             let label = format!("{dir}/{filename}");

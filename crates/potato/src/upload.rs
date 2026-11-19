@@ -3,9 +3,9 @@ use std::{collections::BTreeMap, path::PathBuf};
 pub struct Upload {
     pub key: String,
     pub path: PathBuf,
-    /// What the file is in the pack, e.g. `mods/jei.jar`.
+    /// For example `mods/jei.jar`.
     pub label: String,
-    /// Runtime files (libraries, assets, Java) are summarized per group unless verbose.
+    /// Libraries, assets and Java are summarized by group unless verbose.
     pub group: Option<String>,
     pub note: Option<&'static str>,
 }

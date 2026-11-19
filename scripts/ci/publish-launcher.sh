@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# Publishes the launcher files in ./release to the storage target.
-# Expects: LAUNCHER_PUBLISH_TARGET, LAUNCHER_NAME, VERSION, POTATO (path to the
-# potato binary), plus credentials for the target: LAUNCHER_PUBLISH_SSH_KEY and
-# LAUNCHER_PUBLISH_KNOWN_HOSTS for rsync://, AWS_* for s3://.
+# Needs LAUNCHER_PUBLISH_TARGET, LAUNCHER_NAME, VERSION and POTATO (the potato binary),
+# plus LAUNCHER_PUBLISH_SSH_KEY and LAUNCHER_PUBLISH_KNOWN_HOSTS for rsync:// or AWS_* for s3://.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 

@@ -9,7 +9,6 @@ use utils::files::DownloadTask;
 
 use crate::progress::TerminalProgress;
 
-/// Downloads files into the shared cache, keyed by sha1, and checks them.
 pub struct FileCache {
     root: PathBuf,
 }
@@ -25,7 +24,6 @@ impl FileCache {
         self.root.join(&sha1[..2]).join(sha1)
     }
 
-    /// Returns cached paths for every `(url, sha1)` pair, downloading missing ones.
     pub async fn ensure(
         &self,
         wanted: &[(Url, String)],
@@ -72,7 +70,6 @@ impl FileCache {
         Ok(paths)
     }
 
-    /// Downloads a URL whose hash isn't known yet. Returns its sha1 and cached path.
     pub async fn fetch_unknown(
         &self,
         client: &reqwest::Client,
@@ -100,7 +97,6 @@ impl FileCache {
         Ok((sha1, path))
     }
 
-    /// Copies a local file into the cache.
     pub async fn insert(&self, source: &Path, sha1: &str) -> anyhow::Result<PathBuf> {
         let path = self.path(sha1);
         if !path.exists() {

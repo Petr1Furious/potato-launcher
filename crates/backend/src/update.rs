@@ -151,8 +151,7 @@ async fn newer_release(
     Ok(is_newer(&release.version, local).then_some(release))
 }
 
-/// Release tags compare as semver when both parse (a leading `v` is fine);
-/// other versions, like commit builds, update on any difference.
+/// Semver when both parse (`v` prefix allowed), otherwise any difference.
 fn is_newer(remote: &str, local: &str) -> bool {
     let parse =
         |version: &str| semver::Version::parse(version.strip_prefix('v').unwrap_or(version)).ok();

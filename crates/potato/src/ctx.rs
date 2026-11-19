@@ -42,7 +42,7 @@ impl Ctx {
         LocalConfig::load(&self.repo)
     }
 
-    /// sha1 and cached copy of a committed jar, by its blob id.
+    /// A committed jar's sha1 and cached copy.
     pub async fn committed(&mut self, blob: &str, path: &str) -> anyhow::Result<(String, PathBuf)> {
         if let Some(sha1) = self.hashes.blob_sha1(blob) {
             let cached = self.files.path(sha1);

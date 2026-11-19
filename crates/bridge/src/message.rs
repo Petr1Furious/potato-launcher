@@ -171,7 +171,7 @@ pub struct InstanceView {
     pub java_path: Option<Arc<str>>,
     pub required_java_version: Option<String>,
     pub minecraft_version: Option<Arc<str>>,
-    /// Loader name, such as `NeoForge`; `None` for vanilla.
+    /// Such as `NeoForge`; `None` for vanilla.
     pub loader: Option<Arc<str>>,
     /// `None` uses the launcher build default.
     pub use_native_glfw: Option<bool>,

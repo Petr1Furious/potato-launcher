@@ -83,7 +83,7 @@ pub fn init(
             set_versions(&repo, &minecraft, loader, loader_version.as_deref())?;
         }
     }
-    println!("created {CONFIG_FILE}; set [publish], then run `potato pull prism`");
+    println!("created {CONFIG_FILE}, set [publish] and run `potato pull prism`");
     Ok(())
 }
 
@@ -124,9 +124,7 @@ pub fn target_add(
 pub fn target_list(repo: &Path) -> anyhow::Result<()> {
     let local = LocalConfig::load(repo)?;
     if local.targets.is_empty() {
-        println!(
-            "no targets; add one with `potato target add <name> <folder> --prism` or `--server`"
-        );
+        println!("no targets, add one with `potato target add <name> <folder>`");
         return Ok(());
     }
     let rows = local
@@ -321,7 +319,7 @@ pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
             entries.push((rel, entry));
         }
     }
-    // Committed jars no index file describes.
+    // Committed jars without an index file.
     for dir in INDEX_DIRS
         .into_iter()
         .filter(|dir| config.handles_index_dir(dir))
@@ -411,7 +409,6 @@ pub fn mod_set(ctx: &Ctx, name: &str, os: &[String], side: Option<&str>) -> anyh
     let mut full = ctx.repo.join(&rel);
     let mut entry = match std::fs::read_to_string(&full) {
         Ok(content) => IndexFile::parse(&content).with_context(|| rel.clone())?,
-        // A committed jar without an index file gets one that only describes it.
         Err(_) => {
             let filename = [
                 name.to_string(),

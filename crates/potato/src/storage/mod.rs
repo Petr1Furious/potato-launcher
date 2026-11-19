@@ -19,9 +19,8 @@ pub struct Listed {
 pub trait Storage: Send + Sync {
     async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>>;
     async fn put(&self, key: &str, data: Vec<u8>) -> anyhow::Result<()>;
-    /// Uploads one file, replacing what's there.
     async fn put_path(&self, key: &str, path: &Path, executable: bool) -> anyhow::Result<()>;
-    /// Uploads content-addressed files, skipping keys that already exist.
+    /// Skips keys that already exist.
     async fn put_objects(&self, files: &[(String, PathBuf)]) -> anyhow::Result<()>;
     async fn list(&self, prefix: &str) -> anyhow::Result<Vec<Listed>>;
     async fn delete(&self, keys: &[String]) -> anyhow::Result<()>;
@@ -40,7 +39,6 @@ pub fn open(target: &str) -> anyhow::Result<Box<dyn Storage>> {
     }
 }
 
-/// Runs `job` while holding the storage lock.
 pub async fn locked<T>(
     storage: &dyn Storage,
     job: impl Future<Output = anyhow::Result<T>>,

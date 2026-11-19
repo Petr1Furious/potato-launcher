@@ -14,8 +14,7 @@ use crate::{
 
 pub const MANIFEST_KEY: &str = "instance_manifest.json";
 pub const DEFAULT_GRACE_HOURS: u64 = 2;
-/// Uploads no publish references yet (jars from `pull` or `mod add`) are already
-/// committed, and collaborators download them from storage before anyone publishes.
+/// Collaborators may already use unpublished uploads.
 const UNPUBLISHED_GRACE_DAYS: i64 = 7;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -87,7 +86,6 @@ async fn put_json(storage: &dyn Storage, key: &str, value: &impl Serialize) -> a
     storage.put(key, serde_json::to_vec(value)?).await
 }
 
-/// Refuses to replace a publish from another repo, or one this history doesn't contain.
 fn check_previous(
     ctx: &Ctx,
     previous: Option<&PublishRecord>,
@@ -115,7 +113,7 @@ pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
     let repo_root = ctx.git.root_commit()?;
     if !force {
         let config = ctx.config()?;
-        sync::ensure_committed(&ctx.git, "published", |path| config.is_pack_file(path))?;
+        sync::ensure_committed(&ctx.git, |path| config.is_pack_file(path))?;
         let storage = storage::open(&config.publish.target)?;
         let previous = read_record(storage.as_ref(), &config.id).await?;
         check_previous(ctx, previous.as_ref(), &config.id, &repo_root, &head)?;

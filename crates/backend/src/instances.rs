@@ -218,7 +218,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             ),
         };
 
-        // An installed instance shows what it runs; otherwise what the backend lists.
+        // An installed instance shows what it actually runs.
         let (minecraft_version, loader) = if metadata.minecraft_version.is_some() {
             (metadata.minecraft_version.clone(), metadata.loader.clone())
         } else {

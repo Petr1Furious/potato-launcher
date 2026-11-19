@@ -14,8 +14,7 @@ use crate::{
 
 pub type Files = BTreeMap<String, Vec<u8>>;
 
-/// Stands in for a committed jar or zip inside `Files`: its blob id, so trees can
-/// be compared and rewritten without reading the file itself.
+/// A committed jar in `Files`: its blob id instead of its bytes.
 const BLOB_REF: &[u8] = b"\0potato-blob ";
 
 pub fn blob_ref(id: &str) -> Vec<u8> {
@@ -28,7 +27,6 @@ pub fn as_blob_ref(content: &[u8]) -> Option<&str> {
         .and_then(|id| std::str::from_utf8(id).ok())
 }
 
-/// A jar or zip directly in a pack folder, such as `mods/x.jar`.
 pub fn is_committed_binary(path: &str) -> bool {
     path.split_once('/').is_some_and(|(dir, name)| {
         INDEX_DIRS.contains(&dir)
@@ -40,7 +38,6 @@ pub fn is_committed_binary(path: &str) -> bool {
 
 const LFS_POINTER: &[u8] = b"version https://git-lfs.github.com/spec/v1";
 
-/// Prefix of commits potato creates to record a target's state.
 pub const SNAPSHOT_PREFIX: &str = "potato snapshot";
 
 pub struct Git {
@@ -119,7 +116,6 @@ impl Git {
         Ok(self.out(&["status", "--porcelain"])?.is_empty())
     }
 
-    /// Paths with uncommitted changes, untracked files included.
     pub fn changed_paths(&self) -> anyhow::Result<Vec<String>> {
         let out = self.checked(
             &["status", "--porcelain", "-z", "--untracked-files=all"],
@@ -221,7 +217,6 @@ impl Git {
         Ok(files)
     }
 
-    /// Creates a commit with exactly `files` as its tree.
     pub fn write_commit(
         &self,
         parent: Option<&str>,
@@ -276,10 +271,10 @@ impl Git {
         Ok(String::from_utf8(commit)?.trim().to_string())
     }
 
-    /// Stages `commit`'s changes without committing. Returns false when there are conflicts.
+    /// Returns false on conflicts.
     pub fn cherry_pick_no_commit(&self, commit: &str) -> anyhow::Result<bool> {
         let output = self.run(&["cherry-pick", "--no-commit", commit], &[], None)?;
-        // A pending cherry-pick would make `git commit` reuse the snapshot's message and author.
+        // Otherwise `git commit` reuses the snapshot's author and message.
         let _ = self.run(&["cherry-pick", "--quit"], &[], None);
         if output.status.success() {
             return Ok(true);
@@ -294,15 +289,12 @@ impl Git {
         Ok(false)
     }
 
-    /// Stores `file` as the blob for `path` through the repo's filters, so with
-    /// Git LFS the blob is a pointer and the jar goes to LFS's own store.
+    /// Goes through the repo's filters, so with Git LFS the blob is a pointer.
     pub fn store_file(&self, path: &str, file: &Path) -> anyhow::Result<String> {
         let file = file.to_string_lossy();
         self.out(&["hash-object", "-w", "--path", path, &file])
     }
 
-    /// Writes a committed jar to `dest`, fetching it through Git LFS when the
-    /// blob is a pointer.
     pub fn blob_to_file(&self, id: &str, path: &str, dest: &Path) -> anyhow::Result<()> {
         let status = self
             .command(&["cat-file", "blob", id])
@@ -327,7 +319,7 @@ impl Git {
             .context("can't run git")?;
         if !status.success() {
             let _ = std::fs::remove_file(&fetched);
-            bail!("{path} is stored with Git LFS and couldn't be fetched; is git-lfs installed?");
+            bail!("can't fetch {path} from Git LFS, check that git-lfs is installed");
         }
         std::fs::rename(&fetched, dest)?;
         Ok(())

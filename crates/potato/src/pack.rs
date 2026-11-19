@@ -9,18 +9,14 @@ use crate::{
 };
 
 pub enum Source {
-    /// Downloaded from the index file's URL.
     Url { url: String, sha1: String },
-    /// Committed in the repo at `path`.
     Committed { path: String, blob: String },
 }
 
-/// One jar or zip a tree says to install.
 pub struct PackFile {
     pub dir: &'static str,
     pub filename: String,
-    /// The index file describing it. Without a URL it only sets side, os and
-    /// project ids for a committed file.
+    /// Without a URL, it only sets side, os and project ids for a committed file.
     pub index: Option<(String, IndexFile)>,
     pub source: Source,
 }
@@ -38,8 +34,7 @@ impl PackFile {
             .map_or(Ok(true), |(_, index)| index.applies_to_os(os))
     }
 
-    /// The name `required` and optional sets refer to: the index file's name, or
-    /// the file name without its extension.
+    /// The name `required` and optional sets use.
     pub fn name(&self) -> String {
         match &self.index {
             Some((path, _)) => index_name(path).to_string(),
@@ -57,7 +52,7 @@ impl PackFile {
             .map_or(Ok(vec![]), |(_, index)| index.os())
     }
 
-    /// The index file, when it's one Prism can use (it has a download URL).
+    /// Only when it has a download URL.
     pub fn download_index(&self) -> Option<&(String, IndexFile)> {
         matches!(self.source, Source::Url { .. })
             .then_some(self.index.as_ref())
@@ -65,7 +60,6 @@ impl PackFile {
     }
 }
 
-/// Every jar and zip in the pack folders `config` handles.
 pub fn pack_files(tree: &Files, config: &Config) -> anyhow::Result<Vec<PackFile>> {
     let mut committed = BTreeMap::new();
     for (path, content) in tree {
@@ -99,7 +93,7 @@ pub fn pack_files(tree: &Files, config: &Config) -> anyhow::Result<Vec<PackFile>
         let key = (dir.to_string(), filename.clone());
         let source = match (index.url(), committed.remove(&key)) {
             (Some(_), Some((file, _))) => {
-                bail!("{file} is committed and {path} has a download URL; remove one")
+                bail!("{file} is committed and {path} has a download URL, remove one")
             }
             (Some(url), None) => Source::Url {
                 url: url.to_string(),
@@ -110,7 +104,7 @@ pub fn pack_files(tree: &Files, config: &Config) -> anyhow::Result<Vec<PackFile>
             },
             (None, Some((file, blob))) => Source::Committed { path: file, blob },
             (None, None) => {
-                bail!("{path} has no download URL and {dir}/{filename} isn't committed")
+                bail!("{path} has no download URL, commit {dir}/{filename} or remove it")
             }
         };
         files.push(PackFile {

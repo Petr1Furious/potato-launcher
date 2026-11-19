@@ -52,30 +52,30 @@ enum Command {
     Init {
         #[arg(long)]
         id: Option<String>,
-        /// Prism instance folder to use as the source.
+        /// Prism instance folder to sync with.
         #[arg(long)]
         prism: Option<PathBuf>,
-        /// Where files only you host go: committed in the repo, or uploaded to storage.
+        /// Where to keep files only you host.
         #[arg(long, value_enum, default_value_t = SelfHosted::Repo)]
         self_hosted: SelfHosted,
     },
-    /// Bring changes made in a Prism target into the repo.
+    /// Bring changes from a Prism target into the repo.
     Pull {
         target: String,
-        /// Ignore the last sync and compare the target with the last commit.
+        /// Compare with the last commit instead of the last sync.
         #[arg(long)]
         force: bool,
     },
     /// Write the committed repo to a target.
     Push {
         target: String,
-        /// Skip the safety checks and overwrite the target.
+        /// Skip the checks and overwrite the target.
         #[arg(long)]
         force: bool,
     },
     /// Show what pull and push would change for each target.
     Status,
-    /// Manage the Prism instance and servers the repo syncs with.
+    /// Manage the Prism instances and servers to sync with.
     Target {
         #[command(subcommand)]
         action: TargetAction,
@@ -89,7 +89,7 @@ enum Command {
     Build,
     /// Build the last commit and publish it.
     Publish {
-        /// Skip the checks against the last publish and for uncommitted changes.
+        /// Skip the checks.
         #[arg(long)]
         force: bool,
     },
@@ -97,7 +97,7 @@ enum Command {
     Unpublish,
     /// Delete stored files no published version needs.
     Gc {
-        /// How long a replaced version's files stay for launchers still on it.
+        /// Hours to keep a replaced version's files.
         #[arg(long, default_value_t = publish::DEFAULT_GRACE_HOURS)]
         grace_hours: u64,
     },
@@ -122,12 +122,13 @@ enum Command {
 #[derive(Subcommand)]
 enum TargetAction {
     /// Add or change a target.
+    ///
     /// Without --prism or --server, a folder with mmc-pack.json is a Prism instance.
     #[command(group(clap::ArgGroup::new("kind")))]
     Add {
         name: String,
         path: PathBuf,
-        /// A Prism (or Prism fork) instance folder.
+        /// A Prism instance folder.
         #[arg(long, group = "kind")]
         prism: bool,
         /// A server folder.
@@ -136,7 +137,7 @@ enum TargetAction {
     },
     /// List targets.
     List,
-    /// Forget a target. Its folder is left as it is.
+    /// Forget a target, leaving its folder as it is.
     Remove { name: String },
 }
 
@@ -165,7 +166,7 @@ enum ModAction {
     Set {
         /// Index name, as `mod list` shows it.
         name: String,
-        /// windows, macos or linux; repeat for several, or `all`.
+        /// windows, macos, linux or all; repeat for several.
         #[arg(long)]
         os: Vec<String>,
         /// client, server or both.

@@ -687,8 +687,8 @@ en = "Saved accounts were corrupted and could not be loaded; please sign in agai
 ru = "Сохранённые аккаунты повреждены и не были загружены; войдите снова"
 
 [notifications.data_from_newer_launcher]
-en = "This launcher data was created by a newer version. Update the launcher to use it"
-ru = "Данные лаунчера созданы более новой версией. Обновите лаунчер, чтобы продолжить"
+en = "Launcher data is from a newer version, update the launcher"
+ru = "Данные лаунчера от более новой версии, обновите лаунчер"
 
 [notifications.preparing_local_instance]
 en = "Preparing local instance"

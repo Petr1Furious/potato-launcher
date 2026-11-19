@@ -2251,15 +2251,12 @@ fn parse_xmx_mb(value: Option<&str>) -> Option<u64> {
     }
 }
 
-/// Bump when the data folder changes in a way older launchers can't read, and
-/// migrate older folders where `check_data_format` writes the new number.
+/// Bump when older launchers can't read the data folder anymore, and migrate in `check_data_format`.
 const DATA_FORMAT: u32 = 1;
 const DATA_FORMAT_FILE: &str = "data_format";
-/// Keeps an open launcher's instance list well inside `potato gc`'s default
-/// 2-hour grace, so it never installs a version whose files are gone.
+/// Must stay under `potato gc`'s default 2-hour grace.
 const CATALOG_REFRESH: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
-/// Whether this launcher may use the folder: false when a newer format wrote it.
 async fn check_data_format(launcher_dir: &Path) -> anyhow::Result<bool> {
     let path = launcher_dir.join(DATA_FORMAT_FILE);
     match tokio::fs::read_to_string(&path).await {
@@ -2286,7 +2283,7 @@ pub async fn run(
     frontend: FrontendSender,
 ) -> anyhow::Result<()> {
     if !check_data_format(&launcher_dir).await? {
-        // Leave newer data untouched; only self-update can help.
+        // Don't touch newer data; self-update still runs.
         set_lang(resolve_language_code(
             Some(detect_system_language_code()),
             None,

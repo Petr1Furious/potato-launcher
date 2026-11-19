@@ -1078,8 +1078,8 @@ pub mod notifications {
     }
     pub fn data_from_newer_launcher() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Данные лаунчера созданы более новой версией. Обновите лаунчер, чтобы продолжить",
-            _ => "This launcher data was created by a newer version. Update the launcher to use it",
+            1 => "Данные лаунчера от более новой версии, обновите лаунчер",
+            _ => "Launcher data is from a newer version, update the launcher",
         }
     }
     pub fn delete_all_data_busy() -> &'static str {

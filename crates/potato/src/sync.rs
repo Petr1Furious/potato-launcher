@@ -65,9 +65,7 @@ pub fn diff(old: &Files, new: &Files) -> Vec<Change> {
     changes
 }
 
-/// Files of `tree` that `target` holds: managed files plus, for Prism, the
-/// index files and committed jars that apply to it. Servers get jars, but
-/// they're handled separately.
+/// The part of `tree` a target holds. Servers' jars go through `apply_jars` instead.
 pub fn domain(tree: &Files, config: &Config, target: &Target) -> anyhow::Result<Files> {
     let os = current_os();
     let mut files = Files::new();
@@ -92,7 +90,6 @@ pub fn domain(tree: &Files, config: &Config, target: &Target) -> anyhow::Result<
     Ok(files)
 }
 
-/// Jars and zips `target` should have.
 fn jar_entries(tree: &Files, config: &Config, target: &Target) -> anyhow::Result<Vec<PackFile>> {
     let os = current_os();
     let mut entries = vec![];
@@ -139,9 +136,8 @@ fn walk(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Reads everything and prepares uploads; may ask Modrinth.
     Pull,
-    /// Only compares; no network.
+    /// No network: unknown jars get a placeholder that never matches.
     Check,
 }
 
@@ -180,7 +176,6 @@ fn read_prism_indexes(
     Ok(indexes)
 }
 
-/// What the repo would contain for this target's domain, given its current files.
 pub async fn read_target(
     ctx: &mut Ctx,
     config: &Config,
@@ -214,8 +209,6 @@ pub async fn read_target(
     Ok(snapshot)
 }
 
-/// Ordinary files under the managed paths of a Prism game folder: no index
-/// files, and no jars or zips directly in a pack folder.
 fn prism_managed_files(config: &Config, game_dir: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
     let mut found = vec![];
     for root in config.managed_roots() {
@@ -307,7 +300,7 @@ async fn read_prism(
                     .to_string()
             })
             .collect::<HashSet<_>>();
-        // Entries whose file is gone: a renamed jar may be an update of one of them.
+        // A renamed jar may be an update of one of these.
         let mut vanished = base_by_filename
             .iter()
             .filter(|(filename, _)| !present.contains(filename.as_str()))
@@ -321,7 +314,7 @@ async fn read_prism(
             let rel = format!("{dir}/{filename}");
             let sha1 = ctx.hashes.sha1(&path).await?;
 
-            // A committed file stays committed: the same bytes keep the repo's blob.
+            // A committed file stays committed.
             if let Some((base_path, blob, content)) = base_committed.get(&filename) {
                 let (base_sha1, _) = ctx.committed(blob, base_path).await?;
                 let content = if base_sha1 == sha1 {
@@ -425,8 +418,7 @@ async fn read_prism(
     Ok(())
 }
 
-/// Which vanished entry a renamed jar replaces: the only one from the same
-/// Modrinth or CurseForge project, or else the only one with the same index name.
+/// The only vanished entry with the same project, else the same index name.
 fn find_update(vanished: &[(String, IndexFile)], entry: &IndexFile, name: &str) -> Option<usize> {
     let only = |matches: Vec<usize>| (matches.len() == 1).then(|| matches[0]);
     if let Some(project) = entry.project() {
@@ -450,17 +442,13 @@ fn find_update(vanished: &[(String, IndexFile)], entry: &IndexFile, name: &str) 
     )
 }
 
-/// What a jar or zip found in Prism becomes in the repo.
 enum Found {
-    /// An index file that downloads it.
     Index(String, IndexFile),
-    /// The file itself, committed, with Prism's index file (minus its download)
-    /// for side, os and project ids.
+    /// With Prism's index file, minus its download.
     Committed(Option<(String, IndexFile)>),
 }
 
-/// Like `find_update`, for jars without a shared project or name: the only
-/// vanished entry whose jar has the same mod id. Jars it can't read don't match.
+/// Fallback for `find_update`: the only vanished entry with the same mod id.
 async fn find_update_by_mod_id(
     ctx: &mut Ctx,
     vanished: &[(String, IndexFile)],
@@ -552,7 +540,6 @@ async fn make_entry(
     ))
 }
 
-/// The blob for a Prism file that goes into the repo as a committed file.
 fn store_blob(
     ctx: &mut Ctx,
     mode: Mode,
@@ -584,12 +571,7 @@ fn jar_upload(sha1: &str, path: &Path, filename: &str, note: &'static str) -> Up
     }
 }
 
-/// Refuses when uncommitted changes touch files that `action` would leave out.
-pub fn ensure_committed(
-    git: &Git,
-    action: &str,
-    relevant: impl Fn(&str) -> bool,
-) -> anyhow::Result<()> {
+pub fn ensure_committed(git: &Git, relevant: impl Fn(&str) -> bool) -> anyhow::Result<()> {
     let paths = git
         .changed_paths()?
         .into_iter()
@@ -602,11 +584,11 @@ pub fn ensure_committed(
     if paths.len() > 5 {
         list.push_str(&format!(" and {} more", paths.len() - 5));
     }
-    bail!("uncommitted changes to {list} won't be {action}; commit them first or use --force");
+    let verb = if paths.len() == 1 { "has" } else { "have" };
+    bail!("{list} {verb} uncommitted changes, commit them first");
 }
 
-/// Index files describing the jar the repo already has at the same path keep the
-/// repo's bytes, so a mod updated the same way on both sides can't conflict.
+/// The same update on both sides would otherwise conflict over index file bytes.
 fn align_with_head(files: &mut Files, head_tree: &Files) {
     for (path, content) in files.iter_mut() {
         if index_dir_of(path).is_none() {
@@ -630,7 +612,6 @@ fn align_with_head(files: &mut Files, head_tree: &Files) {
     }
 }
 
-/// The commit the target last matched, if this repo has it.
 pub fn effective_base(git: &Git, target: &Target) -> anyhow::Result<Option<String>> {
     Ok(target
         .recorded_base()
@@ -647,16 +628,14 @@ pub async fn pull(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     let config = ctx.config()?;
     let target = Target::resolve(&ctx.repo, name, &config, &ctx.local()?)?;
     if !target.is_prism() {
-        bail!(
-            "{name} is a server; servers only get pushes, so copy changes made there into the repo"
-        );
+        bail!("can't pull from a server");
     }
     let base = if force {
         None
     } else {
         effective_base(&ctx.git, &target)?
     };
-    // Without a base, compare against HEAD so unchanged files merge cleanly.
+    // Without a base, compare against HEAD.
     let base_tree = match &base {
         Some(base) => ctx.git.read_tree(base)?,
         None => Files::new(),
@@ -688,7 +667,7 @@ pub async fn pull(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
 
     let mut changes = diff(&base_domain, &snapshot.files);
     if base.is_none() {
-        // The snapshot merges as unrelated history, so deletions don't apply.
+        // A root snapshot can't delete anything.
         changes.retain(|change| !matches!(change, Change::Deleted(_)));
     }
     if changes.is_empty() {
@@ -731,7 +710,7 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     let config = ctx.config()?;
     let target = Target::resolve(&ctx.repo, name, &config, &ctx.local()?)?;
     if !force {
-        ensure_committed(&ctx.git, "pushed", |path| {
+        ensure_committed(&ctx.git, |path| {
             config.is_pack_file(path) && !target.is_excluded(path)
         })?;
     }
@@ -740,7 +719,7 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     }
     let base = effective_base(&ctx.git, &target)?;
     if base.is_none() && !force {
-        bail!("{name} hasn't been synced with this repo yet, use --force to overwrite it");
+        bail!("{name} was never synced, use --force to overwrite it");
     }
     let base_tree = match &base {
         Some(base) => ctx.git.read_tree(base)?,
@@ -752,7 +731,6 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     if !force && base.is_some() {
         let snapshot =
             read_target(ctx, &config, &target, &base_tree, &base_domain, Mode::Check).await?;
-        // Only changes the commit doesn't already have would be lost.
         let mut changes = diff(&base_domain, &snapshot.files);
         changes
             .retain(|change| snapshot.files.get(change.path()) != head_domain.get(change.path()));
@@ -769,9 +747,7 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
             if changes.len() > 5 {
                 list.push_str(&format!(" and {} more", changes.len() - 5));
             }
-            bail!(
-                "{list} changed on {name} since the last push; copy the changes into the repo or use --force"
-            );
+            bail!("{list} changed on {name} since the last push, use --force to overwrite it");
         }
     }
 
@@ -795,8 +771,7 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
             remove_if_exists(&target.game_dir.join(path))?;
         }
     }
-    // A forced push makes a Prism instance match the commit exactly; servers keep
-    // their own files, which never enter the repo.
+    // Servers keep their own files.
     let exact = force && target.is_prism();
     if exact {
         for (rel, file) in prism_managed_files(&config, &target.game_dir)? {
@@ -872,7 +847,7 @@ async fn apply_jars(
         }
     }
 
-    // Index files a renamed update keeps: its old jar's file name, by index path.
+    // To keep a renamed update disabled.
     let previous_by_index = previous
         .iter()
         .filter_map(|file| {
@@ -930,7 +905,6 @@ async fn apply_jars(
             std::fs::copy(&cached[sha1], dest)?;
             remove_if_exists(other)?;
         }
-        // Prism gets index files only when they can download the file.
         if target.is_prism()
             && let Some((path, entry)) = file.download_index()
         {
@@ -971,7 +945,7 @@ async fn apply_jars(
             if let Some((path, _)) = &file.index {
                 stale.push(target.game_dir.join(path));
             }
-            // A renamed update just wrote its index file under the same name.
+            // A renamed update may have just written this file.
             for path in stale.into_iter().filter(|path| !written.contains(path)) {
                 remove_if_exists(&path)?;
             }
@@ -1012,7 +986,7 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
     let local = ctx.local()?;
     let names = Target::names(&local);
     if names.is_empty() {
-        println!("no targets; add one with `potato target add <name> <folder>`");
+        println!("no targets, add one with `potato target add <name> <folder>`");
         return Ok(());
     }
     let head = ctx.git.head()?;

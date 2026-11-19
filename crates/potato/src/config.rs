@@ -18,15 +18,12 @@ pub const LOCAL_DIR: &str = ".potato";
 pub const LOCAL_FILE: &str = ".potato/local.toml";
 pub const INDEX_DIRS: [&str; 4] = ["mods", "resourcepacks", "shaderpacks", "datapacks"];
 
-/// Where `pull` and `mod add` put files only you host: jars and zips with no
-/// download URL anywhere else.
+/// Where `pull` and `mod add` put files only you host.
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum SelfHosted {
-    /// Committed in the repo's pack folders.
     #[default]
     Repo,
-    /// Uploaded to `[publish] target`, with an index file pointing there.
     Storage,
 }
 
@@ -175,12 +172,11 @@ impl Config {
             .collect()
     }
 
-    /// `mods` always counts; the other pack folders only when `[[paths]]` covers them.
+    /// `mods` always; other pack folders only when `[[paths]]` covers them.
     pub fn handles_index_dir(&self, dir: &str) -> bool {
         dir == "mods" || self.managed_roots().iter().any(|root| under(dir, root))
     }
 
-    /// Whether `path` is synced or built: potato.toml, index files and managed files.
     pub fn is_pack_file(&self, path: &str) -> bool {
         path == CONFIG_FILE
             || crate::index::index_dir_of(path).is_some_and(|dir| self.handles_index_dir(dir))
@@ -191,7 +187,6 @@ impl Config {
             || self.is_managed_file(path)
     }
 
-    /// Whether `path` is a managed non-index file.
     pub fn is_managed_file(&self, path: &str) -> bool {
         if crate::index::index_dir_of(path).is_some() || crate::git::is_committed_binary(path) {
             return false;
@@ -248,7 +243,6 @@ impl LocalConfig {
     }
 }
 
-/// Sets or, with `None`, removes a target in .potato/local.toml, keeping the rest.
 pub fn set_local_target(
     repo: &Path,
     name: &str,
@@ -288,7 +282,6 @@ fn expand_home(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Updates the version fields of potato.toml in place, keeping formatting.
 pub fn set_versions(
     repo: &Path,
     minecraft: &str,
@@ -320,7 +313,7 @@ pub fn cache_dir() -> anyhow::Result<PathBuf> {
     }
     match dirs::cache_dir() {
         Some(dir) => Ok(dir.join("potato")),
-        None => bail!("can't find a cache dir; set POTATO_CACHE_DIR"),
+        None => bail!("can't find a cache dir, set POTATO_CACHE_DIR"),
     }
 }
 
