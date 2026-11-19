@@ -133,9 +133,7 @@ the jar), however they're written:
 - `pull prism` keeps the repo's file if it describes the same jar as Prism's.
   Otherwise it writes a converted copy with sha1 instead of Prism's hash. A jar
   with no URL anywhere (Prism's has none, Modrinth doesn't know it) is
-  committed instead, or with `self_hosted = "storage"` uploaded to
-  `<base_url>/objects/<ab>/<sha1>` and pointed at. When the jar changed, the
-  repo's `side` and `os` are kept.
+  committed instead. When the jar changed, the repo's `side` and `os` are kept.
 - `push prism` writes an index file only if Prism has none for that mod or its
   file describes a different jar.
 
@@ -154,8 +152,8 @@ lists them by blob id and only fetches the bytes (`git cat-file`, or
 `git lfs smudge` when the blob is an LFS pointer) into the sha1 cache when
 `push` or `build` needs them. Their sha1 is cached by blob id. Jars from Prism
 go in with `git hash-object -w --path`, so the repo's LFS rules apply.
-`pull` and `mod add` commit files only you host unless
-`self_hosted = "storage"`; `build` uploads committed files as objects at publish.
+`pull` and `mod add` commit files only you host; `build` uploads committed files
+as objects at publish.
 ### OS variants
 
 Mods with one jar per OS (same mod id) get one index file per variant, each
@@ -216,8 +214,7 @@ then onto servers, so `pull <server>` refuses. A pull reads everything under the
 managed paths, including new and deleted files, with index files compared by
 jar. It also reads `mmc-pack.json` into `potato.toml`. Jars without an index
 file are looked up on Modrinth (`/version_file/{sha1}`); jars with no URL
-anywhere are committed, or uploaded under the storage lock with
-`self_hosted = "storage"`.
+anywhere are committed. `pull` never touches storage.
 
 With no base yet (either kind, or a base this clone doesn't have), files are
 compared against `HEAD`. The snapshot is a root commit, so differences become
@@ -286,8 +283,8 @@ hex characters of the sha1. That's Mojang's asset layout, so
 - `rsync://user@host[:port]/path`: `rsync` and `ssh` subprocesses sharing one
   ssh connection per command (`ControlMaster`). Objects go up in one
   `rsync -r --ignore-existing` run, with `--info=progress2` when rsync is 3.1+.
-  The lock is a long-lived `ssh host flock -n <lock> cat`. Needs GNU `find` and
-  `flock` on the host.
+  The lock is a long-lived `ssh host flock -n <lock> cat`. Needs `flock` on the
+  host.
 - `s3://bucket/prefix`: `object_store`, credentials from `AWS_*` or `~/.aws`.
   Objects are streamed up 16 at a time, in parts when large. The lock is an
   object created with a conditional write.
@@ -295,8 +292,8 @@ hex characters of the sha1. That's Mojang's asset layout, so
 Ctrl-C releases the lock. A crash can leave the S3 lock object behind; delete
 `.potato-lock` from the bucket then.
 
-Every command that writes to storage (`publish`, `unpublish`, `pull prism`,
-`mod add`, `gc`) holds the lock for its whole run.
+Every command that writes to storage (`publish`, `unpublish`, `gc`) holds the
+lock for its whole run.
 
 ### `potato build`
 
@@ -335,9 +332,7 @@ Removes this instance's entry from the instance list.
 
 Keeps objects listed by a current `publish.json` or by a history record newer
 than the grace period (default 2 hours, `--grace-hours`). Deletes history
-records older than that, and the objects only they list. Other unreferenced
-objects (jars uploaded by `pull` or `mod add`, already committed but not yet
-published) are deleted only 7 days after upload. Launchers refresh their
+records older than that and every object nothing else lists. Launchers refresh their
 instance list hourly, so an open launcher never installs a version past the
 grace period.
 
@@ -351,7 +346,7 @@ regenerates `index.html`. CI runs it on `v*` tags.
 
 ## Other commands
 
-- `potato init [--id] [--prism] [--self-hosted repo|storage]`: `potato.toml` template, `.gitignore`,
+- `potato init [--id] [--prism]`: `potato.toml` template, `.gitignore`,
   `.potato/local.toml`, versions from Prism.
 - `potato target add <name> <folder> [--prism|--server]`, `target list`,
   `target remove <name>`. Names are free; `init --prism` names its target

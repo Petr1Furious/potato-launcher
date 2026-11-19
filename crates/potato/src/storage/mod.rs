@@ -9,20 +9,14 @@ use async_trait::async_trait;
 
 pub const LOCK_KEY: &str = ".potato-lock";
 
-pub struct Listed {
-    pub key: String,
-    /// Unix seconds.
-    pub modified: i64,
-}
-
 #[async_trait]
 pub trait Storage: Send + Sync {
     async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>>;
     async fn put(&self, key: &str, data: Vec<u8>) -> anyhow::Result<()>;
     async fn put_path(&self, key: &str, path: &Path, executable: bool) -> anyhow::Result<()>;
-    /// Skips keys that already exist.
+    /// Content-addressed, so an existing key can be skipped or rewritten.
     async fn put_objects(&self, files: &[(String, PathBuf)]) -> anyhow::Result<()>;
-    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<Listed>>;
+    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>>;
     async fn delete(&self, keys: &[String]) -> anyhow::Result<()>;
     async fn lock(&self) -> anyhow::Result<()>;
     async fn unlock(&self) -> anyhow::Result<()>;
@@ -80,7 +74,7 @@ mod tests {
             .unwrap();
         let listed = storage.list("objects/").await.unwrap();
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].key, "objects/ab/abc");
+        assert_eq!(listed[0], "objects/ab/abc");
 
         storage.lock().await.unwrap();
         let second = open(url.as_str()).unwrap();

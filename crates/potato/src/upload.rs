@@ -7,7 +7,6 @@ pub struct Upload {
     pub label: String,
     /// Libraries, assets and Java are summarized by group unless verbose.
     pub group: Option<String>,
-    pub note: Option<&'static str>,
 }
 
 impl Upload {
@@ -17,7 +16,6 @@ impl Upload {
             path,
             label,
             group: None,
-            note: None,
         }
     }
 
@@ -51,8 +49,7 @@ pub fn print<'a>(uploads: impl IntoIterator<Item = &'a Upload>, verbose: bool) {
                 entry.1 += upload.size();
             }
             _ => {
-                let note = upload.note.map(|n| format!(", {n}")).unwrap_or_default();
-                println!("  {} ({}{note})", upload.label, human_size(upload.size()));
+                println!("  {} ({})", upload.label, human_size(upload.size()));
             }
         }
     }

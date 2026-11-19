@@ -215,14 +215,8 @@ impl IndexFile {
         self.doc["update"] = Item::Table(update);
     }
 
-    pub fn convert(&mut self, sha1: &str, fallback_url: &str) {
-        if !self.doc.contains_key("download") {
-            self.doc["download"] = Item::Table(Table::new());
-        }
+    pub fn convert(&mut self, sha1: &str) {
         let download = &mut self.doc["download"];
-        if download.get("url").and_then(Item::as_str).is_none() {
-            download["url"] = value(fallback_url);
-        }
         if let Some(table) = download.as_table_mut() {
             table.remove("mode");
         }
@@ -291,13 +285,11 @@ version = "abc"
     }
 
     #[test]
-    fn converts_curseforge_entry() {
+    fn curseforge_entry_becomes_metadata() {
         let mut file = IndexFile::parse(PRISM_CF).unwrap();
-        assert_eq!(file.sha1(), None);
         assert_eq!(file.url(), None);
-        file.convert("0123456789", "https://x/objects/01/0123456789");
-        assert_eq!(file.sha1(), Some("0123456789"));
-        assert_eq!(file.url(), Some("https://x/objects/01/0123456789"));
+        file.strip_download();
+        assert_eq!(file.sha1(), None);
         assert!(!file.to_bytes().windows(4).any(|w| w == b"mode"));
         assert!(file.doc["update"]["curseforge"].is_table());
     }
@@ -305,7 +297,7 @@ version = "abc"
     #[test]
     fn converts_modrinth_entry_keeping_url() {
         let mut file = IndexFile::parse(PRISM_MR).unwrap();
-        file.convert("ffff", "https://fallback");
+        file.convert("ffff");
         assert_eq!(
             file.url(),
             Some("https://cdn.modrinth.com/data/x/sodium.jar")

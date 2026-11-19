@@ -11,7 +11,7 @@ use object_store::{
 };
 use tokio::io::AsyncWriteExt;
 
-use super::{LOCK_KEY, Listed, Storage, locked_error};
+use super::{LOCK_KEY, Storage, locked_error};
 
 /// `s3://bucket/prefix`, configured by the usual `AWS_*` variables.
 pub struct S3Storage {
@@ -57,14 +57,8 @@ const PARALLEL_UPLOADS: usize = 16;
 
 impl S3Storage {
     async fn put_object(&self, key: &str, source: &Path) -> anyhow::Result<()> {
-        let path = self.path(key);
-        match self.store.head(&path).await {
-            Ok(_) => return Ok(()),
-            Err(object_store::Error::NotFound { .. }) => {}
-            Err(err) => return Err(err.into()),
-        }
         let mut file = tokio::fs::File::open(source).await?;
-        let mut writer = BufWriter::new(self.store.clone(), path);
+        let mut writer = BufWriter::new(self.store.clone(), self.path(key));
         tokio::io::copy(&mut file, &mut writer).await?;
         writer.shutdown().await?;
         Ok(())
@@ -104,18 +98,15 @@ impl Storage for S3Storage {
         Ok(())
     }
 
-    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<Listed>> {
+    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
         let start = self.path(prefix.trim_end_matches('/'));
         let objects: Vec<_> = self.store.list(Some(&start)).try_collect().await?;
         let mut listed = objects
             .into_iter()
-            .map(|meta| Listed {
-                key: self.key(&meta.location),
-                modified: meta.last_modified.timestamp(),
-            })
-            .filter(|listed| listed.key.starts_with(prefix))
+            .map(|meta| self.key(&meta.location))
+            .filter(|key| key.starts_with(prefix))
             .collect::<Vec<_>>();
-        listed.sort_by(|a, b| a.key.cmp(&b.key));
+        listed.sort();
         Ok(listed)
     }
 

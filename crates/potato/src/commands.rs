@@ -4,24 +4,17 @@ use anyhow::{Context, bail};
 
 use crate::{
     build::{mod_id_of, modrinth_mod_id},
-    config::{
-        CONFIG_FILE, INDEX_DIRS, LocalConfig, SelfHosted, TargetType, object_key, set_local_target,
-        set_versions,
-    },
+    config::{CONFIG_FILE, INDEX_DIRS, LocalConfig, TargetType, set_local_target, set_versions},
     ctx::Ctx,
     git::Git,
     index::{IndexFile, Side, index_dir_of, index_name, index_path, normalize_os},
-    modrinth, storage,
+    modrinth,
     target::{PRISM, check_folder, parse_mmc_pack, synced_file},
-    upload::{self, Upload},
 };
 
 const TEMPLATE: &str = r#"id = "{id}"
 minecraft = "1.21.1"
 loader = "vanilla"
-# Files only you host (custom jars, CurseForge files without a URL):
-# "repo" commits them, "storage" uploads them.
-self_hosted = "{self_hosted}"
 
 [publish]
 base_url = "https://example.com/data"
@@ -36,12 +29,7 @@ type = "directory"
 skip_if_dir_exists = true
 "#;
 
-pub fn init(
-    repo: &Path,
-    id: Option<String>,
-    prism: Option<PathBuf>,
-    self_hosted: SelfHosted,
-) -> anyhow::Result<()> {
+pub fn init(repo: &Path, id: Option<String>, prism: Option<PathBuf>) -> anyhow::Result<()> {
     std::fs::create_dir_all(repo)?;
     let config_path = repo.join(CONFIG_FILE);
     if config_path.exists() {
@@ -65,12 +53,7 @@ pub fn init(
     if !git.is_repo() {
         git.init()?;
     }
-    std::fs::write(
-        &config_path,
-        TEMPLATE
-            .replace("{id}", &id)
-            .replace("{self_hosted}", self_hosted.as_str()),
-    )?;
+    std::fs::write(&config_path, TEMPLATE.replace("{id}", &id))?;
     let gitignore = repo.join(".gitignore");
     let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
     if !existing.lines().any(|line| line.trim() == ".potato/") {
@@ -224,7 +207,7 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
         }
         None => match source_url {
             Some(url) => IndexFile::new(&stem, &filename, url.as_str(), &sha1),
-            None if config.self_hosted == SelfHosted::Repo => {
+            None => {
                 let rel = format!("{}/{filename}", options.dir);
                 let dest = ctx.repo.join(&rel);
                 if dest.exists() {
@@ -237,26 +220,6 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
                     return Ok(());
                 }
                 IndexFile::metadata(&stem, &filename)
-            }
-            None => {
-                let storage = storage::open(&config.publish.target)?;
-                let upload = Upload {
-                    note: Some("not on Modrinth"),
-                    ..Upload::new(
-                        object_key(&sha1),
-                        path.clone(),
-                        format!("{}/{filename}", options.dir),
-                    )
-                };
-                upload::print([&upload], ctx.verbose);
-                let files = upload::pairs([&upload]);
-                storage::locked(storage.as_ref(), storage.put_objects(&files)).await?;
-                IndexFile::new(
-                    &stem,
-                    &filename,
-                    config.publish.object_url(&sha1).as_str(),
-                    &sha1,
-                )
             }
         },
     };

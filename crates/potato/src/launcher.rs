@@ -166,13 +166,13 @@ pub async fn publish_launcher(
 
     let mut present = vec![];
     let mut versions = BTreeMap::new();
-    for listed in storage.list("launcher/").await? {
-        let mut parts = listed.key.splitn(3, '/').skip(1);
+    for key in storage.list("launcher/").await? {
+        let mut parts = key.splitn(3, '/').skip(1);
         let (Some(os), Some(file_name)) = (parts.next(), parts.next()) else {
             continue;
         };
         if file_name == "version.txt" {
-            if let Some(content) = storage.get(&listed.key).await? {
+            if let Some(content) = storage.get(&key).await? {
                 versions.insert(
                     os.to_string(),
                     String::from_utf8_lossy(&content).trim().to_string(),

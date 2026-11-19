@@ -64,7 +64,7 @@ Any other static web server works too, but without the URL mapping, older launch
 | Target | Example | Notes |
 |---|---|---|
 | Local folder | `file:///srv/potato/site/data` | For publishing on the host itself |
-| SSH | `rsync://user@host[:port]/srv/potato/site/data` | Needs `rsync` and `ssh` locally, and `flock` and GNU `find` on the host |
+| SSH | `rsync://user@host[:port]/srv/potato/site/data` | Needs `rsync` and `ssh` locally, and `flock` on the host |
 | S3 | `s3://bucket/prefix/data` | S3, R2 or any S3-compatible storage |
 
 Credentials come from the usual places: your SSH config and agent for `rsync://`, and `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` and `AWS_ENDPOINT` (or `~/.aws`) for `s3://`. With S3, serve the bucket through any HTTPS front, like a public bucket URL or a CDN.
@@ -74,7 +74,3 @@ Every command that writes to storage takes a lock, so two people publishing at o
 ::: warning
 If potato crashes while publishing to S3, the lock may become stuck. Delete `.potato-lock` from the bucket to release it.
 :::
-
-## Backups
-
-You can rebuild the whole site by publishing each instance repo again, since jars only you host are committed in the repos. The exception is repos with `self_hosted = "storage"`: their CurseForge and custom files only exist in `data/objects/` and in the Prism instance they came from. Back up `data/objects/` if you use it.

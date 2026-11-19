@@ -216,8 +216,7 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
         let dir = entry.file.dir;
         let filename = entry.file.filename.as_str();
         let cached_path = &entry.cached;
-        // An uploaded jar may have been removed by `gc` before its first publish.
-        if entry.url == config.publish.object_url(&entry.sha1) {
+        if let Source::Committed { .. } = entry.file.source {
             let key = object_key(&entry.sha1);
             let label = format!("{dir}/{filename}");
             uploads.insert(key.clone(), Upload::new(key, cached_path.clone(), label));

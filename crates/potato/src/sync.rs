@@ -7,8 +7,7 @@ use anyhow::{Context, bail};
 
 use crate::{
     build::mod_id_of,
-    config::SelfHosted,
-    config::{Config, INDEX_DIRS, LOCAL_DIR, object_key, set_versions},
+    config::{Config, INDEX_DIRS, LOCAL_DIR, set_versions},
     ctx::Ctx,
     git::{Files, Git, SNAPSHOT_PREFIX, as_blob_ref, blob_ref, is_committed_binary},
     index::{
@@ -17,9 +16,7 @@ use crate::{
     },
     modrinth,
     pack::{PackFile, Source, pack_files},
-    storage,
     target::Target,
-    upload::{self, Upload},
 };
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -141,11 +138,6 @@ pub enum Mode {
     Check,
 }
 
-pub struct Snapshot {
-    pub files: Files,
-    pub uploads: Vec<Upload>,
-}
-
 fn file_stem(filename: &str) -> &str {
     let name = filename.strip_suffix(DISABLED_SUFFIX).unwrap_or(filename);
     name.rsplit_once('.').map_or(name, |(stem, _)| stem)
@@ -183,11 +175,8 @@ pub async fn read_target(
     base_tree: &Files,
     base_domain: &Files,
     mode: Mode,
-) -> anyhow::Result<Snapshot> {
-    let mut snapshot = Snapshot {
-        files: Files::new(),
-        uploads: vec![],
-    };
+) -> anyhow::Result<Files> {
+    let mut snapshot = Files::new();
     if target.is_prism() {
         Box::pin(read_prism(
             ctx,
@@ -202,7 +191,7 @@ pub async fn read_target(
     } else {
         for path in base_domain.keys() {
             if let Ok(content) = std::fs::read(target.game_dir.join(path)) {
-                snapshot.files.insert(path.clone(), content);
+                snapshot.insert(path.clone(), content);
             }
         }
     }
@@ -248,11 +237,11 @@ async fn read_prism(
     base_tree: &Files,
     base_domain: &Files,
     mode: Mode,
-    snapshot: &mut Snapshot,
+    snapshot: &mut Files,
 ) -> anyhow::Result<()> {
     let game_dir = &target.game_dir;
     for (rel, file) in prism_managed_files(config, game_dir)? {
-        snapshot.files.insert(rel, std::fs::read(&file)?);
+        snapshot.insert(rel, std::fs::read(&file)?);
     }
 
     for dir in INDEX_DIRS {
@@ -322,11 +311,9 @@ async fn read_prism(
                 } else {
                     store_blob(ctx, mode, &rel, &path, &sha1)?
                 };
-                snapshot.files.insert(base_path.clone(), content);
+                snapshot.insert(base_path.clone(), content);
                 if let Some((index_path, _, index_content)) = base_by_filename.get(&filename) {
-                    snapshot
-                        .files
-                        .insert(index_path.clone(), index_content.clone());
+                    snapshot.insert(index_path.clone(), index_content.clone());
                 }
                 continue;
             }
@@ -334,30 +321,23 @@ async fn read_prism(
             if let Some((base_path, base_entry, base_content)) = base_by_filename.get(&filename)
                 && base_entry.sha1() == Some(sha1.as_str())
             {
-                snapshot
-                    .files
-                    .insert(base_path.clone(), base_content.clone());
+                snapshot.insert(base_path.clone(), base_content.clone());
                 continue;
             }
 
             let found = Box::pin(make_entry(
                 ctx,
-                config,
                 prism_indexes.get(&filename),
                 &filename,
                 &sha1,
-                &path,
                 mode,
-                snapshot,
             ))
             .await?;
             if let Some((base_path, base_entry, _)) = base_by_filename.get(&filename) {
                 let mut entry = match found {
                     Found::Index(_, entry) => entry,
                     Found::Committed(index) => {
-                        snapshot
-                            .files
-                            .insert(rel.clone(), store_blob(ctx, mode, &rel, &path, &sha1)?);
+                        snapshot.insert(rel.clone(), store_blob(ctx, mode, &rel, &path, &sha1)?);
                         index.map_or_else(
                             || IndexFile::metadata(file_stem(&filename), &filename),
                             |(_, index)| index,
@@ -365,16 +345,14 @@ async fn read_prism(
                     }
                 };
                 entry.carry_overrides(base_entry);
-                snapshot.files.insert(base_path.clone(), entry.to_bytes());
+                snapshot.insert(base_path.clone(), entry.to_bytes());
                 continue;
             }
 
             let (name, entry, write_new) = match found {
                 Found::Index(name, entry) => (name, entry, true),
                 Found::Committed(index) => {
-                    snapshot
-                        .files
-                        .insert(rel.clone(), store_blob(ctx, mode, &rel, &path, &sha1)?);
+                    snapshot.insert(rel.clone(), store_blob(ctx, mode, &rel, &path, &sha1)?);
                     match index {
                         Some((name, index)) => (name, index, true),
                         None => {
@@ -402,17 +380,17 @@ async fn read_prism(
                 let (base_path, base_entry) = vanished.remove(position);
                 let mut entry = entry;
                 entry.carry_overrides(&base_entry);
-                snapshot.files.insert(base_path, entry.to_bytes());
+                snapshot.insert(base_path, entry.to_bytes());
                 continue;
             }
             if !write_new {
                 continue;
             }
             let mut index = index_path(dir, &name);
-            if base_tree.contains_key(&index) || snapshot.files.contains_key(&index) {
+            if base_tree.contains_key(&index) || snapshot.contains_key(&index) {
                 index = index_path(dir, &format!("{name}-{}", current_os()));
             }
-            snapshot.files.insert(index, entry.to_bytes());
+            snapshot.insert(index, entry.to_bytes());
         }
     }
     Ok(())
@@ -489,31 +467,20 @@ async fn find_update_by_mod_id(
     (matches.len() == 1).then(|| matches[0])
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn make_entry(
     ctx: &Ctx,
-    config: &Config,
     prism_index: Option<&(String, IndexFile)>,
     filename: &str,
     sha1: &str,
-    path: &Path,
     mode: Mode,
-    snapshot: &mut Snapshot,
 ) -> anyhow::Result<Found> {
-    let to_storage = config.self_hosted == SelfHosted::Storage;
-    let object_url = config.publish.object_url(sha1).to_string();
     if let Some((name, index)) = prism_index {
         let mut entry = index.clone();
         if entry.url().is_none() {
-            if !to_storage {
-                entry.strip_download();
-                return Ok(Found::Committed(Some((name.clone(), entry))));
-            }
-            snapshot
-                .uploads
-                .push(jar_upload(sha1, path, filename, "no download URL"));
+            entry.strip_download();
+            return Ok(Found::Committed(Some((name.clone(), entry))));
         }
-        entry.convert(sha1, &object_url);
+        entry.convert(sha1);
         return Ok(Found::Index(name.clone(), entry));
     }
     let name = file_stem(filename).to_string();
@@ -528,16 +495,7 @@ async fn make_entry(
         entry.set_modrinth(&found.project_id, &found.version_id);
         return Ok(Found::Index(name, entry));
     }
-    if !to_storage {
-        return Ok(Found::Committed(None));
-    }
-    snapshot
-        .uploads
-        .push(jar_upload(sha1, path, filename, "not on Modrinth"));
-    Ok(Found::Index(
-        name.clone(),
-        IndexFile::new(&name, filename, &object_url, sha1),
-    ))
+    Ok(Found::Committed(None))
 }
 
 fn store_blob(
@@ -553,22 +511,6 @@ fn store_blob(
     let blob = ctx.git.store_file(rel, path)?;
     ctx.hashes.set_blob_sha1(&blob, sha1);
     Ok(blob_ref(&blob))
-}
-
-fn jar_upload(sha1: &str, path: &Path, filename: &str, note: &'static str) -> Upload {
-    let dir = path
-        .parent()
-        .and_then(|parent| parent.file_name())
-        .and_then(|name| name.to_str())
-        .unwrap_or("mods");
-    Upload {
-        note: Some(note),
-        ..Upload::new(
-            object_key(sha1),
-            path.to_path_buf(),
-            format!("{dir}/{filename}"),
-        )
-    }
 }
 
 pub fn ensure_committed(git: &Git, relevant: impl Fn(&str) -> bool) -> anyhow::Result<()> {
@@ -656,16 +598,9 @@ pub async fn pull(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     .await?;
     ctx.hashes.save()?;
     let head_tree = ctx.git.read_tree(&ctx.git.head()?)?;
-    align_with_head(&mut snapshot.files, &head_tree);
+    align_with_head(&mut snapshot, &head_tree);
 
-    if !snapshot.uploads.is_empty() {
-        let storage = storage::open(&config.publish.target)?;
-        upload::print(&snapshot.uploads, ctx.verbose);
-        let files = upload::pairs(&snapshot.uploads);
-        storage::locked(storage.as_ref(), storage.put_objects(&files)).await?;
-    }
-
-    let mut changes = diff(&base_domain, &snapshot.files);
+    let mut changes = diff(&base_domain, &snapshot);
     if base.is_none() {
         // A root snapshot can't delete anything.
         changes.retain(|change| !matches!(change, Change::Deleted(_)));
@@ -679,7 +614,7 @@ pub async fn pull(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
                 tree.remove(path);
             }
         }
-        tree.extend(snapshot.files);
+        tree.extend(snapshot);
         let commit = ctx.git.write_commit(
             base.as_deref(),
             &tree,
@@ -731,9 +666,8 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     if !force && base.is_some() {
         let snapshot =
             read_target(ctx, &config, &target, &base_tree, &base_domain, Mode::Check).await?;
-        let mut changes = diff(&base_domain, &snapshot.files);
-        changes
-            .retain(|change| snapshot.files.get(change.path()) != head_domain.get(change.path()));
+        let mut changes = diff(&base_domain, &snapshot);
+        changes.retain(|change| snapshot.get(change.path()) != head_domain.get(change.path()));
         if !changes.is_empty() {
             if target.is_prism() {
                 bail!("{name} changed since the last sync, run `potato pull {name}` first");
@@ -1008,7 +942,7 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
         let base_domain = domain(&base_tree, &config, &target)?;
         let snapshot =
             read_target(ctx, &config, &target, &base_tree, &base_domain, Mode::Check).await?;
-        let to_pull = diff(&base_domain, &snapshot.files);
+        let to_pull = diff(&base_domain, &snapshot);
         let to_push = diff(&base_domain, &domain(&head_tree, &config, &target)?);
         if to_pull.is_empty() && to_push.is_empty() {
             println!("{name}: in sync");

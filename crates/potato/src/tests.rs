@@ -700,28 +700,6 @@ async fn committed_jar_and_download_url_conflict() {
 }
 
 #[tokio::test]
-async fn storage_mode_uploads_jars() {
-    let mut s = Setup::new();
-    let config = read(&s.repo.join("potato.toml"));
-    write(
-        &s.repo.join("potato.toml"),
-        &format!("self_hosted = \"storage\"\n{config}"),
-    );
-    s.commit("storage mode");
-    s.prism_mod("jei", "jei.jar", b"jei", Some(CURSEFORGE_INDEX))
-        .await;
-    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
-    let jei_sha1 = sha1(b"jei");
-    let object = format!("objects/{}/{jei_sha1}", &jei_sha1[..2]);
-    assert_eq!(
-        s.repo_index("jei").url().unwrap(),
-        format!("https://mc.example.com/data/{object}")
-    );
-    assert!(s.storage.join(object).exists());
-    assert!(!s.repo.join("mods/jei.jar").exists());
-}
-
-#[tokio::test]
 async fn committed_jars_work_with_git_lfs() {
     let has_lfs = Command::new("git")
         .args(["lfs", "version"])

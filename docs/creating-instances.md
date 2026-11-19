@@ -72,7 +72,6 @@ loader_version = "21.1.77" # updated by `potato pull prism`
 default_xmx = "4G"
 auth_backend = { type = "ely_by" }
 order = 10                 # position in the launcher's list (unset = last)
-self_hosted = "repo"       # repo | storage
 
 [publish]
 base_url = "https://mc.example.com/data"
@@ -114,7 +113,6 @@ exclude = ["config/somemod.toml"]
 - **default_xmx**: Default `-Xmx`, for example `4G`
 - **auth_backend**: Auth provider for this instance. Omit it to allow any.
 - **order**: Sort key in the instance list. Ties and unset values are sorted by id.
-- **self_hosted**: Where `pull` and `mod add` put files only you host: jars and pack zips without a download URL anywhere else, like CurseForge files or your own builds. `repo` commits them in their folder, so only publishing needs access to your host. `storage` uploads them to your host and writes an index file pointing there, which keeps big packs out of git. You can also pick it with `potato init --self-hosted storage`. Default: `repo`
 
 ### `[publish]`
 
@@ -209,7 +207,7 @@ git add .gitattributes
 ```
 
 ::: warning
-GitHub's free LFS quota is small. For packs with many CurseForge jars, set `self_hosted = "storage"` instead. Jars you already committed keep working, only `pull` and `mod add` change.
+GitHub's free LFS quota is small, so packs with many CurseForge jars may need a different LFS host.
 :::
 
 ### OS-specific jars
@@ -241,7 +239,7 @@ Whether a mod is optional, and whether it's on by default, is set only by `[[cli
 potato mod add <file or URL> [--side server] [--os linux] [--dir resourcepacks] [--name NAME]
 ```
 
-The file is looked up on Modrinth by its hash. If Modrinth doesn't have it, a URL source keeps its URL, and a local file is committed in its folder (or uploaded with `self_hosted = "storage"`). For a committed file, an index file is only written if you pass `--side` or `--os`.
+The file is looked up on Modrinth by its hash. If Modrinth doesn't have it, a URL source keeps its URL, and a local file is committed in its folder. For a committed file, an index file is only written if you pass `--side` or `--os`.
 
 ## Syncing with Prism
 
@@ -310,8 +308,6 @@ To remove the instance from the instance list, run `potato unpublish`.
 
 The files of a replaced or unpublished version are kept for 2 hours, for launchers that are still on it; use `--grace-hours` to change it.
 
-With `self_hosted = "storage"`, files that `pull` or `mod add` uploaded and no publish has used yet are kept for 7 days, since collaborators may already be downloading them.
-
 ## Collaborating
 
 Everyone works on the same repo through git.
@@ -336,7 +332,7 @@ git commit && git push
 potato publish
 ```
 
-Publishing needs write access to the host (SSH or S3 keys). With the default `self_hosted = "repo"`, everything else works without it.
+Publishing needs write access to the host (SSH or S3 keys).
 
 ## Cache
 

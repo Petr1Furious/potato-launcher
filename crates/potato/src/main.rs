@@ -23,7 +23,7 @@ mod tests;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use config::{SelfHosted, TargetType};
+use config::TargetType;
 use log::LevelFilter;
 
 pub fn http_client() -> reqwest::Client {
@@ -55,9 +55,6 @@ enum Command {
         /// Prism instance folder to sync with.
         #[arg(long)]
         prism: Option<PathBuf>,
-        /// Where to keep files only you host.
-        #[arg(long, value_enum, default_value_t = SelfHosted::Repo)]
-        self_hosted: SelfHosted,
     },
     /// Bring changes from a Prism target into the repo.
     Pull {
@@ -182,13 +179,8 @@ enum CacheAction {
 }
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    if let Command::Init {
-        id,
-        prism,
-        self_hosted,
-    } = cli.command
-    {
-        return commands::init(&cli.repo, id, prism, self_hosted);
+    if let Command::Init { id, prism } = cli.command {
+        return commands::init(&cli.repo, id, prism);
     }
     if let Command::Target { action } = &cli.command {
         return match action {

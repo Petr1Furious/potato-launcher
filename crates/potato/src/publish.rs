@@ -14,8 +14,6 @@ use crate::{
 
 pub const MANIFEST_KEY: &str = "instance_manifest.json";
 pub const DEFAULT_GRACE_HOURS: u64 = 2;
-/// Collaborators may already use unpublished uploads.
-const UNPUBLISHED_GRACE_DAYS: i64 = 7;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PublishRecord {
@@ -134,7 +132,6 @@ pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
             .list("objects/")
             .await?
             .into_iter()
-            .map(|listed| listed.key)
             .collect::<HashSet<_>>();
         let uploads = output
             .uploads
@@ -227,8 +224,6 @@ pub async fn collect_garbage(
     grace_hours: u64,
 ) -> anyhow::Result<(usize, usize)> {
     let cutoff = now() - (grace_hours * 60 * 60) as i64;
-    let upload_cutoff = now() - UNPUBLISHED_GRACE_DAYS * 24 * 60 * 60;
-    let mut expired = BTreeSet::new();
     let mut keep = BTreeSet::new();
     for entry in read_manifest(storage).await?.instances {
         if let Some(record) = read_record(storage, &entry.id).await? {
@@ -236,35 +231,26 @@ pub async fn collect_garbage(
         }
     }
     let mut old_history = vec![];
-    for listed in storage.list("history/").await? {
-        let replaced_at = listed
-            .key
+    for key in storage.list("history/").await? {
+        let replaced_at = key
             .rsplit('/')
             .next()
             .and_then(|name| name.strip_suffix(".json"))
             .and_then(|time| time.parse::<i64>().ok())
-            .unwrap_or(listed.modified);
-        let record = match storage.get(&listed.key).await? {
-            Some(content) => serde_json::from_slice::<PublishRecord>(&content).ok(),
-            None => None,
-        };
-        let objects = record.map(|record| record.objects).unwrap_or_default();
+            .unwrap_or(0);
         if replaced_at < cutoff {
-            expired.extend(objects);
-            old_history.push(listed.key);
-        } else {
-            keep.extend(objects);
+            old_history.push(key);
+        } else if let Some(content) = storage.get(&key).await?
+            && let Ok(record) = serde_json::from_slice::<PublishRecord>(&content)
+        {
+            keep.extend(record.objects);
         }
     }
     let garbage = storage
         .list("objects/")
         .await?
         .into_iter()
-        .filter(|listed| {
-            !keep.contains(&listed.key)
-                && (expired.contains(&listed.key) || listed.modified < upload_cutoff)
-        })
-        .map(|listed| listed.key)
+        .filter(|key| !keep.contains(key))
         .collect::<Vec<_>>();
     storage.delete(&garbage).await?;
     storage.delete(&old_history).await?;
@@ -317,26 +303,15 @@ mod tests {
         let storage =
             storage::open(url::Url::from_directory_path(dir.path()).unwrap().as_str()).unwrap();
         let storage = storage.as_ref();
-        let old = |key: &str| {
-            let path = dir.path().join(key);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, b"x").unwrap();
-            let time = std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86400);
-            std::fs::File::options()
-                .write(true)
-                .open(&path)
-                .unwrap()
-                .set_modified(time)
-                .unwrap();
-        };
-        old("objects/aa/current");
-        old("objects/bb/recent-history");
-        old("objects/cc/old-history");
-        old("objects/dd/unreferenced");
-        std::fs::create_dir_all(dir.path().join("objects/ee")).unwrap();
-        std::fs::write(dir.path().join("objects/ee/fresh"), b"x").unwrap();
-        std::fs::create_dir_all(dir.path().join("objects/ff")).unwrap();
-        std::fs::write(dir.path().join("objects/ff/replaced-hours-ago"), b"x").unwrap();
+        for key in [
+            "objects/aa/current",
+            "objects/bb/recent-history",
+            "objects/cc/old-history",
+            "objects/dd/unreferenced",
+            "objects/ff/replaced-hours-ago",
+        ] {
+            storage.put(key, b"x".to_vec()).await.unwrap();
+        }
 
         let manifest = serde_json::json!({"instances": [{
             "id": "a", "url": "https://x/instances/a/meta.json", "sha1": "0", "required_java_version": "21"
@@ -379,20 +354,10 @@ mod tests {
 
         let (objects, history) = collect_garbage(storage, DEFAULT_GRACE_HOURS).await.unwrap();
         assert_eq!((objects, history), (3, 2));
-        let left = storage
-            .list("objects/")
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|l| l.key)
-            .collect::<Vec<_>>();
+        let left = storage.list("objects/").await.unwrap();
         assert_eq!(
             left,
-            vec![
-                "objects/aa/current",
-                "objects/bb/recent-history",
-                "objects/ee/fresh"
-            ]
+            vec!["objects/aa/current", "objects/bb/recent-history"]
         );
     }
 }

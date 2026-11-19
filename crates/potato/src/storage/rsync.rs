@@ -11,7 +11,7 @@ use tokio::{
     sync::Mutex,
 };
 
-use super::{LOCK_KEY, Listed, Storage, locked_error};
+use super::{LOCK_KEY, Storage, locked_error};
 
 const MISSING_EXIT: i32 = 44;
 
@@ -229,31 +229,20 @@ impl Storage for RsyncStorage {
         Ok(())
     }
 
-    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<Listed>> {
+    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
         let start = prefix.trim_end_matches('/');
         let script = format!(
-            "cd {} 2>/dev/null || exit 0; [ -e {start} ] || exit 0; find {start} -type f -printf '%T@ %p\\n'",
+            "cd {} 2>/dev/null || exit 0; [ -e {start} ] || exit 0; find {start} -type f",
             quote(&self.root),
             start = quote(if start.is_empty() { "." } else { start }),
         );
         let output = String::from_utf8(self.checked(&script, None).await?)?;
-        let mut listed = vec![];
-        for line in output.lines() {
-            let Some((time, key)) = line.split_once(' ') else {
-                continue;
-            };
-            let key = key.strip_prefix("./").unwrap_or(key).to_string();
-            if !key.starts_with(prefix) {
-                continue;
-            }
-            let modified = time
-                .split('.')
-                .next()
-                .and_then(|t| t.parse().ok())
-                .unwrap_or_default();
-            listed.push(Listed { key, modified });
-        }
-        listed.sort_by(|a, b| a.key.cmp(&b.key));
+        let mut listed = output
+            .lines()
+            .map(|line| line.strip_prefix("./").unwrap_or(line).to_string())
+            .filter(|key| key.starts_with(prefix))
+            .collect::<Vec<_>>();
+        listed.sort();
         Ok(listed)
     }
 

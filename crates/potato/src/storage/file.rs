@@ -1,13 +1,12 @@
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
-    time::UNIX_EPOCH,
 };
 
 use anyhow::Context;
 use async_trait::async_trait;
 
-use super::{LOCK_KEY, Listed, Storage, locked_error};
+use super::{LOCK_KEY, Storage, locked_error};
 
 pub struct FileStorage {
     root: PathBuf,
@@ -84,7 +83,7 @@ impl Storage for FileStorage {
         Ok(())
     }
 
-    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<Listed>> {
+    async fn list(&self, prefix: &str) -> anyhow::Result<Vec<String>> {
         let mut listed = vec![];
         let mut stack = vec![self.root.join(prefix.trim_end_matches('/'))];
         while let Some(dir) = stack.pop() {
@@ -98,12 +97,6 @@ impl Storage for FileStorage {
                 if file_type.is_dir() {
                     stack.push(path);
                 } else if file_type.is_file() {
-                    let modified = entry
-                        .metadata()?
-                        .modified()?
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs() as i64)
-                        .unwrap_or_default();
                     let key = path
                         .strip_prefix(&self.root)?
                         .components()
@@ -111,12 +104,12 @@ impl Storage for FileStorage {
                         .collect::<Vec<_>>()
                         .join("/");
                     if key.starts_with(prefix) {
-                        listed.push(Listed { key, modified });
+                        listed.push(key);
                     }
                 }
             }
         }
-        listed.sort_by(|a, b| a.key.cmp(&b.key));
+        listed.sort();
         Ok(listed)
     }
 

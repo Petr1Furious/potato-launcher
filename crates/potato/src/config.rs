@@ -18,24 +18,6 @@ pub const LOCAL_DIR: &str = ".potato";
 pub const LOCAL_FILE: &str = ".potato/local.toml";
 pub const INDEX_DIRS: [&str; 4] = ["mods", "resourcepacks", "shaderpacks", "datapacks"];
 
-/// Where `pull` and `mod add` put files only you host.
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default, clap::ValueEnum)]
-#[serde(rename_all = "lowercase")]
-pub enum SelfHosted {
-    #[default]
-    Repo,
-    Storage,
-}
-
-impl SelfHosted {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            SelfHosted::Repo => "repo",
-            SelfHosted::Storage => "storage",
-        }
-    }
-}
-
 #[derive(Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LoaderName {
@@ -137,8 +119,6 @@ pub struct Config {
     pub publish: PublishConfig,
     #[serde(default)]
     pub client: ClientConfig,
-    #[serde(default)]
-    pub self_hosted: SelfHosted,
     #[serde(default)]
     pub paths: Vec<ContentRule>,
     #[serde(default)]
