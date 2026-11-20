@@ -72,5 +72,6 @@ rustPlatform.buildRustPackage {
     description = env.LAUNCHER_DESCRIPTION or null;
     license = lib.licenses.mit;
     mainProgram = "launcher";
+    platforms = lib.platforms.linux;
   };
 }
