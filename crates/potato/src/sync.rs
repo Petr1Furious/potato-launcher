@@ -531,39 +531,261 @@ pub fn ensure_committed(git: &Git, relevant: impl Fn(&str) -> bool) -> anyhow::R
 }
 
 /// The same update on both sides would otherwise conflict over index file bytes.
+/// Index files that describe the same jar are the same version.
+fn same_jar(path: &str, a: &[u8], b: &[u8]) -> bool {
+    if index_dir_of(path).is_none() {
+        return false;
+    }
+    let (Ok(a), Ok(b)) = (IndexFile::parse_bytes(a), IndexFile::parse_bytes(b)) else {
+        return false;
+    };
+    a.sha1().is_some() && a.sha1() == b.sha1() && a.filename() == b.filename()
+}
+
 fn align_with_head(files: &mut Files, head_tree: &Files) {
     for (path, content) in files.iter_mut() {
-        if index_dir_of(path).is_none() {
-            continue;
-        }
-        let Some(head) = head_tree.get(path).filter(|head| *head != content) else {
-            continue;
-        };
-        let (Ok(ours), Ok(theirs)) = (
-            IndexFile::parse_bytes(head),
-            IndexFile::parse_bytes(content),
-        ) else {
-            continue;
-        };
-        if ours.sha1().is_some()
-            && ours.sha1() == theirs.sha1()
-            && ours.filename() == theirs.filename()
+        if let Some(head) = head_tree.get(path)
+            && same_jar(path, head, content)
         {
             *content = head.clone();
         }
     }
 }
 
-pub fn effective_base(git: &Git, target: &Target) -> anyhow::Result<Option<String>> {
-    Ok(target
-        .recorded_base()
-        .filter(|commit| git.commit_exists(commit)))
+struct Agreed {
+    files: Files,
+    /// Why a path the target still has as agreed isn't a change there.
+    notes: HashMap<String, &'static str>,
 }
 
-fn print_changes(changes: &[Change]) {
-    for change in changes {
-        println!("  {change}");
+/// Each path as Prism and the repo last agreed on it: its version in the newest
+/// pull that was then committed, else the record's. Without a record, a version
+/// anywhere in the history counts, since an instance never synced is an old copy.
+fn agreed(
+    git: &Git,
+    base: Option<&str>,
+    base_domain: &Files,
+    pulled: &[(String, String)],
+    target_files: &Files,
+) -> anyhow::Result<Agreed> {
+    let mut agreed = Agreed {
+        files: base_domain.clone(),
+        notes: HashMap::new(),
+    };
+    let paths = diff(base_domain, target_files)
+        .iter()
+        .map(|change| change.path().to_string())
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Ok(agreed);
     }
+    let history = match base {
+        Some(_) => HashMap::new(),
+        None => git.path_versions("HEAD", &paths)?,
+    };
+    let mut snapshots = vec![];
+    for (snapshot, head) in pulled.iter().rev() {
+        if git.commit_exists(snapshot) && git.commit_exists(head) {
+            snapshots.push((
+                git.path_blobs(snapshot, &paths)?,
+                git.path_versions(&format!("{head}..HEAD"), &paths)?,
+            ));
+        }
+    }
+    let present = paths
+        .iter()
+        .filter_map(|path| target_files.get(path).map(Vec::as_slice))
+        .collect::<Vec<_>>();
+    let mut ids = git.blob_ids(&present)?.into_iter();
+    for path in paths {
+        let id = target_files
+            .contains_key(&path)
+            .then(|| ids.next())
+            .flatten();
+        let in_history = history.get(&path).map_or(&[][..], Vec::as_slice);
+        let mut version = None;
+        let mut note = "already pulled";
+        for (blobs, since_pull) in &snapshots {
+            let pulled_id = blobs.get(&path).cloned();
+            let since_pull = since_pull.get(&path).map_or(&[][..], Vec::as_slice);
+            let content = match &pulled_id {
+                Some(id) if is_committed_binary(&path) => Some(blob_ref(id)),
+                Some(id) => git.read_blobs(std::slice::from_ref(id))?.pop(),
+                None => None,
+            };
+            if has_version(git, &path, content.as_deref(), &pulled_id, since_pull)? {
+                version = Some(content);
+                break;
+            }
+        }
+        let target = target_files.get(&path);
+        if version.is_none()
+            && base.is_none()
+            && has_version(git, &path, target.map(Vec::as_slice), &id, in_history)?
+        {
+            version = Some(target.cloned());
+            note = "older version";
+        }
+        let Some(version) = version else {
+            continue;
+        };
+        if version.as_ref() == target {
+            agreed.notes.insert(path.clone(), note);
+        }
+        match version {
+            Some(content) => agreed.files.insert(path, content),
+            None => agreed.files.remove(&path),
+        };
+    }
+    Ok(agreed)
+}
+
+/// Whether `versions` has this version.
+fn has_version(
+    git: &Git,
+    path: &str,
+    content: Option<&[u8]>,
+    id: &Option<String>,
+    versions: &[Option<String>],
+) -> anyhow::Result<bool> {
+    if versions.contains(id) {
+        return Ok(true);
+    }
+    let Some(content) = content.filter(|_| index_dir_of(path).is_some()) else {
+        return Ok(false);
+    };
+    let old = git.read_blobs(&versions.iter().flatten().cloned().collect::<Vec<_>>())?;
+    Ok(old.iter().any(|old| same_jar(path, old, content)))
+}
+
+/// The record, moved first to the newest commit that has exactly the files of
+/// a pull since then (that pull was committed).
+fn current_base(git: &Git, config: &Config, target: &Target) -> anyhow::Result<Option<String>> {
+    let base = target
+        .recorded_base()
+        .filter(|commit| git.commit_exists(commit));
+    let mut domains: HashMap<String, Files> = HashMap::new();
+    for (snapshot, head) in target.pulled().iter().rev() {
+        if !git.commit_exists(snapshot) || !git.commit_exists(head) {
+            continue;
+        }
+        let pulled = domain(&git.read_tree(snapshot)?, config, target)?;
+        for commit in git.commits_since(head)? {
+            if !domains.contains_key(&commit) {
+                let files = domain(&git.read_tree(&commit)?, config, target)?;
+                domains.insert(commit.clone(), files);
+            }
+            if domains[&commit] == pulled {
+                set_record(git, target, &commit)?;
+                return Ok(Some(commit));
+            }
+        }
+    }
+    Ok(base)
+}
+
+struct State {
+    base: Option<String>,
+    base_tree: Files,
+    base_domain: Files,
+    head_tree: Files,
+    head_domain: Files,
+    snapshot: Files,
+    agreed: Agreed,
+}
+
+impl State {
+    /// Changes in the target since it last agreed with the repo, that the commit
+    /// doesn't already have.
+    fn changed_there(&self) -> Vec<Change> {
+        let mut changes = diff(&self.agreed.files, &self.snapshot);
+        changes.retain(|change| {
+            self.snapshot.get(change.path()) != self.head_domain.get(change.path())
+        });
+        changes
+    }
+
+    /// Paths the target has that differ from the commit, but aren't changes there.
+    fn skipped(&self) -> Vec<(&str, &'static str)> {
+        self.agreed
+            .notes
+            .iter()
+            .filter(|(path, _)| self.snapshot.get(*path) != self.head_domain.get(*path))
+            .map(|(path, note)| (path.as_str(), *note))
+            .collect::<BTreeMap<_, _>>()
+            .into_iter()
+            .collect()
+    }
+}
+
+/// Reads the target and works out what it agrees on with the repo. With
+/// `against_head`, the last commit counts as agreed on.
+async fn sync_state(
+    ctx: &mut Ctx,
+    config: &Config,
+    target: &Target,
+    mode: Mode,
+    against_head: bool,
+) -> anyhow::Result<State> {
+    let base = current_base(&ctx.git, config, target)?;
+    let base_tree = match &base {
+        Some(base) => ctx.git.read_tree(base)?,
+        None => Files::new(),
+    };
+    let base_domain = domain(&base_tree, config, target)?;
+    let head_tree = ctx.git.read_tree(&ctx.git.head()?)?;
+    let head_domain = domain(&head_tree, config, target)?;
+    let (known_tree, known_domain) = match &base {
+        Some(_) if !against_head => (&base_tree, &base_domain),
+        _ => (&head_tree, &head_domain),
+    };
+    let known_domain = read_paths(target, known_domain, &head_domain);
+    let mut snapshot = read_target(ctx, config, target, known_tree, &known_domain, mode).await?;
+    ctx.hashes.save()?;
+    align_with_head(&mut snapshot, &head_tree);
+    let agreed = if against_head {
+        Agreed {
+            files: head_domain.clone(),
+            notes: HashMap::new(),
+        }
+    } else {
+        let pulled = target.pulled();
+        agreed(&ctx.git, base.as_deref(), &base_domain, &pulled, &snapshot)?
+    };
+    Ok(State {
+        base,
+        base_tree,
+        base_domain,
+        head_tree,
+        head_domain,
+        snapshot,
+        agreed,
+    })
+}
+
+fn set_record(git: &Git, target: &Target, commit: &str) -> anyhow::Result<()> {
+    target.record_base(commit)?;
+    git.update_ref(&target.ref_name(), commit)?;
+    target.clear_pulled()?;
+    git.delete_refs(&target.pulled_ref_prefix())
+}
+
+fn remember_pull(git: &Git, target: &Target, snapshot: &str, head: &str) -> anyhow::Result<()> {
+    target.add_pulled(snapshot, head)?;
+    git.update_ref(
+        &format!("{}{snapshot}", target.pulled_ref_prefix()),
+        snapshot,
+    )
+}
+
+fn list_changes(changes: &[Change], notes: &HashMap<String, &str>, place: &str) -> String {
+    changes
+        .iter()
+        .map(|change| match notes.get(change.path()) {
+            Some(note) => format!("  {change} ({note} in {place})\n"),
+            None => format!("  {change}\n"),
+        })
+        .collect()
 }
 
 pub async fn pull(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> {
@@ -572,64 +794,32 @@ pub async fn pull(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     if !target.is_prism() {
         bail!("can't pull from a server");
     }
-    let base = if force {
-        None
-    } else {
-        effective_base(&ctx.git, &target)?
-    };
-    // Without a base, compare against HEAD.
-    let base_tree = match &base {
-        Some(base) => ctx.git.read_tree(base)?,
-        None => Files::new(),
-    };
-    let reference_tree = match &base {
-        Some(_) => base_tree.clone(),
-        None => ctx.git.read_tree(&ctx.git.head()?)?,
-    };
-    let base_domain = domain(&reference_tree, &config, &target)?;
-    let mut snapshot = read_target(
-        ctx,
-        &config,
-        &target,
-        &reference_tree,
-        &base_domain,
-        Mode::Pull,
-    )
-    .await?;
-    ctx.hashes.save()?;
-    let head_tree = ctx.git.read_tree(&ctx.git.head()?)?;
-    align_with_head(&mut snapshot, &head_tree);
-
-    let mut changes = diff(&base_domain, &snapshot);
-    if base.is_none() {
-        // A root snapshot can't delete anything.
-        changes.retain(|change| !matches!(change, Change::Deleted(_)));
-    }
+    let head = ctx.git.head()?;
+    let state = sync_state(ctx, &config, &target, Mode::Pull, force).await?;
+    let changes = state.changed_there();
     if changes.is_empty() {
         println!("{name}: nothing to pull");
     } else {
-        let mut tree = base_tree.clone();
-        if base.is_some() {
-            for path in base_domain.keys() {
-                tree.remove(path);
-            }
-        }
-        tree.extend(snapshot);
+        let agreed_commit = ctx.git.write_commit(
+            None,
+            &state.agreed.files,
+            &format!("{SNAPSHOT_PREFIX} base: {name}"),
+        )?;
         let commit = ctx.git.write_commit(
-            base.as_deref(),
-            &tree,
+            Some(&agreed_commit),
+            &state.snapshot,
             &format!("{SNAPSHOT_PREFIX}: {name}"),
         )?;
         let merged = ctx.git.cherry_pick_no_commit(&commit)?;
-        ctx.git.update_ref(&target.ref_name(), &commit)?;
-        target.record_base(&commit)?;
+        remember_pull(&ctx.git, &target, &commit, &head)?;
         println!("{name}:");
-        print_changes(&changes);
-        if merged {
-            println!("review with `git diff --cached`, then commit");
-        } else {
+        print!("{}", list_changes(&changes, &HashMap::new(), name));
+        if !merged {
             println!("conflicts, resolve them and commit");
         }
+    }
+    for (path, note) in state.skipped() {
+        println!("skipped {path}: {note} in {name}");
     }
 
     if let Some((minecraft, loader, loader_version)) = target.mmc_pack()?
@@ -638,6 +828,17 @@ pub async fn pull(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
         println!("updated versions in potato.toml");
     }
     Ok(())
+}
+
+/// Servers are read path by path, so also read the paths only the commit has.
+fn read_paths(target: &Target, known_domain: &Files, head_domain: &Files) -> Files {
+    let mut paths = known_domain.clone();
+    if !target.is_prism() {
+        for (path, content) in head_domain {
+            paths.entry(path.clone()).or_insert_with(|| content.clone());
+        }
+    }
+    paths
 }
 
 pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> {
@@ -652,36 +853,37 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     if !force && target.is_running() {
         bail!("{name} is running, stop it first");
     }
-    let base = effective_base(&ctx.git, &target)?;
-    if base.is_none() && !force {
-        bail!("{name} was never synced, use --force to overwrite it");
-    }
-    let base_tree = match &base {
-        Some(base) => ctx.git.read_tree(base)?,
-        None => Files::new(),
-    };
-    let base_domain = domain(&base_tree, &config, &target)?;
-    let head_tree = ctx.git.read_tree(&head)?;
-    let head_domain = domain(&head_tree, &config, &target)?;
-    if !force && base.is_some() {
-        let snapshot =
-            read_target(ctx, &config, &target, &base_tree, &base_domain, Mode::Check).await?;
-        let mut changes = diff(&base_domain, &snapshot);
-        changes.retain(|change| snapshot.get(change.path()) != head_domain.get(change.path()));
+    let state = sync_state(ctx, &config, &target, Mode::Check, false).await?;
+    let changes = state.changed_there();
+    let State {
+        base,
+        mut base_tree,
+        mut base_domain,
+        head_tree,
+        head_domain,
+        snapshot,
+        agreed,
+    } = state;
+    let pushed = diff(&snapshot, &head_domain);
+    if !force {
         if !changes.is_empty() {
+            let list = list_changes(&changes, &HashMap::new(), name);
             if target.is_prism() {
-                bail!("{name} changed since the last sync, run `potato pull {name}` first");
+                bail!(
+                    "{name} has changes you haven't committed, run `potato pull {name}` first or use --force:\n{}",
+                    list.trim_end()
+                );
             }
-            let mut list = changes
-                .iter()
-                .take(5)
-                .map(Change::path)
-                .collect::<Vec<_>>()
-                .join(", ");
-            if changes.len() > 5 {
-                list.push_str(&format!(" and {} more", changes.len() - 5));
-            }
-            bail!("{list} changed on {name} since the last push, use --force to overwrite it");
+            bail!(
+                "{name} has changes since the last push, use --force to overwrite them:\n{}",
+                list.trim_end()
+            );
+        }
+        // Nothing would be lost, so what the target has now can be replaced. A
+        // server's snapshot only holds the record's files, so it keeps the record.
+        if target.is_prism() || base.is_none() {
+            base_tree = snapshot.clone();
+            base_domain = snapshot;
         }
     }
 
@@ -717,9 +919,13 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     apply_jars(ctx, &config, &target, &base_tree, &head_tree, exact).await?;
     ctx.hashes.save()?;
 
-    target.record_base(&head)?;
-    ctx.git.update_ref(&target.ref_name(), &head)?;
-    println!("pushed to {name}");
+    set_record(&ctx.git, &target, &head)?;
+    if pushed.is_empty() {
+        println!("{name}: nothing to push");
+    } else {
+        println!("{name}:");
+        print!("{}", list_changes(&pushed, &agreed.notes, name));
+    }
     Ok(())
 }
 
@@ -923,8 +1129,6 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
         println!("no targets, add one with `potato target add <name> <folder>`");
         return Ok(());
     }
-    let head = ctx.git.head()?;
-    let head_tree = ctx.git.read_tree(&head)?;
     for name in names {
         let target = match Target::resolve(&ctx.repo, &name, &config, &local) {
             Ok(target) => target,
@@ -933,17 +1137,9 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
                 continue;
             }
         };
-        let base = effective_base(&ctx.git, &target)?;
-        let Some(base) = base else {
-            println!("{name}: never synced");
-            continue;
-        };
-        let base_tree = ctx.git.read_tree(&base)?;
-        let base_domain = domain(&base_tree, &config, &target)?;
-        let snapshot =
-            read_target(ctx, &config, &target, &base_tree, &base_domain, Mode::Check).await?;
-        let to_pull = diff(&base_domain, &snapshot);
-        let to_push = diff(&base_domain, &domain(&head_tree, &config, &target)?);
+        let state = sync_state(ctx, &config, &target, Mode::Check, false).await?;
+        let to_pull = state.changed_there();
+        let to_push = diff(&state.snapshot, &state.head_domain);
         if to_pull.is_empty() && to_push.is_empty() {
             println!("{name}: in sync");
             continue;
@@ -958,11 +1154,11 @@ pub async fn status(ctx: &mut Ctx) -> anyhow::Result<()> {
                     " changed there:"
                 }
             );
-            print_changes(&to_pull);
+            print!("{}", list_changes(&to_pull, &HashMap::new(), &name));
         }
         if !to_push.is_empty() {
             println!(" to push:");
-            print_changes(&to_push);
+            print!("{}", list_changes(&to_push, &state.agreed.notes, &name));
         }
     }
     ctx.hashes.save()?;

@@ -29,11 +29,13 @@ Targets are stored in `.potato/local.toml`, which isn't committed.
 
 3. Install the loader the way your server runtime does it, for example with the `itzg/minecraft-server` image and `TYPE=NEOFORGE`. potato doesn't install loaders.
 
-4. Push the pack. If the server already runs it and has edits you want to keep, copy them into the repo first. The first push has to be `--force`, which overwrites the managed files on the server:
+4. Push the pack:
 
 ```bash
-potato push main --force
+potato push main
 ```
+
+If files on the server were changed there, push refuses and names them. Copy the edits you want to keep into the repo, then run `potato push main --force`; or add the files to `exclude`.
 
 ## Updating the server
 

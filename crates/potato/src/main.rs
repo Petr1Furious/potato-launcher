@@ -59,7 +59,7 @@ enum Command {
     /// Bring changes from a Prism target into the repo.
     Pull {
         target: String,
-        /// Compare with the last commit instead of the last sync.
+        /// Make the repo match Prism exactly.
         #[arg(long)]
         force: bool,
     },

@@ -12,7 +12,7 @@ use crate::{
     git::Git,
     index::{INDEX_SUFFIX, IndexFile, Side, index_dir_of, index_name, index_path, normalize_os},
     modrinth,
-    target::{PRISM, check_folder, parse_mmc_pack, synced_file},
+    target::{PRISM, check_folder, parse_mmc_pack, pulled_file, synced_file},
 };
 
 const TEMPLATE: &str = r#"id = "{id}"
@@ -134,10 +134,17 @@ pub fn target_list(repo: &Path) -> anyhow::Result<()> {
 }
 
 fn forget_sync(repo: &Path, name: &str) -> anyhow::Result<()> {
-    match std::fs::remove_file(synced_file(repo, name)) {
-        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err.into()),
-        _ => Ok(()),
+    for file in [synced_file(repo, name), pulled_file(repo, name)] {
+        match std::fs::remove_file(file) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err.into()),
+            _ => {}
+        }
     }
+    let git = Git::new(repo);
+    if git.is_repo() {
+        git.delete_refs(&format!("refs/potato/pulled/{name}/"))?;
+    }
+    Ok(())
 }
 
 pub fn target_remove(repo: &Path, name: &str) -> anyhow::Result<()> {

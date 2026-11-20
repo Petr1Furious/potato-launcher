@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
@@ -322,6 +322,142 @@ impl Git {
             bail!("can't fetch {path} from Git LFS, check that git-lfs is installed");
         }
         std::fs::rename(&fetched, dest)?;
+        Ok(())
+    }
+
+    /// Blob ids git would give `contents`, without storing them.
+    pub fn blob_ids(&self, contents: &[&[u8]]) -> anyhow::Result<Vec<String>> {
+        let temp = tempfile::tempdir()?;
+        let mut paths = String::new();
+        let mut text = vec![];
+        for (index, content) in contents.iter().enumerate() {
+            if as_blob_ref(content).is_none() {
+                let file = temp.path().join(index.to_string());
+                std::fs::write(&file, content)?;
+                paths.push_str(&file.to_string_lossy());
+                paths.push('\n');
+                text.push(index);
+            }
+        }
+        let hashed = if text.is_empty() {
+            vec![]
+        } else {
+            let out = self.checked(
+                &["hash-object", "--no-filters", "--stdin-paths"],
+                &[],
+                Some(paths.as_bytes()),
+            )?;
+            String::from_utf8(out)?
+                .lines()
+                .map(str::to_string)
+                .collect()
+        };
+        let mut hashed = hashed.into_iter();
+        Ok(contents
+            .iter()
+            .map(|content| match as_blob_ref(content) {
+                Some(id) => id.to_string(),
+                None => hashed.next().unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    pub fn read_blobs(&self, ids: &[String]) -> anyhow::Result<Vec<Vec<u8>>> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let input = ids.iter().map(|id| format!("{id}\n")).collect::<String>();
+        let output = self.checked(&["cat-file", "--batch"], &[], Some(input.as_bytes()))?;
+        let mut blobs = vec![];
+        let mut rest = output.as_slice();
+        for _ in ids {
+            let header_end = rest
+                .iter()
+                .position(|b| *b == b'\n')
+                .context("bad cat-file output")?;
+            let header = std::str::from_utf8(&rest[..header_end])?;
+            let size: usize = header
+                .rsplit(' ')
+                .next()
+                .and_then(|size| size.parse().ok())
+                .context("bad cat-file output")?;
+            let start = header_end + 1;
+            blobs.push(rest[start..start + size].to_vec());
+            rest = &rest[start + size + 1..];
+        }
+        Ok(blobs)
+    }
+
+    /// Every version `paths` had in the commits of `range` (`None` for a deletion).
+    pub fn path_versions(
+        &self,
+        range: &str,
+        paths: &[String],
+    ) -> anyhow::Result<HashMap<String, Vec<Option<String>>>> {
+        let mut args = vec![
+            "log",
+            "--format=",
+            "--raw",
+            "--no-abbrev",
+            "--no-renames",
+            "-z",
+            range,
+            "--",
+        ];
+        args.extend(paths.iter().map(String::as_str));
+        let out = self.checked(&args, &[], None)?;
+        let mut versions: HashMap<String, Vec<Option<String>>> = HashMap::new();
+        let mut records = out.split(|byte| *byte == 0).filter(|r| !r.is_empty());
+        while let Some(meta) = records.next() {
+            let meta = std::str::from_utf8(meta)?;
+            let Some(path) = records.next() else {
+                break;
+            };
+            let mut fields = meta.trim_start_matches(':').split_whitespace();
+            let new = fields.nth(3).context("bad git log output")?;
+            let deleted = fields.next() == Some("D");
+            versions
+                .entry(std::str::from_utf8(path)?.to_string())
+                .or_default()
+                .push((!deleted).then(|| new.to_string()));
+        }
+        Ok(versions)
+    }
+
+    /// Commits in `HEAD`'s history that `base` doesn't have, newest first.
+    pub fn commits_since(&self, base: &str) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .out(&["rev-list", &format!("{base}..HEAD")])?
+            .lines()
+            .map(str::to_string)
+            .collect())
+    }
+
+    /// Blob ids of `paths` in `commit`; paths it lacks are missing.
+    pub fn path_blobs(
+        &self,
+        commit: &str,
+        paths: &[String],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        let mut args = vec!["ls-tree", "-z", "--full-tree", commit, "--"];
+        args.extend(paths.iter().map(String::as_str));
+        let listing = self.checked(&args, &[], None)?;
+        let mut blobs = HashMap::new();
+        for record in listing.split(|byte| *byte == 0).filter(|r| !r.is_empty()) {
+            let record = std::str::from_utf8(record)?;
+            let (meta, path) = record.split_once('\t').context("bad ls-tree output")?;
+            if let Some(id) = meta.split_whitespace().nth(2) {
+                blobs.insert(path.to_string(), id.to_string());
+            }
+        }
+        Ok(blobs)
+    }
+
+    pub fn delete_refs(&self, prefix: &str) -> anyhow::Result<()> {
+        let refs = self.out(&["for-each-ref", "--format=%(refname)", prefix])?;
+        for name in refs.lines().filter(|line| !line.is_empty()) {
+            self.checked(&["update-ref", "-d", name], &[], None)?;
+        }
         Ok(())
     }
 

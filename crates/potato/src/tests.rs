@@ -343,7 +343,12 @@ async fn renamed_jar_updates_its_os_variant() {
     .await;
     sync::pull(&mut s.ctx, "prism", false).await.unwrap();
     crate::commands::mod_set(&s.ctx, "voxy", &[os.to_string()], None).unwrap();
-    let mut other = IndexFile::parse(&voxy_index("voxy-other.jar")).unwrap();
+    let mut other = IndexFile::new(
+        "Voxy",
+        "voxy-other.jar",
+        "https://cdn.modrinth.com/data/v/voxy-other.jar",
+        "ffff",
+    );
     let other_os = if os == "windows" { "linux" } else { "windows" };
     other.set_os(&[other_os]);
     std::fs::write(
@@ -415,7 +420,7 @@ async fn forced_push_makes_prism_match() {
         &MODRINTH_INDEX.replace("sodium.jar", "extra.jar"),
     );
     let err = sync::push(&mut s.ctx, "prism", false).await.unwrap_err();
-    assert!(err.to_string().contains("changed"), "{err}");
+    assert!(err.to_string().contains("haven't committed"), "{err}");
 
     sync::push(&mut s.ctx, "prism", true).await.unwrap();
     assert_eq!(read(&s.game.join("config/a.toml")), "a = 1\n");
@@ -458,21 +463,49 @@ async fn uncommitted_changes() {
 }
 
 #[tokio::test]
-async fn discarded_pull_comes_back_with_force() {
+async fn discarded_pull_comes_back() {
     let mut s = Setup::new();
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    s.commit("pull");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(s.repo.join(".potato/synced/prism").exists());
+
     s.prism_mod("sodium", "sodium.jar", b"sodium", Some(MODRINTH_INDEX))
         .await;
     sync::pull(&mut s.ctx, "prism", false).await.unwrap();
-    assert!(s.repo.join(".potato/synced/prism").exists());
-    assert!(!s.game.join("../.potato").exists());
+    git(&s.repo, &["reset", "-q", "--hard"]);
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(s.repo.join("mods/.index/sodium.pw.toml").exists());
     git(&s.repo, &["reset", "-q", "--hard"]);
 
-    // The record still matches Prism, so only --force brings the mod back.
+    // Pushing would drop the mod from Prism.
+    let err = sync::push(&mut s.ctx, "prism", false).await.unwrap_err();
+    assert!(err.to_string().contains("pull"), "{err}");
+}
+
+#[tokio::test]
+async fn committed_changes_are_not_pulled_again() {
+    let mut s = Setup::new();
     sync::pull(&mut s.ctx, "prism", false).await.unwrap();
-    assert!(!s.repo.join("mods/.index/sodium.pw.toml").exists());
-    s.commit("versions");
-    sync::pull(&mut s.ctx, "prism", true).await.unwrap();
-    assert!(s.repo.join("mods/.index/sodium.pw.toml").exists());
+    s.commit("pull");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+
+    write(&s.game.join("config/a.toml"), "a = 2\n");
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    s.commit("take a = 2");
+    write(&s.repo.join("config/a.toml"), "a = 3\n");
+    s.commit("a = 3");
+
+    // Prism still has the a = 2 you already took; only its new change comes in.
+    write(&s.game.join("kubejs/s.js"), "new\n");
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(git(&s.repo, &["diff", "--name-only", "--diff-filter=U"]).is_empty());
+    assert_eq!(read(&s.repo.join("config/a.toml")), "a = 3\n");
+    assert_eq!(read(&s.repo.join("kubejs/s.js")), "new\n");
+    s.commit("take s.js");
+
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+    assert_eq!(read(&s.game.join("config/a.toml")), "a = 3\n");
 }
 
 #[tokio::test]
@@ -485,14 +518,15 @@ async fn server_sync() {
     sync::pull(&mut s.ctx, "prism", false).await.unwrap();
     s.commit("pull");
 
-    // Servers only get pushes; the first one needs --force.
+    // Servers only get pushes; a first push needs --force only to overwrite files.
     let err = sync::pull(&mut s.ctx, "main", false).await.unwrap_err();
     assert!(
         err.to_string().contains("can't pull from a server"),
         "{err}"
     );
+    write(&s.server.join("config/a.toml"), "mine\n");
     let err = sync::push(&mut s.ctx, "main", false).await.unwrap_err();
-    assert!(err.to_string().contains("--force"), "{err}");
+    assert!(err.to_string().contains("config/a.toml"), "{err}");
 
     write(&s.server.join("mods/server-only.jar"), "mine");
     write(&s.server.join("config/server-only.toml"), "s = 1\n");
@@ -845,4 +879,76 @@ async fn renamed_committed_jar_matches_by_mod_id() {
     assert_eq!(index.filename(), Some("mymod-1.1.jar"));
     assert_eq!(index.side().unwrap(), crate::index::Side::Client);
     assert!(!s.repo.join("mods/.index/something-else.pw.toml").exists());
+}
+
+#[tokio::test]
+async fn committed_pulls_move_the_record() {
+    let mut s = Setup::new();
+    s.prism_mod("sodium", "sodium.jar", b"sodium", Some(MODRINTH_INDEX))
+        .await;
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    s.commit("pull");
+
+    // Without ever pushing, a mod removed in Prism comes in as a deletion.
+    std::fs::remove_file(s.game.join("mods/sodium.jar")).unwrap();
+    std::fs::remove_file(s.game.join("mods/.index/sodium.pw.toml")).unwrap();
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(s.repo.join(".potato/synced/prism").exists());
+    assert!(!s.repo.join("mods/.index/sodium.pw.toml").exists());
+}
+
+#[tokio::test]
+async fn repo_only_versions_are_not_mistaken_for_pulls() {
+    let mut s = Setup::new();
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    s.commit("pull");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+
+    write(&s.repo.join("config/a.toml"), "a = 80\n");
+    s.commit("80");
+    write(&s.repo.join("config/a.toml"), "a = 75\n");
+    s.commit("75");
+    // Prism lands on a value the repo passed through, but it was never pulled.
+    write(&s.game.join("config/a.toml"), "a = 80\n");
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(git(&s.repo, &["diff", "--name-only", "--diff-filter=U"]).contains("config/a.toml"));
+}
+
+#[tokio::test]
+async fn forced_pull_makes_the_repo_match_prism() {
+    let mut s = Setup::new();
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    s.commit("pull");
+    write(&s.repo.join("config/a.toml"), "a = 5\n");
+    write(&s.repo.join("config/extra.toml"), "x\n");
+    s.commit("repo edits");
+
+    sync::pull(&mut s.ctx, "prism", true).await.unwrap();
+    assert_eq!(read(&s.repo.join("config/a.toml")), "a = 1\n");
+    assert!(!s.repo.join("config/extra.toml").exists());
+    s.commit("take prism");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+}
+
+#[tokio::test]
+async fn differing_files_conflict_without_a_record() {
+    let mut s = Setup::new();
+    write(&s.repo.join("config/a.toml"), "a = 9\n");
+    s.commit("repo config");
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(git(&s.repo, &["diff", "--name-only", "--diff-filter=U"]).contains("config/a.toml"));
+}
+
+#[tokio::test]
+async fn push_removes_pulled_files_the_repo_dropped() {
+    let mut s = Setup::new();
+    write(&s.game.join("kubejs/new.js"), "new\n");
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    // Committed with another edit, so the record doesn't move.
+    write(&s.repo.join("kubejs/other.js"), "other\n");
+    s.commit("pull and edit");
+    std::fs::remove_file(s.repo.join("kubejs/new.js")).unwrap();
+    s.commit("drop new.js");
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(!s.game.join("kubejs/new.js").exists());
 }

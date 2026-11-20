@@ -22,6 +22,7 @@ pub struct Target {
     pub root: PathBuf,
     pub game_dir: PathBuf,
     record: PathBuf,
+    pulled: PathBuf,
 }
 
 impl Target {
@@ -32,6 +33,7 @@ impl Target {
         local: &LocalConfig,
     ) -> anyhow::Result<Self> {
         let record = synced_file(repo, name);
+        let pulled = pulled_file(repo, name);
         let local_target = local.targets.get(name).with_context(|| {
             format!("unknown target '{name}', add it with `potato target add {name} <folder>`")
         })?;
@@ -45,6 +47,7 @@ impl Target {
                     root,
                     game_dir,
                     record,
+                    pulled,
                 })
             }
             TargetType::Server => {
@@ -62,6 +65,7 @@ impl Target {
                     game_dir: root.clone(),
                     root,
                     record,
+                    pulled,
                 })
             }
         }
@@ -105,6 +109,36 @@ impl Target {
         Ok(())
     }
 
+    /// Each pull since the record moved, oldest first: its snapshot and the
+    /// commit it was pulled onto.
+    pub fn pulled(&self) -> Vec<(String, String)> {
+        std::fs::read_to_string(&self.pulled)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.split_once(' '))
+            .map(|(snapshot, head)| (snapshot.to_string(), head.to_string()))
+            .collect()
+    }
+
+    pub fn add_pulled(&self, snapshot: &str, head: &str) -> anyhow::Result<()> {
+        let mut content = std::fs::read_to_string(&self.pulled).unwrap_or_default();
+        content.push_str(&format!("{snapshot} {head}\n"));
+        std::fs::create_dir_all(self.pulled.parent().expect("has a parent"))?;
+        std::fs::write(&self.pulled, content)?;
+        Ok(())
+    }
+
+    pub fn clear_pulled(&self) -> anyhow::Result<()> {
+        match std::fs::remove_file(&self.pulled) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err.into()),
+            _ => Ok(()),
+        }
+    }
+
+    pub fn pulled_ref_prefix(&self) -> String {
+        format!("refs/potato/pulled/{}/", self.name)
+    }
+
     pub fn ref_name(&self) -> String {
         format!("refs/potato/{}", self.name)
     }
@@ -139,6 +173,10 @@ impl Target {
 
 pub fn synced_file(repo: &Path, name: &str) -> PathBuf {
     repo.join(LOCAL_DIR).join("synced").join(name)
+}
+
+pub fn pulled_file(repo: &Path, name: &str) -> PathBuf {
+    repo.join(LOCAL_DIR).join("pulled").join(name)
 }
 
 fn prism_game_dir(root: &Path) -> anyhow::Result<PathBuf> {

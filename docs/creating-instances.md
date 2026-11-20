@@ -263,25 +263,28 @@ potato target remove <name>
 
 `pull` stages the changes made in Prism since the last sync, without committing them. Changes made only in Prism are applied, changes made only in the repo stay, and changes made on both sides show up as normal git conflicts. Review them with `git diff --cached` and commit.
 
+The last sync is your last push, or your last commit that matches a pull exactly.
+
 You can pull several times before committing, and each pull adds to the previous one. Other uncommitted changes in the repo are fine too, but git refuses a pull that would overwrite unstaged edits to the same file.
 
-If you drop the pulled changes with `git reset --hard`, potato still counts them as synced: the next `pull` won't bring them back, and the next `push` removes them from Prism. To get them back, run `potato pull prism --force`. It ignores the last sync and compares Prism with your last commit.
+If you drop the pulled changes with `git reset --hard`, the next `pull` brings them back. To remove them from Prism instead, run `potato push prism --force`.
 
 ::: warning
 `git reset --hard` also drops your own uncommitted changes.
 :::
 
+`potato pull prism --force` makes the repo match Prism exactly: it stages files in `mods` and the `[[paths]]` files and folders as they are in Prism, including deletions.
+
 ### Push
 
 `push` writes the last commit into Prism. It keeps your enabled/disabled choice for each mod, and new mods from an off-by-default optional set arrive disabled. It refuses to run if:
 
-- Prism has changes since the last sync that the commit doesn't have. Pull them first.
-- This Prism instance was never synced with this repo (the first push on a new machine or from a fresh clone).
+- Prism has changes you haven't committed. Pull them first.
 - Pack files (`potato.toml`, index files, committed jars, managed paths) have uncommitted changes, since those wouldn't be pushed.
 
-`potato push prism --force` skips these checks and makes Prism match the last commit exactly: in the synced folders, everything the repo doesn't have is deleted, including disabled jars.
+`potato push prism --force` skips these checks and makes Prism match the last commit exactly: in `mods` and the `[[paths]]` folders, everything the repo doesn't have is deleted, including disabled jars.
 
-Each target's last sync is recorded in `.potato/synced/<name>` in the repo, so it's local to your clone.
+Push soon after changing the repo, so later pulls have fewer conflicts.
 
 ## Publishing
 
@@ -316,10 +319,10 @@ The first time, you'll need to clone the repo, add your Prism instance and push 
 
 ```bash
 potato target add prism <instance folder>
-potato push prism --force
+potato push prism
 ```
 
-This removes everything in the synced folders that the pack doesn't have, such as extra mods you had in that instance.
+If the instance has files that differ from the pack, push refuses and lists them.
 
 After that, the usual workflow is:
 
