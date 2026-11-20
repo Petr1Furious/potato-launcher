@@ -45,7 +45,7 @@ impl Kind {
 
     fn detail(self) -> &'static str {
         match self {
-            Kind::WindowsExe => ".exe",
+            Kind::WindowsExe => "Executable",
             Kind::MacosDmg => "Disk image",
             Kind::MacosArchive => "Archive",
             Kind::LinuxBin => "Binary",
@@ -341,7 +341,7 @@ mod tests {
         assert_eq!(same.matches("v2").count(), 1, "{same}");
         let mixed = page("v1");
         assert!(
-            mixed.contains(".exe · v1") && mixed.contains("Binary · v2"),
+            mixed.contains("Executable · v1") && mixed.contains("Binary · v2"),
             "{mixed}"
         );
     }
