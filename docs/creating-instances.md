@@ -153,7 +153,7 @@ Common fields:
 
 `config_options` changes single keys in a config file instead of shipping the whole file:
 
-- **config_type**: `json`, `yaml`, `toml` or `properties`
+- **config_type**: `json`, `yaml`, `toml` or `properties`. `properties` keeps each file's `=` or `:` separator, so it also works for `options.txt`.
 - **options**: A list of `{ key = ["section", "name"], value = ... }`
 
 Deeper paths win over shallower ones. For example, you can mark `config` as `skip_if_dir_exists` and still force one file inside it with a `file` rule.

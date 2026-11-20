@@ -657,6 +657,16 @@ fn apply_toml_config_options(
     Ok(())
 }
 
+fn split_property_line(line: &str) -> Option<(&str, char)> {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') {
+        return None;
+    }
+    let index = trimmed.find(['=', ':'])?;
+    let separator = trimmed[index..].chars().next()?;
+    Some((trimmed[..index].trim_end(), separator))
+}
+
 fn apply_properties_config_options(
     contents: &str,
     options: &[utils::files::ConfigOption],
@@ -665,6 +675,10 @@ fn apply_properties_config_options(
         .lines()
         .map(ToString::to_string)
         .collect::<Vec<_>>();
+    let default_separator = lines
+        .iter()
+        .find_map(|line| split_property_line(line))
+        .map_or('=', |(_, separator)| separator);
 
     for option in options {
         let [Either::Left(key)] = option.key.as_slice() else {
@@ -691,23 +705,13 @@ fn apply_properties_config_options(
             }
         };
 
-        let mut replaced = false;
-        for line in &mut lines {
-            let trimmed = line.trim_start();
-            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') {
-                continue;
-            }
-            let Some(separator) = trimmed.find(['=', ':']) else {
-                continue;
-            };
-            if trimmed[..separator].trim_end() == key {
-                *line = format!("{key}={value}");
-                replaced = true;
-                break;
-            }
-        }
-        if !replaced {
-            lines.push(format!("{key}={value}"));
+        let existing = lines.iter_mut().find_map(|line| {
+            let (line_key, separator) = split_property_line(line)?;
+            (line_key == key).then_some((line, separator))
+        });
+        match existing {
+            Some((line, separator)) => *line = format!("{key}{separator}{value}"),
+            None => lines.push(format!("{key}{default_separator}{value}")),
         }
     }
 
@@ -1242,6 +1246,35 @@ mod tests {
         assert!(contents.contains("enabled=true\n"));
         assert!(contents.contains("# keep comment\n"));
         assert!(contents.contains("max-count=5\n"));
+    }
+
+    #[tokio::test]
+    async fn config_option_task_keeps_colon_separator() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("options.txt");
+        tokio::fs::write(&path, "fov:0.0\nresourcePacks:[\"vanilla\"]\n")
+            .await
+            .unwrap();
+
+        run_config_option_task(&ConfigOptionTask {
+            path: path.clone(),
+            config_type: ConfigType::Properties,
+            options: vec![
+                config_option(
+                    vec![key("resourcePacks")],
+                    json!(r#"["vanilla","file/pack.zip"]"#),
+                ),
+                config_option(vec![key("gamma")], json!(1.0)),
+            ],
+        })
+        .await
+        .unwrap();
+
+        let contents = tokio::fs::read_to_string(path).await.unwrap();
+        assert_eq!(
+            contents,
+            "fov:0.0\nresourcePacks:[\"vanilla\",\"file/pack.zip\"]\ngamma:1.0\n"
+        );
     }
 
     #[test]
