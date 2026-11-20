@@ -50,6 +50,8 @@ docker compose up -d
 
 4. Put a reverse proxy with TLS in front of it (Caddy, Traefik, or nginx with Certbot) and point it at `http://127.0.0.1:<PORT>`.
 
+If you don't publish your own launcher, the main page of the site explains how to add your instance list to Potato Launcher, with a Copy button for its URL. Once you run `potato publish-launcher`, the downloads page replaces it and shows the same URL below the downloads.
+
 The nginx config serves `data/objects/` with immutable cache headers and the manifests without caching. It also maps the URLs that legacy launchers use to update themselves (`/api/v1/launchers/...` and `/version_<os>.txt`) onto `launcher/`.
 
 Any other static web server works too, but without the URL mapping, older launchers stop updating themselves.

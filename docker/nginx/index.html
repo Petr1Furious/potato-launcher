@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Potato Launcher instances</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #fafafa;
+  --card: #ffffff;
+  --fg: #09090b;
+  --muted: #71717a;
+  --border: #e4e4e7;
+  --primary: #18181b;
+  --primary-fg: #fafafa;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #09090b;
+    --card: #111113;
+    --fg: #fafafa;
+    --muted: #a1a1aa;
+    --border: #27272a;
+    --primary: #fafafa;
+    --primary-fg: #18181b;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main {
+  width: 100%;
+  max-width: 40rem;
+  padding: 40px 32px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.06);
+}
+h1 { margin: 0; font-size: 2rem; line-height: 1.2; text-align: center; }
+.subtitle { margin: 12px 0 32px; color: var(--muted); text-align: center; }
+ol { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+li { position: relative; padding-left: 44px; margin-bottom: 28px; counter-increment: step; }
+li:last-child { margin-bottom: 0; }
+li::before {
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  text-align: center;
+  font-size: 0.875rem;
+  line-height: 26px;
+  font-weight: 600;
+}
+li p { margin: 2px 0 12px; }
+.button, .copy button {
+  display: inline-block;
+  padding: 8px 16px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-fg);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+.copy { display: flex; gap: 8px; }
+.copy input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 0.875rem ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+</style>
+</head>
+<body>
+<main>
+<h1>Potato Launcher instances</h1>
+<p class="subtitle">This server hosts Minecraft instances for Potato Launcher.</p>
+<ol>
+<li>
+<p>Download Potato Launcher for your system.</p>
+<a class="button" href="https://github.com/Petr1Furious/potato-launcher/releases/latest">Download</a>
+</li>
+<li>
+<p>In the launcher, click <b>Configure backends</b>, paste this URL under <b>Add Backend</b> and click <b>Add Backend</b>.</p>
+<div class="copy"><input readonly aria-label="Instance list URL"><button type="button">Copy</button></div>
+</li>
+</ol>
+</main>
+<script>
+const manifest = new URL("data/instance_manifest.json", location.href).href;
+const input = document.querySelector(".copy input");
+const copy = document.querySelector(".copy button");
+input.value = manifest;
+copy.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(manifest);
+  } catch {
+    input.select();
+    document.execCommand("copy");
+  }
+  copy.textContent = "Copied";
+  setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+});
+</script>
+</body>
+</html>

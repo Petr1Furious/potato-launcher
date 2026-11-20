@@ -97,6 +97,30 @@ footer a { display: inline-flex; align-items: center; gap: 8px; color: var(--mut
 footer a:hover { color: var(--fg); }
 footer svg { width: 20px; height: 20px; }
 .empty { grid-column: 1 / -1; text-align: center; color: var(--muted); }
+.manifest { padding: 0 32px 32px; }
+.manifest h2 { margin: 0 0 4px; font-size: 1.125rem; }
+.manifest p { margin: 0 0 12px; color: var(--muted); font-size: 0.875rem; }
+.copy { display: flex; gap: 8px; }
+.copy input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 0.875rem ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.copy button {
+  padding: 8px 16px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-fg);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
 </style>
 </head>
 <body>
@@ -117,9 +141,30 @@ footer svg { width: 20px; height: 20px; }
 <section class="downloads">
 {{downloads}}
 </section>
+<section class="manifest" hidden>
+<h2>Already have Potato Launcher?</h2>
+<p>Add this server's instances to it: click <b>Configure backends</b>, paste this URL under <b>Add Backend</b> and click <b>Add Backend</b>.</p>
+<div class="copy"><input readonly aria-label="Instance list URL"><button type="button">Copy</button></div>
+</section>
 {{source}}
 </main>
 <script>
+const manifest = new URL("data/instance_manifest.json", location.href).href;
+const box = document.querySelector(".manifest");
+const input = box.querySelector("input");
+const copy = box.querySelector("button");
+input.value = manifest;
+fetch(manifest, { method: "HEAD" }).then((response) => { box.hidden = !response.ok; });
+copy.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(manifest);
+  } catch {
+    input.select();
+    document.execCommand("copy");
+  }
+  copy.textContent = "Copied";
+  setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+});
 const platform = (navigator.userAgentData?.platform || navigator.platform || navigator.userAgent).toLowerCase();
 const os = platform.includes("win") ? "windows"
   : platform.includes("mac") ? "macos"

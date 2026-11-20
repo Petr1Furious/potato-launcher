@@ -2,6 +2,10 @@
 
 Currently, the only supported deployment method is GitHub Actions, as it's the easiest way to build for all OSes.
 
+::: tip You don't have to build your own launcher
+Players can use the main Potato Launcher and add your instance list to it: click **Configure backends**, paste `https://<your-domain>/data/instance_manifest.json` under **Add Backend** and click **Add Backend**. The main page of your site shows this URL with a Copy button. This works as long as there were no breaking changes between your `potato` version and the main launcher's.
+:::
+
 Start by forking the https://github.com/Petr1Furious/potato_launcher repository.
 
 Then, you have two options to configure your launcher: config file or environment variables.
