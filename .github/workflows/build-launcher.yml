@@ -97,12 +97,6 @@ jobs:
       - name: Resolve build environment
         run: ./scripts/ci/set-build-env.sh
 
-      - name: Install Rust SDK extension
-        run: |
-          flatpak install -y --or-update flathub \
-            org.freedesktop.Sdk//25.08 \
-            org.freedesktop.Sdk.Extension.rust-stable//25.08
-
       - name: Install flatpak-cargo-generator dependencies
         run: dnf install -y python3-aiohttp python3-toml wget
 
