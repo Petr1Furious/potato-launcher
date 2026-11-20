@@ -49,6 +49,19 @@ fn release_file(package: Option<PackagedInstall>) -> String {
     return format!("{lower}_macos.tar.gz");
 }
 
+/// The name `potato publish-launcher` stores the file under on the site.
+fn site_file(package: Option<PackagedInstall>) -> &'static str {
+    if package == Some(PackagedInstall::Flatpak) {
+        return "launcher.flatpak";
+    }
+    #[cfg(target_os = "windows")]
+    return "launcher.exe";
+    #[cfg(target_os = "linux")]
+    return "launcher";
+    #[cfg(target_os = "macos")]
+    return "launcher_macos.tar.gz";
+}
+
 struct Release {
     version: String,
     download_url: Option<String>,
@@ -70,7 +83,6 @@ async fn fetch_release(
     client: &Client,
     package: Option<PackagedInstall>,
 ) -> anyhow::Result<Release> {
-    let file = release_file(package);
     match launcher_build_config::update_source() {
         None => Err(anyhow::anyhow!("No update source configured")),
         Some(UpdateSource::Static(base)) => {
@@ -84,10 +96,11 @@ async fn fetch_release(
                 .await?;
             Ok(Release {
                 version: version.trim().to_string(),
-                download_url: Some(format!("{dir}/{file}")),
+                download_url: Some(format!("{dir}/{}", site_file(package))),
             })
         }
         Some(UpdateSource::GitHub(repo)) => {
+            let file = release_file(package);
             let release: GitHubRelease = client
                 .get(format!(
                     "https://api.github.com/repos/{repo}/releases/latest"

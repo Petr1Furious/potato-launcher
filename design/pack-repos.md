@@ -258,7 +258,7 @@ One folder is served as the site root:
 
 ```
 index.html                         # downloads page
-launcher/<os>/<file>, launcher/<os>/version.txt
+launcher/<os>/launcher[.exe|.dmg|.flatpak|_macos.tar.gz], launcher/<os>/version.txt
 data/instance_manifest.json        # URL baked into launchers, unchanged
 data/instances/<id>/meta.json      # InstanceMetadata, unchanged struct
 data/instances/<id>/publish.json   # source_commit, repo_root, order, published_at, objects
@@ -339,10 +339,17 @@ grace period.
 ### `potato publish-launcher`
 
 `potato publish-launcher --target <site root> --name <name> --version <tag>
-<files…>` picks each file's OS from its name (`<Name>.exe`, `<lower>`,
+[--icon <image>] [--source <repo url>] <files…>` picks each file's OS from its name (`<Name>.exe`, `<lower>`,
 `<lower>.flatpak`, `<lower>_macos.tar.gz`, `<Name>.dmg`), writes
-`launcher/<os>/<file>` and one `launcher/<os>/version.txt` per OS, and
-regenerates `index.html`. CI runs it on `v*` tags.
+`launcher/<os>/<fixed name>` (`launcher.exe`, `launcher.dmg`, `launcher`, ...,
+so the site's old-launcher rules don't need the launcher name; the page
+suggests the real file name with `download`) and one `launcher/<os>/version.txt`
+per OS, and
+regenerates `index.html` from `crates/potato/src/downloads.html`: the icon
+(uploaded as `launcher/icon.<ext>` and kept for later releases), one tile per
+download with the visitor's OS first, the version once if all OSes share it,
+and a source link. CI runs it on `v*` tags with `LAUNCHER_ICON` and the
+repository URL.
 
 ## Other commands
 
@@ -371,10 +378,6 @@ Each launcher build uses exactly one source, set at build time:
 `LAUNCHER_UPDATE_URL` (`<url>/<os>/version.txt` and `<url>/<os>/<file>`) or
 `LAUNCHER_UPDATE_GITHUB=owner/repo` (latest release, tag as version). Releases
 happen on `v*` tags; the version is the tag.
-
-Launchers built before this change update through `/api/v1/launchers/...`.
-The nginx config in `docker/nginx/templates/` maps those URLs, and the legacy
-`/version_<os>.txt` paths, onto `launcher/`.
 
 ## Workflows
 

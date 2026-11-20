@@ -107,6 +107,12 @@ enum Command {
         name: String,
         #[arg(long)]
         version: String,
+        /// Image shown on the downloads page.
+        #[arg(long)]
+        icon: Option<PathBuf>,
+        /// Repository URL for the downloads page.
+        #[arg(long)]
+        source: Option<String>,
         files: Vec<PathBuf>,
     },
     /// Manage the download and build cache.
@@ -205,10 +211,19 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         target,
         name,
         version,
+        icon,
+        source,
         files,
     } = &cli.command
     {
-        return launcher::publish_launcher(target, name, version, files).await;
+        let release = launcher::LauncherRelease {
+            name,
+            version,
+            files,
+            icon: icon.as_deref(),
+            source: source.as_deref(),
+        };
+        return launcher::publish_launcher(target, release).await;
     }
     let mut ctx = ctx::Ctx::new(&cli.repo)?;
     ctx.verbose = cli.verbose;

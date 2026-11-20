@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, bail};
 
@@ -31,32 +34,73 @@ impl Kind {
         matches!(self, Kind::WindowsExe | Kind::LinuxBin)
     }
 
-    fn label(self) -> &'static str {
+    fn title(self) -> &'static str {
         match self {
             Kind::WindowsExe => "Windows",
-            Kind::MacosDmg => "macOS",
-            Kind::MacosArchive => "macOS (archive)",
+            Kind::MacosDmg | Kind::MacosArchive => "macOS",
             Kind::LinuxBin => "Linux",
             Kind::LinuxFlatpak => "Linux (Flatpak)",
+        }
+    }
+
+    fn detail(self) -> &'static str {
+        match self {
+            Kind::WindowsExe => ".exe",
+            Kind::MacosDmg => "Disk image",
+            Kind::MacosArchive => "Archive",
+            Kind::LinuxBin => "Binary",
+            Kind::LinuxFlatpak => "Flatpak bundle",
+        }
+    }
+
+    /// Symbol id in downloads.html.
+    fn icon(self) -> &'static str {
+        match self {
+            Kind::WindowsExe => "windows",
+            Kind::MacosDmg | Kind::MacosArchive => "macos",
+            Kind::LinuxBin => "linux",
+            Kind::LinuxFlatpak => "flatpak",
+        }
+    }
+}
+
+impl Kind {
+    const ALL: [Kind; 5] = [
+        Kind::WindowsExe,
+        Kind::MacosDmg,
+        Kind::MacosArchive,
+        Kind::LinuxBin,
+        Kind::LinuxFlatpak,
+    ];
+
+    /// The file name CI builds, from the launcher name.
+    fn release_name(self, name: &str) -> String {
+        let lower = lower_name(name);
+        match self {
+            Kind::WindowsExe => format!("{name}.exe"),
+            Kind::MacosDmg => format!("{name}.dmg"),
+            Kind::MacosArchive => format!("{lower}_macos.tar.gz"),
+            Kind::LinuxBin => lower,
+            Kind::LinuxFlatpak => format!("{lower}.flatpak"),
+        }
+    }
+
+    /// Fixed, so the site's old-launcher rules don't need the launcher name.
+    fn site_name(self) -> &'static str {
+        match self {
+            Kind::WindowsExe => "launcher.exe",
+            Kind::MacosDmg => "launcher.dmg",
+            Kind::MacosArchive => "launcher_macos.tar.gz",
+            Kind::LinuxBin => "launcher",
+            Kind::LinuxFlatpak => "launcher.flatpak",
         }
     }
 }
 
 fn classify(file_name: &str, name: &str) -> Option<Kind> {
-    let lower = lower_name(name);
-    if file_name == format!("{name}.exe") {
-        Some(Kind::WindowsExe)
-    } else if file_name == format!("{name}.dmg") {
-        Some(Kind::MacosDmg)
-    } else if file_name == format!("{lower}_macos.tar.gz") {
-        Some(Kind::MacosArchive)
-    } else if file_name == lower {
-        Some(Kind::LinuxBin)
-    } else if file_name == format!("{lower}.flatpak") {
-        Some(Kind::LinuxFlatpak)
-    } else {
-        None
-    }
+    Kind::ALL
+        .into_iter()
+        .find(|kind| kind.release_name(name) == file_name)
 }
 
 const HREF: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
@@ -77,63 +121,103 @@ fn escape(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn render_index(
-    name: &str,
-    files: &[(Kind, String)],
-    versions: &BTreeMap<String, String>,
-) -> String {
-    let mut links = String::new();
-    for (kind, file) in files {
-        let version = versions
-            .get(kind.os())
-            .map(|v| format!(" <span>{}</span>", escape(v)))
-            .unwrap_or_default();
-        links.push_str(&format!(
-            "<li><a href=\"launcher/{}/{}\">{}</a>{version}</li>\n",
-            kind.os(),
-            percent_encoding::utf8_percent_encode(file, HREF),
-            kind.label()
-        ));
-    }
-    let name = escape(name);
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{name}</title>
-<style>
-:root {{ color-scheme: light dark; --bg: #fff; --fg: #1a1a1a; --muted: #6b6b6b; --accent: #b5651d; }}
-@media (prefers-color-scheme: dark) {{ :root {{ --bg: #161616; --fg: #ececec; --muted: #9a9a9a; --accent: #e0a060; }} }}
-body {{ margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, sans-serif; }}
-main {{ max-width: 32rem; margin: 4rem auto; padding: 0 16px; }}
-h1 {{ font-size: 1.75rem; margin: 0 0 1.5rem; }}
-ul {{ list-style: none; padding: 0; margin: 0; }}
-li {{ margin: 0.5rem 0; }}
-a {{ color: var(--accent); font-weight: 600; }}
-span {{ color: var(--muted); font-size: 0.875rem; margin-left: 0.5rem; }}
-</style>
-</head>
-<body>
-<main>
-<h1>{name}</h1>
-<ul>
-{links}</ul>
-</main>
-</body>
-</html>
-"#
-    )
+struct Page<'a> {
+    name: &'a str,
+    files: &'a [Kind],
+    versions: &'a BTreeMap<String, String>,
+    icon: Option<&'a str>,
+    source: Option<&'a str>,
 }
 
-pub async fn publish_launcher(
-    target: &str,
-    name: &str,
-    version: &str,
-    files: &[PathBuf],
-) -> anyhow::Result<()> {
+fn render_index(page: &Page) -> String {
+    let shown = page
+        .files
+        .iter()
+        .filter_map(|kind| page.versions.get(kind.os()))
+        .collect::<std::collections::BTreeSet<_>>();
+    let shared = (shown.len() == 1).then(|| shown.into_iter().next().expect("one version"));
+    let mut downloads = String::new();
+    for kind in page.files {
+        let mut detail = kind.detail().to_string();
+        if shared.is_none()
+            && let Some(version) = page.versions.get(kind.os())
+        {
+            detail.push_str(&format!(" · {}", escape(version)));
+        }
+        downloads.push_str(&format!(
+            r##"<a class="download" data-os="{os}" href="launcher/{os}/{href}" download="{file}">
+<svg><use href="#{icon}"/></svg>
+<span class="tag">Your system</span>
+<span class="title">{title}</span>
+<span class="detail">{detail}</span>
+<span class="button">Download</span>
+</a>
+"##,
+            os = kind.os(),
+            href = kind.site_name(),
+            file = escape(&kind.release_name(page.name)),
+            icon = kind.icon(),
+            title = kind.title(),
+        ));
+    }
+    if downloads.is_empty() {
+        downloads.push_str("<p class=\"empty\">No downloads yet</p>\n");
+    }
+    let name = escape(page.name);
+    let version = shared.map_or_else(String::new, |version| {
+        format!(r#"<p class="version">{}</p>"#, escape(version))
+    });
+    let (favicon, logo) = match page.icon {
+        Some(icon) => {
+            let icon = percent_encoding::utf8_percent_encode(icon, HREF);
+            (
+                format!(r#"<link rel="icon" href="{icon}">"#),
+                format!(r#"<img class="logo" src="{icon}" alt="">"#),
+            )
+        }
+        None => (String::new(), String::new()),
+    };
+    let source = page.source.map_or_else(String::new, |url| {
+        format!(
+            r##"<footer><a href="{}" target="_blank" rel="noopener noreferrer"><svg><use href="#github"/></svg>View source on GitHub</a></footer>"##,
+            escape(url)
+        )
+    });
+    include_str!("downloads.html")
+        .replace("{{name}}", &name)
+        .replace("{{favicon}}", &favicon)
+        .replace("{{logo}}", &logo)
+        .replace("{{version}}", &version)
+        .replace("{{downloads}}", downloads.trim_end())
+        .replace("{{source}}", &source)
+}
+
+pub struct LauncherRelease<'a> {
+    pub name: &'a str,
+    pub version: &'a str,
+    pub files: &'a [PathBuf],
+    pub icon: Option<&'a Path>,
+    pub source: Option<&'a str>,
+}
+
+pub async fn publish_launcher(target: &str, release: LauncherRelease<'_>) -> anyhow::Result<()> {
+    let LauncherRelease {
+        name,
+        version,
+        files,
+        icon,
+        source,
+    } = release;
     let storage = storage::open(target)?;
+    if let Some(icon) = icon {
+        let extension = icon
+            .extension()
+            .and_then(|e| e.to_str())
+            .context("the icon needs a file extension")?;
+        storage
+            .put_path(&format!("launcher/icon.{extension}"), icon, false)
+            .await?;
+    }
     let mut touched = vec![];
     for file in files {
         let file_name = file
@@ -145,7 +229,7 @@ pub async fn publish_launcher(
         };
         storage
             .put_path(
-                &format!("launcher/{}/{file_name}", kind.os()),
+                &format!("launcher/{}/{}", kind.os(), kind.site_name()),
                 file,
                 kind.executable(),
             )
@@ -166,7 +250,12 @@ pub async fn publish_launcher(
 
     let mut present = vec![];
     let mut versions = BTreeMap::new();
+    let mut stored_icon = None;
     for key in storage.list("launcher/").await? {
+        if key.starts_with("launcher/icon.") {
+            stored_icon = Some(key);
+            continue;
+        }
         let mut parts = key.splitn(3, '/').skip(1);
         let (Some(os), Some(file_name)) = (parts.next(), parts.next()) else {
             continue;
@@ -178,18 +267,26 @@ pub async fn publish_launcher(
                     String::from_utf8_lossy(&content).trim().to_string(),
                 );
             }
-        } else if let Some(kind) = classify(file_name, name)
-            && kind.os() == os
+        } else if let Some(kind) = Kind::ALL
+            .into_iter()
+            .find(|kind| kind.os() == os && kind.site_name() == file_name)
             && kind != Kind::MacosArchive
         {
-            present.push((kind, file_name.to_string()));
+            present.push(kind);
         }
     }
     present.sort();
     storage
         .put(
             "index.html",
-            render_index(name, &present, &versions).into_bytes(),
+            render_index(&Page {
+                name,
+                files: &present,
+                versions: &versions,
+                icon: stored_icon.as_deref(),
+                source,
+            })
+            .into_bytes(),
         )
         .await?;
     println!("published {name} {version}");
@@ -224,6 +321,31 @@ mod tests {
         assert_eq!(classify("other.zip", name), None);
     }
 
+    #[test]
+    fn shows_a_shared_version_once() {
+        let files = [Kind::WindowsExe, Kind::LinuxBin];
+        let page = |windows: &str| {
+            let versions = BTreeMap::from([
+                ("windows".to_string(), windows.to_string()),
+                ("linux".to_string(), "v2".to_string()),
+            ]);
+            render_index(&Page {
+                name: "L",
+                files: &files,
+                versions: &versions,
+                icon: None,
+                source: None,
+            })
+        };
+        let same = page("v2");
+        assert_eq!(same.matches("v2").count(), 1, "{same}");
+        let mixed = page("v1");
+        assert!(
+            mixed.contains(".exe · v1") && mixed.contains("Binary · v2"),
+            "{mixed}"
+        );
+    }
+
     #[tokio::test]
     async fn publishes_to_file_target() {
         let site = tempfile::tempdir().unwrap();
@@ -233,26 +355,32 @@ mod tests {
         std::fs::write(&bin, b"bin").unwrap();
         std::fs::write(&exe, b"exe").unwrap();
         let target = url::Url::from_directory_path(site.path()).unwrap();
-        publish_launcher(target.as_str(), "Potato Launcher", "v1.2.3", &[bin, exe])
-            .await
-            .unwrap();
+        let files = [bin, exe];
+        let release = LauncherRelease {
+            name: "Potato Launcher",
+            version: "v1.2.3",
+            files: &files,
+            icon: None,
+            source: Some("https://github.com/example/launcher"),
+        };
+        publish_launcher(target.as_str(), release).await.unwrap();
         let root = site.path();
         assert_eq!(
             std::fs::read_to_string(root.join("launcher/linux/version.txt")).unwrap(),
             "v1.2.3"
         );
-        assert!(root.join("launcher/windows/Potato Launcher.exe").exists());
+        assert!(root.join("launcher/windows/launcher.exe").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(root.join("launcher/linux/potato_launcher"))
+            let mode = std::fs::metadata(root.join("launcher/linux/launcher"))
                 .unwrap()
                 .permissions()
                 .mode();
             assert_eq!(mode & 0o111, 0o111);
         }
         let index = std::fs::read_to_string(root.join("index.html")).unwrap();
-        assert!(index.contains("launcher/linux/potato_launcher"));
+        assert!(index.contains(r#"href="launcher/linux/launcher" download="potato_launcher""#));
         assert!(index.contains("v1.2.3"));
     }
 }

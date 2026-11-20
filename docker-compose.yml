@@ -1,13 +1,9 @@
 services:
-  nginx:
-    image: nginx:1.29-alpine
-    container_name: ${CONTAINER_NAME_PREFIX:-potato-launcher}-nginx
-    environment:
-      LAUNCHER_NAME: ${LAUNCHER_NAME:-Potato Launcher}
+  site:
+    image: ghcr.io/petr1furious/potato-launcher-site:latest
+    container_name: ${CONTAINER_NAME_PREFIX:-potato-launcher}-site
     restart: unless-stopped
     ports:
       - "${PORT:-8000}:80"
     volumes:
       - ${SITE_DIR:-./site}:/usr/share/nginx/html:ro
-      - ./docker/nginx/templates:/etc/nginx/templates:ro
-      - ./docker/nginx/10-launcher-lower-name.envsh:/docker-entrypoint.d/10-launcher-lower-name.envsh:ro

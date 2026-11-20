@@ -20,8 +20,22 @@ if [ ${#files[@]} -eq 0 ]; then
   exit 1
 fi
 
+extra=()
+icon="${LAUNCHER_ICON:-$(grep -E '^LAUNCHER_ICON=' build.env | head -n1 | cut -d= -f2-)}"
+if [[ "$icon" == http*://* ]]; then
+  curl -fsSL -o "release/icon.${icon##*.}" "$icon"
+  icon="release/icon.${icon##*.}"
+fi
+if [ -n "$icon" ] && [ -f "$icon" ]; then
+  extra+=(--icon "$icon")
+fi
+if [ -n "${GITHUB_REPOSITORY:-}" ]; then
+  extra+=(--source "${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY")
+fi
+
 "$POTATO" publish-launcher \
   --target "$LAUNCHER_PUBLISH_TARGET" \
   --name "$LAUNCHER_NAME" \
   --version "$VERSION" \
+  "${extra[@]}" \
   "${files[@]}"

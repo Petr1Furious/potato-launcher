@@ -8,8 +8,9 @@ One folder is served as the site root:
 
 ```
 index.html                  # downloads page, written by `potato publish-launcher`
-launcher/<os>/<file>        # launcher builds
+launcher/<os>/launcher.exe  # launcher builds
 launcher/<os>/version.txt
+launcher/icon.png           # launcher icon, for the downloads page
 data/instance_manifest.json # the instance list launchers read
 data/instances/<id>/meta.json
 data/instances/<id>/publish.json
@@ -27,21 +28,17 @@ Instance repos publish into `data/` (their `[publish] target`), and launcher bui
 - Docker + Docker Compose plugin installed
 :::
 
-1. Download `docker-compose.yml`, `.env.example` and the nginx config from the repository:
+1. Download `docker-compose.yml` and `.env.example` from the repository:
 
 ```bash
 mkdir potato-site && cd potato-site
 wget https://raw.githubusercontent.com/Petr1Furious/potato-launcher/refs/heads/master/docker-compose.yml
 wget -O .env https://raw.githubusercontent.com/Petr1Furious/potato-launcher/refs/heads/master/.env.example
-mkdir -p docker/nginx/templates
-wget -O docker/nginx/templates/default.conf.template https://raw.githubusercontent.com/Petr1Furious/potato-launcher/refs/heads/master/docker/nginx/templates/default.conf.template
-wget -O docker/nginx/10-launcher-lower-name.envsh https://raw.githubusercontent.com/Petr1Furious/potato-launcher/refs/heads/master/docker/nginx/10-launcher-lower-name.envsh
 ```
 
 2. Edit `.env`:
 
 - **`SITE_DIR`**: The folder to serve. Default: `./site`
-- **`LAUNCHER_NAME`**: Must match the name the launcher was built with. It's used to map old launcher update URLs (see below).
 - **`PORT`**: Host port nginx listens on. Default: `8000`
 - **`CONTAINER_NAME_PREFIX`**: Prefix for Docker container names. Default: `potato-launcher`
 

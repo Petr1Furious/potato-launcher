@@ -1,12 +1,8 @@
 services:
-  nginx:
-    image: nginx:1.29-alpine
-    container_name: potato-launcher-dev-nginx
-    environment:
-      LAUNCHER_NAME: ${LAUNCHER_NAME:-Potato Launcher}
+  site:
+    build: ./docker/nginx
+    container_name: potato-launcher-dev-site
     ports:
       - "${PORT:-8000}:80"
     volumes:
       - ${SITE_DIR:-./dev-site}:/usr/share/nginx/html:ro
-      - ./docker/nginx/templates:/etc/nginx/templates:ro
-      - ./docker/nginx/10-launcher-lower-name.envsh:/docker-entrypoint.d/10-launcher-lower-name.envsh:ro

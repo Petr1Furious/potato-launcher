@@ -1,5 +1,0 @@
-#!/bin/sh
-# Same rule as LOWER_LAUNCHER_NAME in scripts/ci/set-build-env.sh.
-LAUNCHER_LOWER_NAME="$(printf '%s' "${LAUNCHER_NAME:-Potato Launcher}" | tr '[:upper:]' '[:lower:]' | tr -d "'" | tr ' ' '_')"
-export LAUNCHER_LOWER_NAME
-export LAUNCHER_NAME="${LAUNCHER_NAME:-Potato Launcher}"
