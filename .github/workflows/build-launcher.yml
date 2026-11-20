@@ -2,10 +2,6 @@ name: Build launcher
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Check"]
-    types:
-      - completed
   push:
     tags:
       - "v*"
@@ -25,9 +21,12 @@ env:
   LAUNCHER_UPDATE_GITHUB: ${{ vars.LAUNCHER_UPDATE_GITHUB }}
 
 jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+
   binaries:
     name: Build binaries
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    needs: check
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -81,7 +80,7 @@ jobs:
 
   flatpak:
     name: Build Flatpak package
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    needs: check
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/andyholmes/flatter/rust:25.08

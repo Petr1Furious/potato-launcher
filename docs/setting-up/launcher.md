@@ -57,7 +57,7 @@ After forking, set your own **LAUNCHER_APP_ID** and **LAUNCHER_NAME**. macOS and
 
 ## Publishing releases
 
-Every push builds the launcher and keeps the builds as workflow artifacts. A release only happens when you push a version tag:
+The launcher is built and released when you push a version tag:
 
 ```bash
 git tag v1.2.0
@@ -88,8 +88,7 @@ Make sure to enable actions in your fork by going to the "Actions" tab and click
 
 Then, the build runs:
 
-- After the **Check** workflow succeeds on a push
 - On every `v*` tag, which also makes a release
-- Manually via "Run workflow" on **Build launcher**
+- Manually via "Run workflow" on **Build launcher**, for any branch. This only keeps the builds as workflow artifacts, without a release.
 
 After a release, the launcher is available at `https://<your-domain>/` and `https://<your-domain>/launcher/<os>/`.
