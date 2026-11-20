@@ -21,7 +21,7 @@ use utils::{
 };
 
 use crate::{
-    config::{CONFIG_FILE, Config, object_key},
+    config::{CONFIG_FILE, Config, LoaderName, object_key},
     ctx::Ctx,
     index::Side,
     java_mirror::mirror_java_runtimes,
@@ -39,23 +39,35 @@ pub struct BuildOutput {
     pub referenced: BTreeSet<String>,
 }
 
-pub async fn mod_id_of(path: &Path) -> anyhow::Result<String> {
+pub async fn read_mod_id(path: &Path) -> anyhow::Result<Option<String>> {
     utils::mod_id::extract_mod_id(path)
         .await
-        .map_err(|err| anyhow::anyhow!("{err}"))?
-        .with_context(|| format!("can't read the mod id of {}", path.display()))
+        .map_err(|err| anyhow::anyhow!("{err}"))
 }
 
-pub async fn modrinth_mod_id(ctx: &Ctx, slug: &str) -> anyhow::Result<String> {
+pub async fn mod_id_of(path: &Path) -> anyhow::Result<String> {
+    let context = || format!("can't read the mod id of {}", path.display());
+    read_mod_id(path)
+        .await
+        .with_context(context)?
+        .with_context(context)
+}
+
+pub async fn modrinth_mod_id(ctx: &Ctx, loader: LoaderName, slug: &str) -> anyhow::Result<String> {
     let cache_path = ctx.cache_dir.join("modrinth-mod-ids.json");
     let mut cache: HashMap<String, String> = std::fs::read(&cache_path)
         .ok()
         .and_then(|content| serde_json::from_slice(&content).ok())
         .unwrap_or_default();
-    if let Some(id) = cache.get(slug) {
+    let key = format!("{slug}/{}", loader.as_str());
+    if let Some(id) = cache.get(&key) {
         return Ok(id.clone());
     }
-    let file = modrinth::latest_file(&ctx.client, slug).await?;
+    let filter = modrinth::Filter {
+        game_version: None,
+        loader: modrinth::Filter::loader_for("mods", loader),
+    };
+    let file = modrinth::pick_file(&ctx.client, slug, &filter, None).await?;
     let path = ctx
         .files
         .ensure(&[(file.url.parse()?, file.sha1.clone())])
@@ -63,7 +75,7 @@ pub async fn modrinth_mod_id(ctx: &Ctx, slug: &str) -> anyhow::Result<String> {
         .remove(&file.sha1)
         .expect("ensured");
     let id = mod_id_of(&path).await?;
-    cache.insert(slug.to_string(), id.clone());
+    cache.insert(key, id.clone());
     std::fs::create_dir_all(&ctx.cache_dir)?;
     std::fs::write(&cache_path, serde_json::to_vec(&cache)?)?;
     Ok(id)
@@ -222,7 +234,13 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
             uploads.insert(key.clone(), Upload::new(key, cached_path.clone(), label));
         }
         if dir == "mods" {
-            let mod_id = mod_id_of(cached_path).await?;
+            let mod_id = mod_id_of(cached_path).await.with_context(|| {
+                entry
+                    .file
+                    .index
+                    .as_ref()
+                    .map_or_else(|| format!("{dir}/{filename}"), |(path, _)| path.clone())
+            })?;
             mod_ids.insert(entry.file.name(), mod_id.clone());
             let url = if mirror {
                 let key = object_key(&entry.sha1);
@@ -263,7 +281,7 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
     let mut blocked = vec![];
     for name in &config.client.blocked {
         let id = match name.strip_prefix("modrinth:") {
-            Some(slug) => modrinth_mod_id(ctx, slug).await?,
+            Some(slug) => modrinth_mod_id(ctx, config.loader, slug).await?,
             None => name.clone(),
         };
         if !blocked.contains(&id) {

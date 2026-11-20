@@ -1,13 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::{
+    io::Read as _,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, bail};
 
 use crate::{
-    build::{mod_id_of, modrinth_mod_id},
+    build::{mod_id_of, modrinth_mod_id, read_mod_id},
     config::{CONFIG_FILE, INDEX_DIRS, LocalConfig, TargetType, set_local_target, set_versions},
     ctx::Ctx,
     git::Git,
-    index::{IndexFile, Side, index_dir_of, index_name, index_path, normalize_os},
+    index::{INDEX_SUFFIX, IndexFile, Side, index_dir_of, index_name, index_path, normalize_os},
     modrinth,
     target::{PRISM, check_folder, parse_mmc_pack, synced_file},
 };
@@ -168,45 +171,93 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
         .iter()
         .map(|os| normalize_os(os))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let side = options.side.as_deref().map(Side::parse).transpose()?;
+    let mut side = options.side.as_deref().map(Side::parse).transpose()?;
 
     let local = Path::new(source);
-    let (sha1, path, source_url, filename) = if local.is_file() {
-        let sha1 = utils::files::hash_file(local).await?;
-        let path = ctx.files.insert(local, &sha1).await?;
-        let filename = local
-            .file_name()
-            .and_then(|n| n.to_str())
-            .context("bad file name")?;
-        (sha1, path, None, filename.to_string())
-    } else {
-        let url: url::Url = source
-            .parse()
-            .with_context(|| format!("{source} is neither a file nor a URL"))?;
-        let (sha1, path) = ctx.files.fetch_unknown(&ctx.client, &url).await?;
-        let filename = url
-            .path_segments()
-            .and_then(|mut s| s.next_back().map(str::to_string))
-            .filter(|n| !n.is_empty())
-            .context("can't tell the file name from the URL")?;
-        let filename = percent_encoding::percent_decode_str(&filename)
-            .decode_utf8_lossy()
-            .into_owned();
-        (sha1, path, Some(url), filename)
-    };
+    let (sha1, path, source_url, filename, mut found, default_name) =
+        if let Some(spec) = source.strip_prefix("modrinth:") {
+            let (slug, pin) = match spec.split_once('@') {
+                Some((slug, pin)) => (slug, Some(pin)),
+                None => (spec, None),
+            };
+            let filter = modrinth::Filter {
+                game_version: Some(&config.minecraft),
+                loader: modrinth::Filter::loader_for(&options.dir, config.loader),
+            };
+            let file = modrinth::pick_file(&ctx.client, slug, &filter, pin).await?;
+            let path = ctx
+                .files
+                .ensure(&[(file.url.parse()?, file.sha1.clone())])
+                .await?
+                .remove(&file.sha1)
+                .expect("ensured");
+            let filename = file.filename.clone();
+            (
+                file.sha1.clone(),
+                path,
+                None,
+                filename,
+                Some(file),
+                slug.to_string(),
+            )
+        } else if local.is_file() {
+            let sha1 = utils::files::hash_file(local).await?;
+            let path = ctx.files.insert(local, &sha1).await?;
+            let filename = local
+                .file_name()
+                .and_then(|n| n.to_str())
+                .context("bad file name")?;
+            (
+                sha1,
+                path,
+                None,
+                filename.to_string(),
+                None,
+                stem_of(filename),
+            )
+        } else {
+            let url: url::Url = source.parse().with_context(|| {
+                format!("{source} is neither a file, a URL nor modrinth:<slug>")
+            })?;
+            if let Some(suggestion) = modrinth_page(&url) {
+                bail!("{source} is a web page, use modrinth:{suggestion}");
+            }
+            let (sha1, path) = ctx.files.fetch_unknown(&ctx.client, &url).await?;
+            let filename = url
+                .path_segments()
+                .and_then(|mut s| s.next_back().map(str::to_string))
+                .filter(|n| !n.is_empty())
+                .context("can't tell the file name from the URL")?;
+            let filename = percent_encoding::percent_decode_str(&filename)
+                .decode_utf8_lossy()
+                .into_owned();
+            let name = stem_of(&filename);
+            (sha1, path, Some(url), filename, None, name)
+        };
+    check_archive(&options.dir, &path)
+        .await
+        .with_context(|| format!("can't add {source}"))?;
+    if found.is_none() {
+        found = modrinth::file_by_sha1(&ctx.client, &sha1).await?;
+    }
+    if side.is_none()
+        && let Some(found) = &found
+    {
+        side = Some(
+            modrinth::project(&ctx.client, &found.project_id)
+                .await?
+                .side(),
+        );
+    }
 
-    let stem = filename
-        .rsplit_once('.')
-        .map_or(filename.as_str(), |(s, _)| s)
-        .to_string();
-    let mut entry = match modrinth::file_by_sha1(&ctx.client, &sha1).await? {
+    let mut entry = match &found {
         Some(found) => {
-            let mut entry = IndexFile::new(&stem, &filename, &found.url, &sha1);
+            let mut entry = IndexFile::new(&default_name, &filename, &found.url, &sha1);
             entry.set_modrinth(&found.project_id, &found.version_id);
             entry
         }
         None => match source_url {
-            Some(url) => IndexFile::new(&stem, &filename, url.as_str(), &sha1),
+            Some(url) => IndexFile::new(&default_name, &filename, url.as_str(), &sha1),
             None => {
                 let rel = format!("{}/{filename}", options.dir);
                 let dest = ctx.repo.join(&rel);
@@ -219,7 +270,7 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
                 if side.is_none() && os.is_empty() {
                     return Ok(());
                 }
-                IndexFile::metadata(&stem, &filename)
+                IndexFile::metadata(&default_name, &filename)
             }
         },
     };
@@ -228,7 +279,7 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
     }
     entry.set_os(&os);
 
-    let mut name = options.name.unwrap_or_else(|| stem.clone());
+    let mut name = options.name.unwrap_or(default_name);
     let mut rel = index_path(&options.dir, &name);
     if ctx.repo.join(&rel).exists() && !os.is_empty() {
         name = format!("{name}-{}", os.join("-"));
@@ -241,7 +292,101 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
     std::fs::create_dir_all(full.parent().expect("has parent"))?;
     std::fs::write(&full, entry.to_bytes())?;
     println!("added {rel}");
+
+    if options.dir == "mods"
+        && let Some(found) = &found
+    {
+        let loader = modrinth::Filter::loader_for("mods", config.loader);
+        match missing_dependencies(ctx, &found.required, loader).await {
+            Ok(missing) => {
+                for slug in missing {
+                    println!("missing dependency {slug}: potato mod add modrinth:{slug}");
+                }
+            }
+            Err(err) => eprintln!("can't check dependencies: {err:#}"),
+        }
+    }
     Ok(())
+}
+
+fn stem_of(filename: &str) -> String {
+    filename
+        .rsplit_once('.')
+        .map_or(filename, |(stem, _)| stem)
+        .to_string()
+}
+
+/// `modrinth.com/mod/voxy/version/0.2.20` -> `voxy@0.2.20`
+fn modrinth_page(url: &url::Url) -> Option<String> {
+    if url.host_str() != Some("modrinth.com") {
+        return None;
+    }
+    let mut segments = url.path_segments()?.skip(1);
+    let slug = segments.next().filter(|slug| !slug.is_empty())?;
+    match (segments.next(), segments.next()) {
+        (Some("version"), Some(version)) => Some(format!("{slug}@{version}")),
+        _ => Some(slug.to_string()),
+    }
+}
+
+async fn check_archive(dir: &str, path: &Path) -> anyhow::Result<()> {
+    if dir == "mods" {
+        read_mod_id(path).await?;
+        return Ok(());
+    }
+    let mut magic = [0; 4];
+    let read = std::fs::File::open(path)?.read_exact(&mut magic);
+    if read.is_err() || magic != *b"PK\x03\x04" {
+        bail!("not a zip archive");
+    }
+    Ok(())
+}
+
+/// Slugs of required projects no mod in the repo belongs to.
+async fn missing_dependencies(
+    ctx: &Ctx,
+    required: &[String],
+    loader: Option<&str>,
+) -> anyhow::Result<Vec<String>> {
+    if required.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut sha1s = vec![];
+    if let Ok(items) = std::fs::read_dir(ctx.repo.join("mods/.index")) {
+        for item in items {
+            let path = item?.path();
+            if !path.to_string_lossy().ends_with(INDEX_SUFFIX) {
+                continue;
+            }
+            let entry = IndexFile::parse(&std::fs::read_to_string(&path)?)
+                .with_context(|| path.display().to_string())?;
+            sha1s.extend(entry.sha1().map(str::to_string));
+        }
+    }
+    if let Ok(items) = std::fs::read_dir(ctx.repo.join("mods")) {
+        for item in items {
+            let path = item?.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "jar") {
+                sha1s.push(utils::files::hash_file(&path).await?);
+            }
+        }
+    }
+    let present = modrinth::projects_of_files(&ctx.client, &sha1s).await?;
+    let missing = required
+        .iter()
+        .filter(|id| !present.contains(*id))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(modrinth::projects(&ctx.client, &missing)
+        .await?
+        .into_iter()
+        // A version shared by several loaders lists the dependencies of all of them.
+        .filter(|project| loader.is_none_or(|loader| project.loaders.iter().any(|l| l == loader)))
+        .map(|project| project.slug)
+        .collect())
 }
 
 pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
@@ -356,7 +501,7 @@ pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
 
 pub async fn mod_id(ctx: &mut Ctx, source: &str) -> anyhow::Result<()> {
     let id = match source.strip_prefix("modrinth:") {
-        Some(slug) => modrinth_mod_id(ctx, slug).await?,
+        Some(slug) => modrinth_mod_id(ctx, ctx.config()?.loader, slug).await?,
         None => mod_id_of(Path::new(source)).await?,
     };
     println!("{id}");
@@ -373,22 +518,11 @@ pub fn mod_set(ctx: &Ctx, name: &str, os: &[String], side: Option<&str>) -> anyh
     let mut entry = match std::fs::read_to_string(&full) {
         Ok(content) => IndexFile::parse(&content).with_context(|| rel.clone())?,
         Err(_) => {
-            let filename = [
-                name.to_string(),
-                format!("{name}.jar"),
-                format!("{name}.zip"),
-            ]
-            .into_iter()
-            .find(|filename| ctx.repo.join(dir).join(filename).is_file())
-            .with_context(|| {
-                format!("no {rel} or committed {dir}/{name}, see `potato mod list`")
-            })?;
-            let stem = filename
-                .rsplit_once('.')
-                .map_or(filename.as_str(), |(stem, _)| stem);
-            rel = index_path(dir, stem);
+            let filename = committed_file(ctx, dir, name, &rel)?;
+            let stem = stem_of(&filename);
+            rel = index_path(dir, &stem);
             full = ctx.repo.join(&rel);
-            IndexFile::metadata(stem, &filename)
+            IndexFile::metadata(&stem, &filename)
         }
     };
     if !os.is_empty() {
@@ -420,6 +554,59 @@ pub fn mod_set(ctx: &Ctx, name: &str, os: &[String], side: Option<&str>) -> anyh
             os.join(", ")
         }
     );
+    Ok(())
+}
+
+fn committed_file(ctx: &Ctx, dir: &str, name: &str, rel: &str) -> anyhow::Result<String> {
+    [
+        name.to_string(),
+        format!("{name}.jar"),
+        format!("{name}.zip"),
+    ]
+    .into_iter()
+    .find(|filename| ctx.repo.join(dir).join(filename).is_file())
+    .with_context(|| format!("no {rel} or committed {dir}/{name}, see `potato mod list`"))
+}
+
+pub fn mod_remove(ctx: &Ctx, name: &str) -> anyhow::Result<()> {
+    let (dir, name) = name.split_once('/').unwrap_or(("mods", name));
+    let rel = index_path(dir, name);
+    let full = ctx.repo.join(&rel);
+    let committed = match std::fs::read_to_string(&full) {
+        Ok(content) => {
+            let entry = IndexFile::parse(&content).with_context(|| rel.clone())?;
+            std::fs::remove_file(&full)?;
+            println!("removed {rel}");
+            entry
+                .url()
+                .is_none()
+                .then(|| entry.filename().map(str::to_string))
+                .flatten()
+        }
+        Err(_) => Some(committed_file(ctx, dir, name, &rel)?),
+    };
+    if let Some(filename) = committed {
+        let path = ctx.repo.join(dir).join(&filename);
+        if path.is_file() {
+            std::fs::remove_file(path)?;
+            println!("removed {dir}/{filename}");
+        }
+    }
+    if dir == "mods" {
+        let client = ctx.config()?.client;
+        let mut lists = vec![("required", &client.required)];
+        lists.extend(
+            client
+                .optional_sets
+                .iter()
+                .map(|set| (set.id.as_str(), &set.mods)),
+        );
+        for (list, mods) in lists {
+            if mods.iter().any(|m| m == name) {
+                println!("{CONFIG_FILE} still lists {name} in {list}");
+            }
+        }
+    }
     Ok(())
 }
 

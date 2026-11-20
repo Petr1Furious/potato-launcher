@@ -361,7 +361,9 @@ repository URL.
   else a server; the output names the kind. `add` checks the folder (Prism: has
   a `minecraft/` folder; server: no `mmc-pack.json`) and stores an absolute
   path.
-- `potato mod add <file|url> [--os] [--side] [--dir] [--name]`
+- `potato mod add <file|url|modrinth:slug[@version]> [--os] [--side] [--dir] [--name]`
+- `potato mod remove <name>`: deletes the index file and the committed file it
+  describes.
 - `potato mod list`: index name, mod id, side and OS of every entry.
 - `potato mod id <jar | modrinth:slug>`
 - `potato mod set <name> [--os <os>]... [--side <side>]`: `--os all` clears the

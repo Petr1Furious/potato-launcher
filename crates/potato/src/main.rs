@@ -146,8 +146,9 @@ enum TargetAction {
 
 #[derive(Subcommand)]
 enum ModAction {
-    /// Add a mod or pack from a file or URL.
+    /// Add a mod or pack.
     Add {
+        /// A file, a URL or `modrinth:<slug>[@version]`.
         source: String,
         /// Only for these OSes (windows, macos, linux).
         #[arg(long)]
@@ -160,6 +161,11 @@ enum ModAction {
         /// Index file name, without .pw.toml.
         #[arg(long)]
         name: Option<String>,
+    },
+    /// Remove a mod or pack, with its committed file.
+    Remove {
+        /// Index name, as `mod list` shows it.
+        name: String,
     },
     /// List mods and packs in the repo.
     List,
@@ -257,6 +263,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             )
             .await
         }
+        Command::Mod {
+            action: ModAction::Remove { name },
+        } => commands::mod_remove(&ctx, &name),
         Command::Mod {
             action: ModAction::List,
         } => commands::mods(&mut ctx).await,
