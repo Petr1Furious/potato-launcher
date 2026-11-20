@@ -28,13 +28,18 @@ use log::LevelFilter;
 
 pub fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .user_agent(concat!("potato-launcher/", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("potato-launcher/{VERSION}"))
         .build()
         .expect("http client")
 }
 
+const VERSION: &str = match launcher_build_config::version() {
+    Some(version) => version,
+    None => "dev",
+};
+
 #[derive(Parser)]
-#[command(name = "potato", about = "Pack repos for Potato Launcher", version)]
+#[command(name = "potato", about = "Pack repos for Potato Launcher", version = VERSION)]
 struct Cli {
     /// Pack repo to work in.
     #[arg(short = 'C', long = "repo", default_value = ".", global = true)]

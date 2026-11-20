@@ -8,8 +8,7 @@
   openssh,
 }:
 rustPlatform.buildRustPackage {
-  pname = "potato";
-  version = "0.1.0";
+  name = "potato";
   src = ./../..;
   cargoLock.lockFile = ../../Cargo.lock;
   cargoBuildFlags = [

@@ -74,7 +74,7 @@ fn release_lower(value: &str) -> String {
     value.to_lowercase().replace('\'', "").replace(' ', "_")
 }
 
-pub fn version() -> Option<&'static str> {
+pub const fn version() -> Option<&'static str> {
     VERSION
 }
 

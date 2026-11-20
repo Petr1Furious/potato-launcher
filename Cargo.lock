@@ -2117,7 +2117,7 @@ dependencies = [
 
 [[package]]
 name = "generate"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "async-trait",
  "globset",
@@ -3475,7 +3475,7 @@ dependencies = [
 
 [[package]]
 name = "instance"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "async_zip",
  "futures",
@@ -3730,7 +3730,7 @@ dependencies = [
 
 [[package]]
 name = "launcher"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -3746,7 +3746,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-auth"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "async-trait",
  "http-body-util",
@@ -3767,7 +3767,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-backend"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3804,7 +3804,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-bridge"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "instance",
  "launcher-auth",
@@ -3814,14 +3814,14 @@ dependencies = [
 
 [[package]]
 name = "launcher-build-config"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "url",
 ]
 
 [[package]]
 name = "launcher-frontend"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
@@ -3840,7 +3840,7 @@ dependencies = [
 
 [[package]]
 name = "launcher-i18n"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "indexmap",
  "sys-locale",
@@ -5238,7 +5238,7 @@ dependencies = [
 
 [[package]]
 name = "potato"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5252,6 +5252,7 @@ dependencies = [
  "indicatif",
  "instance",
  "launcher-auth",
+ "launcher-build-config",
  "libc",
  "log",
  "object_store",
@@ -7605,7 +7606,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "utils"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "anyhow",
  "async_zip",
