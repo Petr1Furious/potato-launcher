@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - '**'
+      - '!master'
     paths-ignore:
       - 'docs/**'
       - '.github/workflows/docs.yml'
@@ -29,6 +30,8 @@ jobs:
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'

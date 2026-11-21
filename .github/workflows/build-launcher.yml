@@ -3,8 +3,17 @@ name: Build launcher
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
     tags:
       - "v*"
+    paths-ignore:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/master' }}
 
 defaults:
   run:
@@ -40,6 +49,8 @@ jobs:
         run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'

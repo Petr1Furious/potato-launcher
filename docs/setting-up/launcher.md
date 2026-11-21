@@ -88,6 +88,7 @@ Make sure to enable actions in your fork by going to the "Actions" tab and click
 
 Then, the build runs:
 
+- On every push to `master`, keeping the builds as workflow artifacts
 - On every `v*` tag, which also makes a release
 - Manually via "Run workflow" on **Build launcher**, for any branch. This only keeps the builds as workflow artifacts, without a release.
 
