@@ -586,3 +586,75 @@ fn optional_set_only_uses_entry_for_current_os() {
         dirs.mods_dir.join("voxy-current.jar")
     );
 }
+
+fn extras_set(mode: ModSyncMode) -> ModSyncSettings {
+    ModSyncSettings {
+        optional_sets: vec![OptionalModSet {
+            id: "extras".to_string(),
+            display_name: LocalizedString::Plain("Extras".to_string()),
+            enabled_by_default: true,
+            mod_ids: vec!["jei".to_string()],
+        }],
+        ..default_settings(mode)
+    }
+}
+
+#[test]
+fn delta_optional_set_removes_stale_path_when_filename_changes() {
+    let dirs = TestDirs::new();
+    write_fabric_mod_jar(&dirs.mods_dir.join("jei-old.jar"), "jei");
+    let entry = mod_entry("jei", "jei-new.jar", "bbb");
+    let mut params = dirs.install_params(InstallCause::Update);
+    params.previous_mod_entries = vec![mod_entry("jei", "jei-old.jar", "aaa")];
+
+    let result = plan(
+        std::slice::from_ref(&entry),
+        &extras_set(ModSyncMode::Delta),
+        &params,
+    );
+
+    assert_eq!(
+        result
+            .tasks
+            .delete_tasks
+            .iter()
+            .map(|task| &task.path)
+            .collect::<Vec<_>>(),
+        vec![&dirs.mods_dir.join("jei-old.jar")]
+    );
+    assert_eq!(
+        result.tasks.enable_optional_mod_tasks[0].target,
+        dirs.mods_dir.join("jei-new.jar")
+    );
+}
+
+#[test]
+fn unused_optional_cache_files_are_deleted() {
+    let dirs = TestDirs::new();
+    for name in ["jei-old.jar", "jei-new.jar", "removed.jar"] {
+        std::fs::write(dirs.optional_mods_dir.join(name), b"jar").unwrap();
+    }
+    let entry = mod_entry("jei", "jei-new.jar", "bbb");
+
+    for mode in [ModSyncMode::Delta, ModSyncMode::Mirror] {
+        let mut params = dirs.install_params(InstallCause::Update);
+        params.previous_mod_entries = vec![mod_entry("jei", "jei-old.jar", "aaa")];
+        let result = plan(std::slice::from_ref(&entry), &extras_set(mode), &params);
+
+        let mut deleted = result
+            .tasks
+            .delete_tasks
+            .iter()
+            .map(|task| task.path.clone())
+            .collect::<Vec<_>>();
+        deleted.sort();
+        assert_eq!(
+            deleted,
+            vec![
+                dirs.optional_mods_dir.join("jei-old.jar"),
+                dirs.optional_mods_dir.join("removed.jar"),
+            ],
+            "{mode:?}"
+        );
+    }
+}

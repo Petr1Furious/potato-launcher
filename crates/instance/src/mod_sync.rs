@@ -99,6 +99,7 @@ struct ModSyncPlanner<'a> {
     params: &'a InstallParams,
     local_mods: HashMap<String, Vec<PathBuf>>,
     local_other_paths: Vec<PathBuf>,
+    optional_cache_files: Vec<PathBuf>,
     previous: HashMap<&'a str, &'a ModEntry>,
     required: HashSet<&'a str>,
     blocked: HashSet<&'a str>,
@@ -114,12 +115,19 @@ impl<'a> ModSyncPlanner<'a> {
         params: &'a InstallParams,
     ) -> Result<Self, ModSyncError> {
         let scan = scan_mods_dir(&params.instance_dir.mods_dir()).await?;
+        let optional_cache_files =
+            utils::files::list_dir_shallow(&params.instance_dir.optional_mods_dir())
+                .await?
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect();
         Ok(Self {
             new_entries,
             settings,
             params,
             local_mods: scan.mods,
             local_other_paths: scan.other_paths,
+            optional_cache_files,
             previous: params
                 .previous_mod_entries
                 .iter()
@@ -144,6 +152,7 @@ impl<'a> ModSyncPlanner<'a> {
         } else {
             self.plan_mirror()?;
         }
+        self.delete_unused_optional_cache()?;
 
         Ok(self.finish())
     }
@@ -234,6 +243,21 @@ impl<'a> ModSyncPlanner<'a> {
         Ok(())
     }
 
+    fn delete_unused_optional_cache(&mut self) -> Result<(), ModSyncError> {
+        let mut used = HashSet::new();
+        for entry in self.new_entries {
+            if self.optional_mod_to_set.contains_key(entry.mod_id.as_str()) {
+                used.insert(self.optional_cache_path(entry)?);
+            }
+        }
+        for path in self.optional_cache_files.clone() {
+            if !used.contains(&path) {
+                self.push_delete(path);
+            }
+        }
+        Ok(())
+    }
+
     fn delete_other_paths(&mut self) {
         for path in self.local_other_paths.clone() {
             self.push_delete(path);
@@ -278,6 +302,7 @@ impl<'a> ModSyncPlanner<'a> {
         }
 
         if self.optional_set_enabled(mod_id) {
+            self.delete_stale_paths(mod_id, &target_path);
             if self.should_warn_added(mod_id) {
                 self.warn_added(mod_id, target_path.clone());
             }
@@ -318,14 +343,18 @@ impl<'a> ModSyncPlanner<'a> {
 
     fn replace_local_mod(&mut self, entry: &ModEntry) {
         let expected_path = self.mod_target_path(entry);
-        if let Some(paths) = self.local_mods.get(entry.mod_id.as_str()).cloned() {
+        self.delete_stale_paths(&entry.mod_id, &expected_path);
+        self.push_check(entry, expected_path);
+    }
+
+    fn delete_stale_paths(&mut self, mod_id: &str, expected_path: &Path) {
+        if let Some(paths) = self.local_mods.get(mod_id).cloned() {
             for old_path in paths {
                 if old_path != expected_path {
                     self.push_delete(old_path);
                 }
             }
         }
-        self.push_check(entry, expected_path);
     }
 
     fn delete_unallowed_local_mods(
