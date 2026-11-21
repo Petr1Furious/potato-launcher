@@ -734,6 +734,54 @@ async fn committed_jar_and_download_url_conflict() {
 }
 
 #[tokio::test]
+async fn enabled_and_disabled_copies_conflict() {
+    let mut s = Setup::new();
+    s.prism_mod("jei", "jei.jar.disabled", b"old", None).await;
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    s.commit("pull");
+
+    s.prism_mod("jei", "jei.jar", b"new", None).await;
+    let err = sync::pull(&mut s.ctx, "prism", false).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("mods/jei.jar is both enabled and disabled"),
+        "{err}"
+    );
+    let err = sync::status(&mut s.ctx).await.unwrap_err();
+    assert!(err.to_string().contains("remove one"), "{err}");
+}
+
+#[tokio::test]
+async fn enabled_jars_with_one_mod_id_conflict() {
+    let mut s = Setup::new();
+    s.prism_mod(
+        "voxy-old",
+        "voxy-old.jar.disabled",
+        &fabric_jar("voxy", "1.0").await,
+        None,
+    )
+    .await;
+    s.prism_mod("voxy", "voxy.jar", &fabric_jar("voxy", "2.0").await, None)
+        .await;
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    s.commit("pull");
+
+    s.prism_mod(
+        "voxy-fork",
+        "voxy-fork.jar",
+        &fabric_jar("voxy", "3.0").await,
+        None,
+    )
+    .await;
+    let err = sync::pull(&mut s.ctx, "prism", false).await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("mods/voxy-fork.jar and mods/voxy.jar are both mod \"voxy\""),
+        "{err}"
+    );
+}
+
+#[tokio::test]
 async fn committed_jars_work_with_git_lfs() {
     let has_lfs = Command::new("git")
         .args(["lfs", "version"])

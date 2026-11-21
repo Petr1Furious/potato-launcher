@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, bail};
 
 use crate::{
-    build::mod_id_of,
+    build::{mod_id_of, read_mod_id},
     config::{Config, INDEX_DIRS, LOCAL_DIR, set_versions},
     ctx::Ctx,
     git::{Files, Git, SNAPSHOT_PREFIX, as_blob_ref, blob_ref, is_committed_binary},
@@ -281,6 +281,33 @@ async fn read_prism(
             }
         }
         binaries.sort();
+        let mut seen = HashSet::new();
+        for (name, _) in &binaries {
+            let filename = name.strip_suffix(DISABLED_SUFFIX).unwrap_or(name);
+            if !seen.insert(filename) {
+                bail!(
+                    "{dir}/{filename} is both enabled and disabled in {}, remove one",
+                    target.name
+                );
+            }
+        }
+        if dir == "mods" {
+            let mut by_mod_id = HashMap::new();
+            for (name, path) in &binaries {
+                if name.ends_with(DISABLED_SUFFIX) {
+                    continue;
+                }
+                let Ok(Some(mod_id)) = read_mod_id(path).await else {
+                    continue;
+                };
+                if let Some(other) = by_mod_id.insert(mod_id.clone(), name) {
+                    bail!(
+                        "mods/{other} and mods/{name} are both mod \"{mod_id}\" in {}, remove one",
+                        target.name
+                    );
+                }
+            }
+        }
         let present = binaries
             .iter()
             .map(|(name, _)| {
