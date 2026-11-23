@@ -297,7 +297,7 @@ async fn read_prism(
                 if name.ends_with(DISABLED_SUFFIX) {
                     continue;
                 }
-                let Ok(Some(mod_id)) = read_mod_id(path).await else {
+                let Ok(Some(mod_id)) = read_mod_id(path, name).await else {
                     continue;
                 };
                 if let Some(other) = by_mod_id.insert(mod_id.clone(), name) {
@@ -400,6 +400,7 @@ async fn read_prism(
                     &vanished,
                     &base_committed,
                     &path,
+                    &filename,
                 ))
                 .await;
             }
@@ -459,8 +460,9 @@ async fn find_update_by_mod_id(
     vanished: &[(String, IndexFile)],
     base_committed: &HashMap<String, (String, String, Vec<u8>)>,
     jar: &Path,
+    filename: &str,
 ) -> Option<usize> {
-    let new_id = mod_id_of(jar).await.ok()?;
+    let new_id = mod_id_of(jar, filename).await.ok()?;
     let mut matches = vec![];
     for (position, (_, base)) in vanished.iter().enumerate() {
         let old_jar = match (base.url(), base.sha1()) {
@@ -486,7 +488,11 @@ async fn find_update_by_mod_id(
             },
         };
         if let Some(old_jar) = old_jar
-            && mod_id_of(&old_jar).await.ok().as_deref() == Some(new_id.as_str())
+            && mod_id_of(&old_jar, base.filename().unwrap_or_default())
+                .await
+                .ok()
+                .as_deref()
+                == Some(new_id.as_str())
         {
             matches.push(position);
         }
@@ -1060,7 +1066,11 @@ async fn apply_jars(
                     renamed_from_disabled
                         || (target.is_prism()
                             && dir == "mods"
-                            && off_by_default.contains(&file.name()))
+                            && !off_by_default.is_empty()
+                            && matches!(
+                                read_mod_id(&cached[sha1], filename).await,
+                                Ok(Some(id)) if off_by_default.contains(&id)
+                            ))
                 }
             };
             let (dest, other) = if new_disabled {

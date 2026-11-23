@@ -5,7 +5,7 @@ use anyhow::{Context, bail};
 use crate::{
     config::{Config, INDEX_DIRS},
     git::{Files, as_blob_ref, is_committed_binary},
-    index::{IndexFile, Side, index_dir_of, index_name},
+    index::{IndexFile, Side, index_dir_of},
 };
 
 pub enum Source {
@@ -32,18 +32,6 @@ impl PackFile {
         self.index
             .as_ref()
             .map_or(Ok(true), |(_, index)| index.applies_to_os(os))
-    }
-
-    /// The name `required` and optional sets use.
-    pub fn name(&self) -> String {
-        match &self.index {
-            Some((path, _)) => index_name(path).to_string(),
-            None => self
-                .filename
-                .rsplit_once('.')
-                .map_or(self.filename.as_str(), |(stem, _)| stem)
-                .to_string(),
-        }
     }
 
     pub fn os(&self) -> anyhow::Result<Vec<&'static str>> {

@@ -124,11 +124,11 @@ exclude = ["config/somemod.toml"]
 
 - **resource_sync**: When the launcher checks the client jar, libraries and assets.
 - **mod_sync**: How a player's `mods/` folder is reconciled with the pack. `delta` only touches the mods the pack changed, so players can add their own. `mirror` removes everything that isn't in the pack.
-- **required**: Index names of mods players can't remove.
-- **blocked**: Mods players can't add, as mod ids or `modrinth:<slug>`. Use `potato mod id <jar | modrinth:slug>` to find a mod id.
+- **required**: Ids of mods players can't remove.
+- **blocked**: Mods players can't add, as mod ids or `modrinth:<slug>`.
 - **optional_sets**: Groups of mods players can turn on or off in the launcher.
 
-Index names are the index file names without `.pw.toml`, or the jar name without `.jar` for a committed jar. `potato mod list` lists them with their mod ids.
+`potato mod list` shows the ids of the pack's mods. For other mods, use `potato mod id <jar | modrinth:slug>`.
 
 ### `[[paths]]`
 
@@ -185,6 +185,8 @@ To change them, use `potato mod set`:
 ```bash
 potato mod set <name> [--os <os>]... [--side <side>]
 ```
+
+`<name>` is the index file name without `.pw.toml`, or the jar name without `.jar` for a committed jar. `potato mod list` lists them.
 
 `--os all` makes a mod apply to every OS again. For packs, use `resourcepacks/<name>` and so on as the name.
 

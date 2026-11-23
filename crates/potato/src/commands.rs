@@ -241,7 +241,7 @@ pub async fn add(ctx: &mut Ctx, source: &str, options: AddOptions) -> anyhow::Re
             let name = stem_of(&filename);
             (sha1, path, Some(url), filename, None, name)
         };
-    check_archive(&options.dir, &path)
+    check_archive(&options.dir, &path, &filename)
         .await
         .with_context(|| format!("can't add {source}"))?;
     if found.is_none() {
@@ -336,9 +336,9 @@ fn modrinth_page(url: &url::Url) -> Option<String> {
     }
 }
 
-async fn check_archive(dir: &str, path: &Path) -> anyhow::Result<()> {
+async fn check_archive(dir: &str, path: &Path, filename: &str) -> anyhow::Result<()> {
     if dir == "mods" {
-        read_mod_id(path).await?;
+        read_mod_id(path, filename).await?;
         return Ok(());
     }
     let mut magic = [0; 4];
@@ -468,7 +468,9 @@ pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
                 .filter(|path| path.is_file()),
         };
         let mod_id = match jar {
-            Some(path) if dir == "mods" => mod_id_of(&path).await.unwrap_or_else(|_| "?".into()),
+            Some(path) if dir == "mods" => mod_id_of(&path, entry.filename().unwrap_or_default())
+                .await
+                .unwrap_or_else(|_| "?".into()),
             _ => "-".into(),
         };
         let os = entry.os()?.join(",");
@@ -509,7 +511,11 @@ pub async fn mods(ctx: &mut Ctx) -> anyhow::Result<()> {
 pub async fn mod_id(ctx: &mut Ctx, source: &str) -> anyhow::Result<()> {
     let id = match source.strip_prefix("modrinth:") {
         Some(slug) => modrinth_mod_id(ctx, ctx.config()?.loader, slug).await?,
-        None => mod_id_of(Path::new(source)).await?,
+        None => {
+            let path = Path::new(source);
+            let filename = path.file_name().and_then(|name| name.to_str());
+            mod_id_of(path, filename.unwrap_or(source)).await?
+        }
     };
     println!("{id}");
     Ok(())
@@ -597,21 +603,6 @@ pub fn mod_remove(ctx: &Ctx, name: &str) -> anyhow::Result<()> {
         if path.is_file() {
             std::fs::remove_file(path)?;
             println!("removed {dir}/{filename}");
-        }
-    }
-    if dir == "mods" {
-        let client = ctx.config()?.client;
-        let mut lists = vec![("required", &client.required)];
-        lists.extend(
-            client
-                .optional_sets
-                .iter()
-                .map(|set| (set.id.as_str(), &set.mods)),
-        );
-        for (list, mods) in lists {
-            if mods.iter().any(|m| m == name) {
-                println!("{CONFIG_FILE} still lists {name} in {list}");
-            }
         }
     }
     Ok(())

@@ -72,7 +72,7 @@ target = "{storage_url}"
 [[client.optional_sets]]
 id = "extras"
 display_name = "Extras"
-mods = ["extra"]
+mods = ["extra-id"]
 
 [[paths]]
 path = "config"
@@ -268,13 +268,14 @@ async fn pull_push_and_status() {
     std::fs::remove_file(s.repo.join("mods/.index/jei.pw.toml")).unwrap();
     std::fs::remove_file(s.repo.join("mods/jei.jar")).unwrap();
     // A new mod in an off-by-default optional set arrives disabled.
-    let extra_sha1 = sha1(b"extra");
+    let extra = fabric_jar("extra-id", "1").await;
+    let extra_sha1 = sha1(&extra);
     write(
         &s.repo.join("mods/.index/extra.pw.toml"),
         &EXTRA_INDEX.replace("hash = \"0\"", &format!("hash = \"{extra_sha1}\"")),
     );
     let extra_jar = s.repo.join("../extra.jar");
-    std::fs::write(&extra_jar, b"extra").unwrap();
+    std::fs::write(&extra_jar, &extra).unwrap();
     s.ctx.files.insert(&extra_jar, &extra_sha1).await.unwrap();
     s.commit("remove jei, add extra");
     sync::push(&mut s.ctx, "prism", false).await.unwrap();
@@ -811,16 +812,44 @@ async fn committed_jars_work_with_git_lfs() {
     assert_eq!(read(&s.game.join("mods/jei.jar")), "jei");
 }
 
-async fn fabric_jar(mod_id: &str, version: &str) -> Vec<u8> {
+async fn jar(name: &str, content: &str) -> Vec<u8> {
     use async_zip::{Compression, ZipEntryBuilder, base::write::ZipFileWriter};
-    let json = format!(r#"{{"schemaVersion":1,"id":"{mod_id}","version":"{version}"}}"#);
     let mut writer = ZipFileWriter::new(Vec::<u8>::new());
-    let entry = ZipEntryBuilder::new("fabric.mod.json".into(), Compression::Stored);
+    let entry = ZipEntryBuilder::new(name.into(), Compression::Stored);
     writer
-        .write_entry_whole(entry, json.as_bytes())
+        .write_entry_whole(entry, content.as_bytes())
         .await
         .unwrap();
     writer.close().await.unwrap()
+}
+
+async fn fabric_jar(mod_id: &str, version: &str) -> Vec<u8> {
+    let json = format!(r#"{{"schemaVersion":1,"id":"{mod_id}","version":"{version}"}}"#);
+    jar("fabric.mod.json", &json).await
+}
+
+#[tokio::test]
+async fn jars_without_metadata_get_ids_from_their_names() {
+    let mut s = Setup::new();
+    let config = read(&s.repo.join("potato.toml")).replace("extra-id", "my_mod");
+    write(&s.repo.join("potato.toml"), &config);
+    std::fs::create_dir_all(s.repo.join("mods")).unwrap();
+    std::fs::write(s.repo.join("mods/my-mod-1.0.jar"), jar("a", "1").await).unwrap();
+    crate::commands::mod_set(&s.ctx, "my-mod-1.0", &[], Some("client")).unwrap();
+    s.commit("my-mod");
+    sync::push(&mut s.ctx, "prism", true).await.unwrap();
+    assert!(s.game.join("mods/my-mod-1.0.jar.disabled").exists());
+
+    std::fs::remove_file(s.game.join("mods/my-mod-1.0.jar.disabled")).unwrap();
+    std::fs::write(s.game.join("mods/my-mod-1.1.jar"), jar("a", "2").await).unwrap();
+    write(
+        &s.game.join("mods/.index/something-else.pw.toml"),
+        "filename = \"my-mod-1.1.jar\"\nname = \"My Mod\"\n",
+    );
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    let index = s.repo_index("my-mod-1.0");
+    assert_eq!(index.filename(), Some("my-mod-1.1.jar"));
+    assert_eq!(index.side().unwrap(), crate::index::Side::Client);
 }
 
 #[tokio::test]

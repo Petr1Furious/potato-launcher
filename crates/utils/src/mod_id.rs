@@ -52,16 +52,22 @@ pub enum ExtractModIdError {
 ///
 /// Falls back to deriving an id from the jar filename when metadata is missing.
 pub async fn extract_mod_id(path: &Path) -> Result<Option<String>, ExtractModIdError> {
+    let filename = path.file_name().and_then(|name| name.to_str());
+    extract_mod_id_named(path, filename.unwrap_or_default()).await
+}
+
+/// Same, for a jar stored under another name.
+pub async fn extract_mod_id_named(
+    path: &Path,
+    filename: &str,
+) -> Result<Option<String>, ExtractModIdError> {
     let bytes = tokio::fs::read(path).await?;
     if let Some(id) = extract_mod_id_from_bytes(bytes).await? {
         return Ok(Some(id));
     }
 
-    if let Some(id) = mod_id_from_filename(path) {
-        warn!(
-            "Using filename fallback for mod id '{id}': {}",
-            path.display()
-        );
+    if let Some(id) = mod_id_from_filename(Path::new(filename)) {
+        warn!("Using filename fallback for mod id '{id}': {filename}");
         return Ok(Some(id));
     }
 

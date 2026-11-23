@@ -39,15 +39,15 @@ pub struct BuildOutput {
     pub referenced: BTreeSet<String>,
 }
 
-pub async fn read_mod_id(path: &Path) -> anyhow::Result<Option<String>> {
-    utils::mod_id::extract_mod_id(path)
+pub async fn read_mod_id(path: &Path, filename: &str) -> anyhow::Result<Option<String>> {
+    utils::mod_id::extract_mod_id_named(path, filename)
         .await
         .map_err(|err| anyhow::anyhow!("{err}"))
 }
 
-pub async fn mod_id_of(path: &Path) -> anyhow::Result<String> {
-    let context = || format!("can't read the mod id of {}", path.display());
-    read_mod_id(path)
+pub async fn mod_id_of(path: &Path, filename: &str) -> anyhow::Result<String> {
+    let context = || format!("can't read the mod id of {filename}");
+    read_mod_id(path, filename)
         .await
         .with_context(context)?
         .with_context(context)
@@ -74,7 +74,7 @@ pub async fn modrinth_mod_id(ctx: &Ctx, loader: LoaderName, slug: &str) -> anyho
         .await?
         .remove(&file.sha1)
         .expect("ensured");
-    let id = mod_id_of(&path).await?;
+    let id = mod_id_of(&path, &file.filename).await?;
     cache.insert(key, id.clone());
     std::fs::create_dir_all(&ctx.cache_dir)?;
     std::fs::write(&cache_path, serde_json::to_vec(&cache)?)?;
@@ -130,21 +130,13 @@ async fn collect_entries(
     Ok(entries)
 }
 
-fn map_names(
-    names: &[String],
-    ids: &HashMap<String, String>,
-    what: &str,
-) -> anyhow::Result<Vec<String>> {
-    let mut mapped = vec![];
-    for name in names {
-        let id = ids
-            .get(name)
-            .with_context(|| format!("unknown mod '{name}' in {what}"))?;
-        if !mapped.contains(id) {
-            mapped.push(id.clone());
+fn check_mod_ids(ids: &[String], mods: &[ModEntry], what: &str) -> anyhow::Result<()> {
+    for id in ids {
+        if !mods.iter().any(|entry| &entry.mod_id == id) {
+            bail!("unknown mod id '{id}' in {what}");
         }
     }
-    Ok(mapped)
+    Ok(())
 }
 
 fn visit_strings(value: &serde_json::Value, visit: &mut impl FnMut(&str)) {
@@ -223,7 +215,6 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
     let mut uploads = BTreeMap::new();
     let mut upstream: HashMap<String, Url> = HashMap::new();
     let mut mod_entries = vec![];
-    let mut mod_ids = HashMap::new();
     for entry in &entries {
         let dir = entry.file.dir;
         let filename = entry.file.filename.as_str();
@@ -234,14 +225,13 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
             uploads.insert(key.clone(), Upload::new(key, cached_path.clone(), label));
         }
         if dir == "mods" {
-            let mod_id = mod_id_of(cached_path).await.with_context(|| {
+            let mod_id = mod_id_of(cached_path, filename).await.with_context(|| {
                 entry
                     .file
                     .index
                     .as_ref()
                     .map_or_else(|| format!("{dir}/{filename}"), |(path, _)| path.clone())
             })?;
-            mod_ids.insert(entry.file.name(), mod_id.clone());
             let url = if mirror {
                 let key = object_key(&entry.sha1);
                 let label = format!("{dir}/{filename}");
@@ -288,23 +278,29 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
             blocked.push(id);
         }
     }
+    check_mod_ids(&config.client.required, &mod_entries, "required")?;
+    for set in &config.client.optional_sets {
+        check_mod_ids(
+            &set.mods,
+            &mod_entries,
+            &format!("optional set '{}'", set.id),
+        )?;
+    }
     let mod_sync = ModSyncSettings {
         mode: config.client.mod_sync,
-        required: map_names(&config.client.required, &mod_ids, "required")?,
+        required: config.client.required.clone(),
         blocked,
         optional_sets: config
             .client
             .optional_sets
             .iter()
-            .map(|set| {
-                Ok(OptionalModSet {
-                    id: set.id.clone(),
-                    display_name: set.display_name.clone(),
-                    enabled_by_default: set.enabled_by_default,
-                    mod_ids: map_names(&set.mods, &mod_ids, &format!("optional set '{}'", set.id))?,
-                })
+            .map(|set| OptionalModSet {
+                id: set.id.clone(),
+                display_name: set.display_name.clone(),
+                enabled_by_default: set.enabled_by_default,
+                mod_ids: set.mods.clone(),
             })
-            .collect::<anyhow::Result<_>>()?,
+            .collect(),
     };
 
     let spec = InstanceSpec {

@@ -34,12 +34,11 @@ Read `docs/creating-instances.md` first for the `potato.toml` format.
    Set `[publish] target` to the new site's `data/` folder.
 3. `potato pull prism`, then check `git diff --cached`. Every managed path
    should come over, and every mod should have an index file.
-4. Port mod references. They used mod ids; `required` and optional sets now
-   use index names. Run `potato mod list` to map mod ids to index names.
-   - `mod_sync.required` → `[client] required` (index names)
-   - `mod_sync.optional_sets[].mod_ids` → `[[client.optional_sets]] mods`
-     (index names), keeping `id`, `display_name`, `enabled_by_default`
-   - `mod_sync.blocked` → `[client] blocked`, unchanged (mod ids)
+4. Port mod references. All of them are still mod ids.
+   - `mod_sync.required` → `[client] required`
+   - `mod_sync.optional_sets[].mod_ids` → `[[client.optional_sets]] mods`,
+     keeping `id`, `display_name`, `enabled_by_default`
+   - `mod_sync.blocked` → `[client] blocked`
 5. Port `os_specific_mods`. For each glob, find the jars it matched in the old
    source folder. The jar for the current OS came over with `pull prism`; set
    `os = [...]` in its index file. Add each other variant with
