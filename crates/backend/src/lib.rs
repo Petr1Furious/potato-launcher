@@ -1884,6 +1884,21 @@ impl BackendState {
         });
     }
 
+    fn needs_newer_launcher(&self, local: &LocalInstance) -> bool {
+        local.source.as_ref().is_some_and(|source| {
+            self.catalogs
+                .get(&source.manifest_url)
+                .and_then(|catalog| catalog.manifest())
+                .and_then(|manifest| {
+                    manifest
+                        .instances
+                        .iter()
+                        .find(|entry| entry.id == source.id_in_manifest)
+                })
+                .is_some_and(|entry| entry.needs_newer_launcher())
+        })
+    }
+
     fn start_launch(
         &mut self,
         handle: InstanceHandle,
@@ -1918,6 +1933,7 @@ impl BackendState {
         };
 
         self.launch_errors.remove(&handle);
+        let skip_sync = skip_sync || self.needs_newer_launcher(local);
 
         let settings = self.load_settings_for_id(&handle);
         let tasks = tasks::InstanceTaskList::new(handle.clone(), internal.clone());

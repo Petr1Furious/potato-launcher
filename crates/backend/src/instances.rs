@@ -163,6 +163,9 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                         {
                             status = InstanceLiveStatus::Outdated;
                         }
+                        if remote.needs_newer_launcher() {
+                            status = needs_launcher_update(status);
+                        }
                         (
                             Arc::<str>::from(resolve_instance_display_name(
                                 remote.display_name.as_ref(),
@@ -339,6 +342,11 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             } else {
                 InstanceLiveStatus::NotInstalled
             };
+            let status = if entry.needs_newer_launcher() {
+                needs_launcher_update(status)
+            } else {
+                status
+            };
 
             let settings = user_settings.get(&id).cloned().unwrap_or_default();
             let effective_account = effective_account(
@@ -400,6 +408,16 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             .then_with(|| a.handle.cmp(&b.handle))
     });
     views
+}
+
+fn needs_launcher_update(status: InstanceLiveStatus) -> InstanceLiveStatus {
+    match status {
+        InstanceLiveStatus::NotInstalled
+        | InstanceLiveStatus::Installed
+        | InstanceLiveStatus::Outdated
+        | InstanceLiveStatus::InstallFailed(_) => InstanceLiveStatus::NeedsLauncherUpdate,
+        status => status,
+    }
 }
 
 pub fn remote_entry_handle(url: &Url, id: &str) -> InstanceHandle {
@@ -825,6 +843,7 @@ mod tests {
         let url = Url::parse("https://a.example/manifest.json").unwrap();
         let entry = InstanceManifestEntry {
             id: "remote-id".to_string(),
+            format: 1,
             display_name: Some(LocalizedString::Localized(BTreeMap::from([
                 ("en".to_string(), "Remote".to_string()),
                 ("ru".to_string(), "Удаленный".to_string()),
@@ -969,6 +988,7 @@ mod tests {
         let account = test_account(provider.clone());
         let entry = InstanceManifestEntry {
             id: "Remote".to_string(),
+            format: 1,
             display_name: None,
             url: Url::parse("https://example.invalid/Remote.json").unwrap(),
             sha1: "remote-sha1".to_string(),
@@ -1006,6 +1026,7 @@ mod tests {
         let override_key = override_account.key.clone();
         let entry = InstanceManifestEntry {
             id: "Remote".to_string(),
+            format: 1,
             display_name: None,
             url: Url::parse("https://example.invalid/Remote.json").unwrap(),
             sha1: "remote-sha1".to_string(),
@@ -1152,6 +1173,49 @@ mod tests {
         assert_eq!(views[0].status, InstanceLiveStatus::Running);
     }
 
+    #[test]
+    fn newer_format_needs_launcher_update() {
+        let url = Url::parse("https://a.example/manifest.json").unwrap();
+        let mut catalog = manifest([("installed", "new-sha1"), ("remote-only", "sha1")]);
+        for entry in &mut catalog.instances {
+            entry.format = instance::manifest::INSTANCE_FORMAT + 1;
+        }
+        let installed = LocalInstance {
+            handle: InstanceHandle::from("remote:installed"),
+            dir_name: "installed".to_string(),
+            state: InstanceState::Installed,
+            source: Some(RemoteSource {
+                manifest_url: url.clone(),
+                id_in_manifest: "installed".to_string(),
+            }),
+            last_synced_sha1: Some("old-sha1".to_string()),
+        };
+        let catalogs = HashMap::from([(url.clone(), ok_catalog(catalog))]);
+        let views =
+            TestBuildFixture::default().build(std::slice::from_ref(&installed), &catalogs, &[]);
+
+        assert_status(
+            &views,
+            installed.handle,
+            InstanceLiveStatus::NeedsLauncherUpdate,
+        );
+        assert_status(
+            &views,
+            remote_entry_handle(&url, "remote-only"),
+            InstanceLiveStatus::NeedsLauncherUpdate,
+        );
+    }
+
+    #[test]
+    fn missing_format_is_the_first() {
+        let entry: InstanceManifestEntry = serde_json::from_value(serde_json::json!({
+            "id": "a", "url": "https://x/meta.json", "sha1": "0", "required_java_version": "21"
+        }))
+        .unwrap();
+        assert_eq!(entry.format, 1);
+        assert!(!entry.needs_newer_launcher());
+    }
+
     fn assert_status(views: &[InstanceView], handle: InstanceHandle, expected: InstanceLiveStatus) {
         let status = &views
             .iter()
@@ -1169,6 +1233,7 @@ mod tests {
                 .into_iter()
                 .map(|(name, sha1)| InstanceManifestEntry {
                     id: name.to_string(),
+                    format: 1,
                     display_name: None,
                     url: Url::parse(&format!("https://example.invalid/{name}.json")).unwrap(),
                     sha1: sha1.to_string(),

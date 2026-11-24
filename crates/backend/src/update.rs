@@ -79,6 +79,12 @@ struct GitHubAsset {
     browser_download_url: String,
 }
 
+/// GitHub renames uploaded files, e.g. `Potato Launcher.exe` -> `Potato.Launcher.exe
+fn same_asset_name(asset: &str, file: &str) -> bool {
+    let letters = |name: &str| name.replace(|c: char| !c.is_ascii_alphanumeric(), "");
+    letters(asset) == letters(file)
+}
+
 async fn fetch_release(
     client: &Client,
     package: Option<PackagedInstall>,
@@ -115,7 +121,7 @@ async fn fetch_release(
             let download_url = release
                 .assets
                 .into_iter()
-                .find(|asset| asset.name == file)
+                .find(|asset| same_asset_name(&asset.name, &file))
                 .map(|asset| asset.browser_download_url);
             Ok(Release {
                 version: release.tag_name,

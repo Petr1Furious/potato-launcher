@@ -465,6 +465,7 @@ pub mod instances {
             "launching" => Some(launching()),
             "local_empty_hint" => Some(local_empty_hint()),
             "logs" => Some(logs()),
+            "needs_launcher_update" => Some(needs_launcher_update()),
             "no_account_selected" => Some(no_account_selected()),
             "no_instances_hint" => Some(no_instances_hint()),
             "no_instances_yet" => Some(no_instances_yet()),
@@ -487,6 +488,7 @@ pub mod instances {
             "status_failed" => Some(status_failed()),
             "status_installed" => Some(status_installed()),
             "status_launch_failed" => Some(status_launch_failed()),
+            "status_needs_launcher_update" => Some(status_needs_launcher_update()),
             "status_orphaned" => Some(status_orphaned()),
             "status_outdated" => Some(status_outdated()),
             "status_running" => Some(status_running()),
@@ -679,6 +681,12 @@ pub mod instances {
             _ => "Logs",
         }
     }
+    pub fn needs_launcher_update() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Обновите лаунчер, чтобы установить этот инстанс",
+            _ => "Update the launcher to install this instance",
+        }
+    }
     pub fn no_account_selected() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Аккаунт не выбран",
@@ -817,6 +825,12 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Ошибка запуска",
             _ => "Launch failed",
+        }
+    }
+    pub fn status_needs_launcher_update() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Обновите лаунчер",
+            _ => "Update the launcher",
         }
     }
     pub fn status_no_account(status: String) -> String {

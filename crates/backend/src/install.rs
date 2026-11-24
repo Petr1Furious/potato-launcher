@@ -110,6 +110,9 @@ pub(crate) async fn install_instance(request: InstallRequest) -> anyhow::Result<
     }
 
     let plan = resolve_install_plan(&request.handle, &request.local_instances, &request.catalogs)?;
+    if plan.entry.needs_newer_launcher() {
+        return Err(anyhow!(launcher_i18n::instances::needs_launcher_update()));
+    }
     let action = install_action_label(request.cause, request.force_overwrite);
     log::info!(
         "Starting {action} for instance '{}' (handle {})",
@@ -1103,6 +1106,7 @@ mod tests {
         let url = Url::parse("https://example.com/data/instance_manifest.json").unwrap();
         let entry = InstanceManifestEntry {
             id: "vanilla".to_string(),
+            format: 1,
             display_name: None,
             url: Url::parse("https://example.com/data/instances/vanilla/meta.json").unwrap(),
             sha1: "abc".to_string(),
@@ -1291,6 +1295,7 @@ mod tests {
         );
         let entry = InstanceManifestEntry {
             id: "vanilla".to_string(),
+            format: 1,
             display_name: None,
             url: Url::parse("https://example.com/data/instances/vanilla/meta.json").unwrap(),
             sha1: "new".to_string(),

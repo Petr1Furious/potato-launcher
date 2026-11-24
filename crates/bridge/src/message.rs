@@ -216,6 +216,8 @@ pub enum InstanceLiveStatus {
     Running,
     LaunchFailed(Arc<str>),
     OrphanedFromBackend,
+    /// The backend publishes it in a newer format; an installed copy can still run
+    NeedsLauncherUpdate,
 }
 
 impl InstanceLiveStatus {

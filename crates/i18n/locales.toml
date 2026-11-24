@@ -222,6 +222,14 @@ ru = "Ошибка запуска"
 en = "Orphaned"
 ru = "Не в каталоге"
 
+[instances.status_needs_launcher_update]
+en = "Update the launcher"
+ru = "Обновите лаунчер"
+
+[instances.needs_launcher_update]
+en = "Update the launcher to install this instance"
+ru = "Обновите лаунчер, чтобы установить этот инстанс"
+
 [instances.status_no_account]
 en = "${status: String}, no account"
 ru = "${status: String}, нет аккаунта"

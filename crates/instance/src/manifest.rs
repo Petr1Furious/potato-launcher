@@ -120,11 +120,21 @@ impl VersionMetadataInfo {
     }
 }
 
+/// Bump only in case when old launchers wouldn't be able to run the new format.
+/// Launchers refuse to install entries with a higher format.
+pub const INSTANCE_FORMAT: u32 = 1;
+
+fn first_format() -> u32 {
+    1
+}
+
 /// A single entry in the instance manifest.
 /// This is used to get instance metadata.
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct InstanceManifestEntry {
     pub id: String,
+    #[serde(default = "first_format")]
+    pub format: u32,
     #[serde(default)]
     pub display_name: Option<LocalizedString>,
     pub url: Url,
@@ -143,6 +153,10 @@ pub struct InstanceManifestEntry {
 }
 
 impl InstanceManifestEntry {
+    pub fn needs_newer_launcher(&self) -> bool {
+        self.format > INSTANCE_FORMAT
+    }
+
     pub fn to_check_task(&self, instance_dir: &InstanceDirFS) -> CheckTask {
         CheckTask {
             url: self.url.clone(),

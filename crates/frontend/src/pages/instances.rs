@@ -1055,7 +1055,13 @@ impl InstancesPage {
                     .child(
                         Button::new(format!("open-instance-folder-{handle}"))
                             .label(t::instances::open_instance_folder())
-                            .disabled(matches!(instance.status, InstanceLiveStatus::NotInstalled))
+                            .disabled(match instance.status {
+                                InstanceLiveStatus::NotInstalled => true,
+                                InstanceLiveStatus::NeedsLauncherUpdate => {
+                                    !instance.locally_installed
+                                }
+                                _ => false,
+                            })
                             .on_click({
                                 let notifications = self.data.notifications.clone();
                                 move |_, _, cx| {
@@ -1876,7 +1882,14 @@ fn action_button(
         InstanceLiveStatus::Running => Button::new(format!("kill-{handle}"))
             .label(t::instances::kill())
             .on_click(move |_, _, _| sender.send(MessageToBackend::KillInstance(handle.clone()))),
-        InstanceLiveStatus::Installed | InstanceLiveStatus::OrphanedFromBackend => {
+        InstanceLiveStatus::NeedsLauncherUpdate if !instance.locally_installed => {
+            Button::new(format!("needs-update-{handle}"))
+                .label(t::instances::install())
+                .disabled(true)
+        }
+        InstanceLiveStatus::Installed
+        | InstanceLiveStatus::OrphanedFromBackend
+        | InstanceLiveStatus::NeedsLauncherUpdate => {
             if instance.launch_blocked_reason.is_some() {
                 let provider = instance.auth_provider.clone();
                 return Button::new(format!("add-account-{handle}"))
@@ -3103,7 +3116,8 @@ fn action_section(
         InstanceLiveStatus::Installed
             | InstanceLiveStatus::OrphanedFromBackend
             | InstanceLiveStatus::LaunchFailed(_)
-    );
+    ) || (instance.locally_installed
+        && matches!(instance.status, InstanceLiveStatus::NeedsLauncherUpdate));
     let launch_blocked = instance.launch_blocked_reason.is_some();
     let show_remove = matches!(instance.status, InstanceLiveStatus::InstallFailed(_))
         && !instance.locally_installed
@@ -3370,6 +3384,9 @@ fn status_label(instance: &InstanceView) -> String {
         InstanceLiveStatus::Running => t::instances::status_running().to_string(),
         InstanceLiveStatus::LaunchFailed(error) => error.to_string(),
         InstanceLiveStatus::OrphanedFromBackend => t::instances::status_orphaned().to_string(),
+        InstanceLiveStatus::NeedsLauncherUpdate => {
+            t::instances::status_needs_launcher_update().to_string()
+        }
     };
     if instance.launch_blocked_reason.is_some()
         && matches!(
@@ -3377,6 +3394,7 @@ fn status_label(instance: &InstanceView) -> String {
             InstanceLiveStatus::Installed
                 | InstanceLiveStatus::Outdated
                 | InstanceLiveStatus::OrphanedFromBackend
+                | InstanceLiveStatus::NeedsLauncherUpdate
                 | InstanceLiveStatus::LaunchFailed(_)
         )
     {

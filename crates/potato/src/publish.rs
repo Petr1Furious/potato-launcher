@@ -174,13 +174,21 @@ pub async fn publish(ctx: &mut Ctx, force: bool) -> anyhow::Result<()> {
         let entry = output
             .metadata
             .to_manifest_entry(&id, &BaseUrl::new(config.publish.base()))?;
+        let format_raised = manifest
+            .instances
+            .iter()
+            .any(|existing| existing.id == id && existing.format < entry.format);
         manifest.instances.retain(|existing| existing.id != id);
         manifest.instances.push(entry);
         sort_manifest(storage, &mut manifest, (&id, config.order)).await?;
         put_json(storage, MANIFEST_KEY, &manifest).await?;
-        Ok(())
+        Ok(format_raised)
     };
-    storage::locked(storage, job).await?;
+    if storage::locked(storage, job).await? {
+        println!(
+            "format version raised, launchers older than this potato won't be able to install {id} until they update"
+        );
+    }
     println!("published {id} ({})", &head[..8]);
     Ok(())
 }

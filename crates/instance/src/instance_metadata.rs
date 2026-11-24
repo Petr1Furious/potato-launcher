@@ -336,6 +336,7 @@ impl InstanceMetadata {
     ) -> Result<InstanceManifestEntry, InstanceMetadataError> {
         Ok(InstanceManifestEntry {
             id: self.id.clone(),
+            format: crate::manifest::INSTANCE_FORMAT,
             display_name: self.display_name.clone(),
             url: InstancesDir::root()
                 .instance_dir(unique_name)
