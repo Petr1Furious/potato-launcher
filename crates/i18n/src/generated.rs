@@ -491,6 +491,7 @@ pub mod instances {
             "status_needs_launcher_update" => Some(status_needs_launcher_update()),
             "status_orphaned" => Some(status_orphaned()),
             "status_outdated" => Some(status_outdated()),
+            "status_outdated_offline" => Some(status_outdated_offline()),
             "status_running" => Some(status_running()),
             "update" => Some(update()),
             "use_native_glfw_desc" => Some(use_native_glfw_desc()),
@@ -849,6 +850,12 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Устарел",
             _ => "Outdated",
+        }
+    }
+    pub fn status_outdated_offline() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Устарел, нет сети",
+            _ => "Outdated, offline",
         }
     }
     pub fn status_running() -> &'static str {

@@ -22,6 +22,8 @@ use catalog::{
 use instance::{
     install_params::InstallCause,
     instance_metadata::InstanceMetadata,
+    manifest::InstanceManifestEntry,
+    mod_sync::OptionalModSet,
     storage::{
         InstanceHandle, InstanceStorage, InstanceUserSettings, JvmGcOpts, LocalInstance,
         RemoteSource, load_instance_settings, save_instance_settings,
@@ -1679,29 +1681,29 @@ impl BackendState {
             });
             return;
         }
-        let Some(local) = self
+        let installed = match self
             .instance_storage
-            .all()
-            .iter()
-            .find(|entry| entry.handle == instance && entry.is_installed())
-            .cloned()
-        else {
-            return;
+            .get(&instance)
+            .filter(|local| local.is_installed())
+        {
+            Some(local) => {
+                let instance_dir = self.instance_dir_fs(local);
+                InstanceMetadata::read_local(&instance_dir)
+                    .await
+                    .ok()
+                    .map(|metadata| (instance_dir, metadata))
+            }
+            None => None,
         };
-        let dir_name = local.dir_name.clone();
-        let data_dir = DataDir::new(self.launcher_dir.clone());
-        let instance_dir = InstancesDir::root()
-            .instance_dir(&dir_name)
-            .with_data_dir(data_dir.clone());
-        let Ok(metadata) = InstanceMetadata::read_local(&instance_dir).await else {
-            return;
-        };
-        let is_optional = metadata
-            .mod_sync
-            .optional_sets
-            .iter()
-            .any(|entry| entry.id == set_id);
-        if !is_optional {
+        let has_set = |sets: &[OptionalModSet]| sets.iter().any(|set| set.id == set_id);
+        let known = installed
+            .as_ref()
+            .is_some_and(|(_, metadata)| has_set(&metadata.mod_sync.optional_sets))
+            || self
+                .listed_entry(&instance)
+                .and_then(|entry| entry.optional_sets.as_deref())
+                .is_some_and(has_set);
+        if !known {
             return;
         }
 
@@ -1722,6 +1724,10 @@ impl BackendState {
         }
         self.emit_snapshot(tx);
 
+        // A set only in the listed version is applied when that version installs.
+        let Some((instance_dir, metadata)) = installed else {
+            return;
+        };
         if let Err(err) =
             install::apply_optional_mod_set(&instance_dir, &metadata, &set_id, enabled).await
         {
@@ -1884,19 +1890,39 @@ impl BackendState {
         });
     }
 
-    fn needs_newer_launcher(&self, local: &LocalInstance) -> bool {
-        local.source.as_ref().is_some_and(|source| {
+    /// The instance list entry for an installed or not yet installed instance.
+    fn listed_entry(&self, handle: &InstanceHandle) -> Option<&InstanceManifestEntry> {
+        let find = |url: &Url, id: &str| {
             self.catalogs
-                .get(&source.manifest_url)
-                .and_then(|catalog| catalog.manifest())
-                .and_then(|manifest| {
-                    manifest
-                        .instances
-                        .iter()
-                        .find(|entry| entry.id == source.id_in_manifest)
-                })
-                .is_some_and(|entry| entry.needs_newer_launcher())
-        })
+                .get(url)?
+                .manifest()?
+                .instances
+                .iter()
+                .find(|entry| entry.id == id)
+        };
+        match self.instance_storage.get(handle) {
+            Some(local) => {
+                let source = local.source.as_ref()?;
+                find(&source.manifest_url, &source.id_in_manifest)
+            }
+            None => self.catalogs.iter().find_map(|(url, catalog)| {
+                catalog
+                    .manifest()?
+                    .instances
+                    .iter()
+                    .find(|entry| instances::remote_entry_handle(url, &entry.id) == *handle)
+            }),
+        }
+    }
+
+    /// Whether Play has to run the installed version instead of syncing to the listed one.
+    fn runs_installed_copy(&self, local: &LocalInstance) -> bool {
+        let (Some(source), Some(entry)) = (&local.source, self.listed_entry(&local.handle)) else {
+            return false;
+        };
+        entry.needs_newer_launcher()
+            || (!instances::update_reachable(&self.catalogs, &source.manifest_url)
+                && local.last_synced_sha1.as_deref() != Some(entry.sha1.as_str()))
     }
 
     fn start_launch(
@@ -1933,7 +1959,7 @@ impl BackendState {
         };
 
         self.launch_errors.remove(&handle);
-        let skip_sync = skip_sync || self.needs_newer_launcher(local);
+        let skip_sync = skip_sync || self.runs_installed_copy(local);
 
         let settings = self.load_settings_for_id(&handle);
         let tasks = tasks::InstanceTaskList::new(handle.clone(), internal.clone());

@@ -122,7 +122,7 @@ exclude = ["config/somemod.toml"]
 
 ### `[client]`
 
-- **resource_sync**: When the launcher checks the client jar, libraries and assets.
+- **resource_sync**: When the launcher checks the client jar, libraries and assets. `on_update` checks them on install and update. `always` and `always_fast` also check them on every launch, the latter only comparing sizes. Default: `on_update`
 - **mod_sync**: How a player's `mods/` folder is reconciled with the pack. `delta` only touches the mods the pack changed, so players can add their own. `mirror` removes everything that isn't in the pack.
 - **required**: Ids of mods players can't remove.
 - **blocked**: Mods players can't add, as mod ids or `modrinth:<slug>`.

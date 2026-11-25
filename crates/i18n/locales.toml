@@ -206,6 +206,10 @@ ru = "Установлен"
 en = "Outdated"
 ru = "Устарел"
 
+[instances.status_outdated_offline]
+en = "Outdated, offline"
+ru = "Устарел, нет сети"
+
 [instances.status_failed]
 en = "Failed"
 ru = "Ошибка"

@@ -1114,6 +1114,7 @@ mod tests {
             required_java_version: "8".to_string(),
             minecraft_version: None,
             loader: None,
+            optional_sets: None,
         };
         let id = remote_entry_handle(&url, &entry.id);
         let catalogs = HashMap::from([(
@@ -1303,6 +1304,7 @@ mod tests {
             required_java_version: "8".to_string(),
             minecraft_version: None,
             loader: None,
+            optional_sets: None,
         };
         let catalogs = HashMap::from([(
             url.clone(),

@@ -205,6 +205,8 @@ pub enum InstanceLiveStatus {
     NotInstalled,
     Installed,
     Outdated,
+    /// An update exists but the instance list couldn't be refreshed
+    OutdatedOffline,
     Installing {
         tasks: Arc<[InstanceTaskView]>,
     },

@@ -6,7 +6,7 @@ use std::{
 use instance::{
     localized::LocalizedString,
     manifest::InstanceManifest,
-    mod_sync::{self, ModSyncSettings},
+    mod_sync::{ModSyncSettings, OptionalModSet},
     storage::{InstanceHandle, JvmGcOpts, LocalInstance},
 };
 use launcher_auth::{providers::AuthProviderConfig, storage::AccountKey};
@@ -16,7 +16,7 @@ use launcher_bridge::{
 };
 use url::Url;
 
-use crate::catalog::BackendCatalogEntry;
+use crate::catalog::{BackendCatalogEntry, BackendFetchStatus};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActivityKind {
@@ -45,28 +45,23 @@ pub struct LocalMetadataView {
 }
 
 pub fn build_optional_mod_set_views(
-    mod_sync: &ModSyncSettings,
+    sets: &[OptionalModSet],
     user_preferences: &std::collections::HashMap<String, bool>,
     language: &str,
 ) -> Arc<[OptionalModSetView]> {
-    let enabled = mod_sync::resolve_optional_set_enabled(mod_sync, user_preferences);
-    mod_sync
-        .optional_sets
-        .iter()
-        .map(|set| {
-            let set_id = set.id.clone();
-            OptionalModSetView {
-                set_id: Arc::<str>::from(set_id.as_str()),
-                display_name: Arc::<str>::from(
-                    set.display_name
-                        .resolve(language)
-                        .unwrap_or(set.id.as_str()),
-                ),
-                enabled: *enabled
-                    .get(set_id.as_str())
-                    .unwrap_or(&set.enabled_by_default),
-                enabled_by_default: set.enabled_by_default,
-            }
+    sets.iter()
+        .map(|set| OptionalModSetView {
+            set_id: Arc::<str>::from(set.id.as_str()),
+            display_name: Arc::<str>::from(
+                set.display_name
+                    .resolve(language)
+                    .unwrap_or(set.id.as_str()),
+            ),
+            enabled: user_preferences
+                .get(&set.id)
+                .copied()
+                .unwrap_or(set.enabled_by_default),
+            enabled_by_default: set.enabled_by_default,
         })
         .collect::<Vec<_>>()
         .into()
@@ -140,6 +135,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
         let mut manifest_auth_provider = None;
         let mut manifest_java_version = None;
         let mut manifest_versions = (None, None);
+        let mut manifest_optional_sets = None;
         let (display_name, origin) = match &local.source {
             Some(source) => {
                 let manifest = fetched_manifests.get(&source.manifest_url);
@@ -156,12 +152,17 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                         manifest_java_version = Some(remote.required_java_version.clone());
                         manifest_versions =
                             (remote.minecraft_version.clone(), remote.loader.clone());
+                        manifest_optional_sets = remote.optional_sets.clone();
                         covered_remote_keys.insert(remote_key(&source.manifest_url, &remote.id));
                         if local.is_installed()
                             && status == InstanceLiveStatus::Installed
                             && local.last_synced_sha1.as_deref() != Some(remote.sha1.as_str())
                         {
-                            status = InstanceLiveStatus::Outdated;
+                            status = if update_reachable(catalogs, &source.manifest_url) {
+                                InstanceLiveStatus::Outdated
+                            } else {
+                                InstanceLiveStatus::OutdatedOffline
+                            };
                         }
                         if remote.needs_newer_launcher() {
                             status = needs_launcher_update(status);
@@ -221,11 +222,18 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             ),
         };
 
-        // An installed instance shows what it actually runs.
-        let (minecraft_version, loader) = if metadata.minecraft_version.is_some() {
-            (metadata.minecraft_version.clone(), metadata.loader.clone())
-        } else {
+        // The card shows what Play would run next.
+        let show_remote = !local.is_installed() || status == InstanceLiveStatus::Outdated;
+        let (minecraft_version, loader) = if (show_remote && manifest_versions.0.is_some())
+            || metadata.minecraft_version.is_none()
+        {
             manifest_versions
+        } else {
+            (metadata.minecraft_version.clone(), metadata.loader.clone())
+        };
+        let optional_sets = match manifest_optional_sets {
+            Some(sets) if show_remote => sets,
+            _ => metadata.mod_sync.optional_sets.clone(),
         };
         let auth_provider = manifest_auth_provider.or(metadata.auth_provider);
         let has_required_account = auth_provider
@@ -273,7 +281,7 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
             loader: loader.as_deref().map(Arc::from),
             use_native_glfw: settings.use_native_glfw,
             optional_mod_sets: build_optional_mod_set_views(
-                &metadata.mod_sync,
+                &optional_sets,
                 &settings.optional_mod_sets,
                 language,
             ),
@@ -395,7 +403,11 @@ pub fn build_instance_views(input: &InstanceViewBuildInput<'_>) -> Vec<InstanceV
                 minecraft_version: entry.minecraft_version.as_deref().map(Arc::from),
                 loader: entry.loader.as_deref().map(Arc::from),
                 use_native_glfw: settings.use_native_glfw,
-                optional_mod_sets: Arc::from([]),
+                optional_mod_sets: build_optional_mod_set_views(
+                    entry.optional_sets.as_deref().unwrap_or_default(),
+                    &settings.optional_mod_sets,
+                    language,
+                ),
                 launch_after_install: launch_after,
             });
         }
@@ -415,6 +427,7 @@ fn needs_launcher_update(status: InstanceLiveStatus) -> InstanceLiveStatus {
         InstanceLiveStatus::NotInstalled
         | InstanceLiveStatus::Installed
         | InstanceLiveStatus::Outdated
+        | InstanceLiveStatus::OutdatedOffline
         | InstanceLiveStatus::InstallFailed(_) => InstanceLiveStatus::NeedsLauncherUpdate,
         status => status,
     }
@@ -433,6 +446,16 @@ fn view_launch_after_install(
         InstanceLiveStatus::Installing { .. } => launch_after_install.get(handle).copied(),
         _ => None,
     }
+}
+
+/// Without a fresh instance list, Play can only run the installed version.
+pub fn update_reachable(catalogs: &HashMap<Url, BackendCatalogEntry>, url: &Url) -> bool {
+    !catalogs.get(url).is_some_and(|catalog| {
+        matches!(
+            catalog.status,
+            BackendFetchStatus::Offline | BackendFetchStatus::Error
+        )
+    })
 }
 
 fn fetched_manifests(
@@ -854,6 +877,7 @@ mod tests {
             required_java_version: "8".to_string(),
             minecraft_version: None,
             loader: None,
+            optional_sets: None,
         };
         let catalogs = HashMap::from([(
             url,
@@ -996,6 +1020,7 @@ mod tests {
             required_java_version: "8".to_string(),
             minecraft_version: None,
             loader: None,
+            optional_sets: None,
         };
         let catalogs = HashMap::from([(
             url,
@@ -1034,6 +1059,7 @@ mod tests {
             required_java_version: "8".to_string(),
             minecraft_version: None,
             loader: None,
+            optional_sets: None,
         };
         let handle = remote_entry_handle(&url, &entry.id);
         let catalogs = HashMap::from([(
@@ -1173,6 +1199,83 @@ mod tests {
         assert_eq!(views[0].status, InstanceLiveStatus::Running);
     }
 
+    fn optional_set(id: &str) -> OptionalModSet {
+        OptionalModSet {
+            id: id.to_string(),
+            display_name: LocalizedString::Plain(id.to_string()),
+            enabled_by_default: false,
+            mod_ids: vec![],
+        }
+    }
+
+    fn set_ids(view: &InstanceView) -> Vec<&str> {
+        view.optional_mod_sets
+            .iter()
+            .map(|set| set.set_id.as_ref())
+            .collect()
+    }
+
+    fn outdated_view(status: BackendFetchStatus) -> InstanceView {
+        let url = Url::parse("https://a.example/manifest.json").unwrap();
+        let mut catalog = manifest([("pack", "new-sha1")]);
+        catalog.instances[0].minecraft_version = Some("1.21.2".to_string());
+        catalog.instances[0].optional_sets = Some(vec![optional_set("new")]);
+        let local = LocalInstance {
+            handle: InstanceHandle::from("remote:pack"),
+            dir_name: "pack".to_string(),
+            state: InstanceState::Installed,
+            source: Some(RemoteSource {
+                manifest_url: url.clone(),
+                id_in_manifest: "pack".to_string(),
+            }),
+            last_synced_sha1: Some("old-sha1".to_string()),
+        };
+        let fixture = TestBuildFixture {
+            local_metadata: HashMap::from([(
+                local.handle.clone(),
+                LocalMetadataView {
+                    minecraft_version: Some("1.21.1".to_string()),
+                    mod_sync: ModSyncSettings {
+                        optional_sets: vec![optional_set("old")],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let catalogs = HashMap::from([(url, BackendCatalogEntry::with_manifest(catalog, status))]);
+        fixture
+            .build(std::slice::from_ref(&local), &catalogs, &[])
+            .remove(0)
+    }
+
+    #[test]
+    fn outdated_card_shows_the_update() {
+        let view = outdated_view(BackendFetchStatus::Ok);
+        assert_eq!(view.status, InstanceLiveStatus::Outdated);
+        assert_eq!(view.minecraft_version.as_deref(), Some("1.21.2"));
+        assert_eq!(set_ids(&view), ["new"]);
+    }
+
+    #[test]
+    fn offline_outdated_card_shows_the_installed_version() {
+        let view = outdated_view(BackendFetchStatus::Offline);
+        assert_eq!(view.status, InstanceLiveStatus::OutdatedOffline);
+        assert_eq!(view.minecraft_version.as_deref(), Some("1.21.1"));
+        assert_eq!(set_ids(&view), ["old"]);
+    }
+
+    #[test]
+    fn remote_card_shows_listed_optional_sets() {
+        let url = Url::parse("https://a.example/manifest.json").unwrap();
+        let mut catalog = manifest([("pack", "sha1")]);
+        catalog.instances[0].optional_sets = Some(vec![optional_set("shaders")]);
+        let catalogs = HashMap::from([(url, ok_catalog(catalog))]);
+        let views = TestBuildFixture::default().build(&[], &catalogs, &[]);
+        assert_eq!(set_ids(&views[0]), ["shaders"]);
+    }
+
     #[test]
     fn newer_format_needs_launcher_update() {
         let url = Url::parse("https://a.example/manifest.json").unwrap();
@@ -1241,6 +1344,7 @@ mod tests {
                     required_java_version: "8".to_string(),
                     minecraft_version: None,
                     loader: None,
+                    optional_sets: None,
                 })
                 .collect(),
         }

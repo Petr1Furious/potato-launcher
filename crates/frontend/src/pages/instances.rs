@@ -1888,6 +1888,7 @@ fn action_button(
                 .disabled(true)
         }
         InstanceLiveStatus::Installed
+        | InstanceLiveStatus::OutdatedOffline
         | InstanceLiveStatus::OrphanedFromBackend
         | InstanceLiveStatus::NeedsLauncherUpdate => {
             if instance.launch_blocked_reason.is_some() {
@@ -3114,6 +3115,7 @@ fn action_section(
     let can_launch = matches!(
         instance.status,
         InstanceLiveStatus::Installed
+            | InstanceLiveStatus::OutdatedOffline
             | InstanceLiveStatus::OrphanedFromBackend
             | InstanceLiveStatus::LaunchFailed(_)
     ) || (instance.locally_installed
@@ -3378,6 +3380,7 @@ fn status_label(instance: &InstanceView) -> String {
         InstanceLiveStatus::NotInstalled => t::instances::status_available().to_string(),
         InstanceLiveStatus::Installed => t::instances::status_installed().to_string(),
         InstanceLiveStatus::Outdated => t::instances::status_outdated().to_string(),
+        InstanceLiveStatus::OutdatedOffline => t::instances::status_outdated_offline().to_string(),
         InstanceLiveStatus::Installing { .. } => t::progress::installing().to_string(),
         InstanceLiveStatus::InstallFailed(_) => t::instances::status_failed().to_string(),
         InstanceLiveStatus::LaunchPreparing { .. } => t::instances::launching().to_string(),
@@ -3393,6 +3396,7 @@ fn status_label(instance: &InstanceView) -> String {
             instance.status,
             InstanceLiveStatus::Installed
                 | InstanceLiveStatus::Outdated
+                | InstanceLiveStatus::OutdatedOffline
                 | InstanceLiveStatus::OrphanedFromBackend
                 | InstanceLiveStatus::NeedsLauncherUpdate
                 | InstanceLiveStatus::LaunchFailed(_)

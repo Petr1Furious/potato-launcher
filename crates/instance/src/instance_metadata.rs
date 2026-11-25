@@ -347,6 +347,7 @@ impl InstanceMetadata {
             required_java_version: self.get_java_version(),
             minecraft_version: self.minecraft_version(),
             loader: self.loader_name(),
+            optional_sets: Some(self.mod_sync.optional_sets.clone()),
         })
     }
 
@@ -450,6 +451,13 @@ impl InstanceMetadata {
             tasks
                 .check_tasks
                 .extend(self.get_library_check_tasks(params.instance_dir.data_dir())?);
+            if params.cause == InstallCause::Run
+                && self.resource_sync == ResourceSyncMode::AlwaysFast
+            {
+                for task in &mut tasks.check_tasks {
+                    task.remote_sha1 = None;
+                }
+            }
             tasks.check_tasks.extend(
                 self.get_asset_check_tasks(
                     client,

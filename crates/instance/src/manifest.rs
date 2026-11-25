@@ -9,7 +9,7 @@ use utils::{
     paths::{DataDir, InstanceDirFS, VersionsDir},
 };
 
-use crate::localized::LocalizedString;
+use crate::{localized::LocalizedString, mod_sync::OptionalModSet};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ManifestError {
@@ -150,6 +150,9 @@ pub struct InstanceManifestEntry {
     /// Such as `NeoForge`; unset for vanilla.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loader: Option<String>,
+    /// Unset for hosts published before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optional_sets: Option<Vec<OptionalModSet>>,
 }
 
 impl InstanceManifestEntry {
