@@ -17,3 +17,5 @@ instance = { path = "../instance" }
 qrcode = "0.15.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 smallvec = "1.16.6"
+flate2.workspace = true
+sysinfo = { version = "0.31.4", default-features = false, features = ["system"] }

@@ -1,15 +1,3 @@
-[common.close]
-en = "Close"
-ru = "Закрыть"
-
-[common.on]
-en = "On"
-ru = "Вкл."
-
-[common.off]
-en = "Off"
-ru = "Выкл."
-
 [common.refresh]
 en = "Refresh"
 ru = "Обновить"
@@ -25,14 +13,6 @@ ru = "Настройки"
 [common.cancel]
 en = "Cancel"
 ru = "Отмена"
-
-[common.default]
-en = "Default"
-ru = "По умолчанию"
-
-[common.details]
-en = "Details"
-ru = "Подробности"
 
 [common.dismiss]
 en = "Dismiss"
@@ -74,10 +54,6 @@ ru = "Успех"
 en = "Info"
 ru = "Информация"
 
-[nav.configure_backends]
-en = "Configure backends"
-ru = "Настроить бэкенды"
-
 [nav.accounts]
 en = "Accounts"
 ru = "Аккаунты"
@@ -91,35 +67,19 @@ en = "Open Backends to add a manifest URL, or create a local instance below."
 ru = "Откройте «Бэкенды», чтобы добавить URL манифеста, или создайте локальный инстанс ниже."
 
 [instances.local_empty_hint]
-en = "No local instances yet. Use Add local to create one."
-ru = "Локальных инстансов пока нет. Нажмите «Добавить локальный», чтобы создать."
-
-[instances.status]
-en = "Status"
-ru = "Статус"
-
-[instances.runtime]
-en = "Runtime"
-ru = "Запуск"
-
-[instances.actions]
-en = "Actions"
-ru = "Действия"
+en = "No local instances yet."
+ru = "Локальных инстансов пока нет."
 
 [instances.logs]
 en = "Logs"
 ru = "Логи"
 
 [instances.open_instance_folder]
-en = "Open Instance Folder"
+en = "Open instance folder"
 ru = "Открыть папку инстанса"
 
-[instances.open_latest_launch_log]
-en = "Open Latest Launch Log"
-ru = "Открыть последний лог запуска"
-
 [instances.open_launcher_directory]
-en = "Open Launcher Directory"
+en = "Open launcher folder"
 ru = "Открыть папку лаунчера"
 
 [instances.install]
@@ -135,7 +95,7 @@ en = "Play"
 ru = "Играть"
 
 [instances.play_again]
-en = "Play Again"
+en = "Play again"
 ru = "Играть снова"
 
 [instances.launch_after_install]
@@ -155,7 +115,7 @@ en = "Resync"
 ru = "Синхронизировать"
 
 [instances.hard_resync]
-en = "Hard Resync"
+en = "Hard resync"
 ru = "Сбросить"
 
 [instances.delete]
@@ -166,16 +126,8 @@ ru = "Удалить"
 en = "Remove"
 ru = "Убрать"
 
-[instances.confirm_delete]
-en = "Confirm Delete"
-ru = "Подтвердить удаление"
-
-[instances.confirm_delete_hint]
-en = "Click Confirm Delete to remove this instance from disk."
-ru = "Нажмите «Подтвердить удаление», чтобы удалить инстанс с диска."
-
 [instances.add_account]
-en = "Add Account"
+en = "Add account"
 ru = "Добавить аккаунт"
 
 [instances.add_account_card]
@@ -189,10 +141,6 @@ ru = "Аккаунт не выбран"
 [instances.any_provider]
 en = "Any provider"
 ru = "Любой провайдер"
-
-[instances.override_suffix]
-en = ", Override"
-ru = ", переопределение"
 
 [instances.status_available]
 en = "Available"
@@ -223,7 +171,7 @@ en = "Launch failed"
 ru = "Ошибка запуска"
 
 [instances.status_orphaned]
-en = "Orphaned"
+en = "Unlisted"
 ru = "Не в каталоге"
 
 [instances.status_needs_launcher_update]
@@ -237,14 +185,6 @@ ru = "Обновите лаунчер, чтобы установить этот 
 [instances.status_no_account]
 en = "${status: String}, no account"
 ru = "${status: String}, нет аккаунта"
-
-[instances.default_memory]
-en = "Default memory: ${xmx: u64} MB"
-ru = "Память по умолчанию: ${xmx: u64} МБ"
-
-[instances.effective_memory]
-en = "Effective memory: ${xmx: u64} MB"
-ru = "Текущая память: ${xmx: u64} МБ"
 
 [instances.jvm_opts]
 en = "Additional JVM options"
@@ -265,10 +205,6 @@ ru = "Нет"
 [instances.set_opts]
 en = "Save"
 ru = "Сохранить"
-
-[instances.set_memory]
-en = "Set Memory"
-ru = "Задать память"
 
 [instances.java_section]
 en = "Java"
@@ -301,10 +237,6 @@ ru = "Определение..."
 [instances.java_not_found]
 en = "Java not found"
 ru = "Java не найдена"
-
-[instances.set_java_path]
-en = "Set Path"
-ru = "Задать путь"
 
 [instances.use_native_glfw_title]
 en = "Use native GLFW"
@@ -367,7 +299,7 @@ en = "Accounts"
 ru = "Аккаунты"
 
 [accounts.add_account_section]
-en = "Add Account"
+en = "Add account"
 ru = "Добавить аккаунт"
 
 [accounts.account_section]
@@ -375,7 +307,7 @@ en = "Account"
 ru = "Аккаунт"
 
 [accounts.account_override_section]
-en = "Account Override"
+en = "Account override"
 ru = "Переопределение аккаунта"
 
 [accounts.required_provider]
@@ -391,7 +323,7 @@ en = "Add Microsoft"
 ru = "Добавить Microsoft"
 
 [accounts.add_offline]
-en = "Add Offline"
+en = "Add offline"
 ru = "Добавить офлайн"
 
 [accounts.add_telegram]
@@ -407,19 +339,19 @@ en = "Advanced"
 ru = "Дополнительно"
 
 [accounts.advanced_section]
-en = "Advanced Accounts"
-ru = "Дополнительные аккаунты"
+en = "Other providers"
+ru = "Другие провайдеры"
 
 [backends.title]
 en = "Backends"
 ru = "Бэкенды"
 
 [backends.add_backend]
-en = "Add Backend"
+en = "Add backend"
 ru = "Добавить бэкенд"
 
 [backends.add_backend_section]
-en = "Add Backend"
+en = "Add backend"
 ru = "Добавить бэкенд"
 
 [backends.configured]
@@ -431,7 +363,7 @@ en = "Discovered"
 ru = "Обнаружен"
 
 [backends.configured_backends]
-en = "Configured Backends"
+en = "Configured backends"
 ru = "Настроенные бэкенды"
 
 [backends.manifest_url_hint]
@@ -455,43 +387,23 @@ en = "offline"
 ru = "офлайн"
 
 [backends.published_count]
-en = "${count: usize} instances"
-ru = "${count: usize} инстансов"
-
-[backends.refreshing_title]
-en = "Refreshing ${title: String}"
-ru = "Обновление ${title: String}"
+en = "Published: ${count: usize}"
+ru = "Опубликовано: ${count: usize}"
 
 [backends.refreshing_message]
 en = "The backend has not returned an instance list yet."
 ru = "Бэкенд ещё не вернул список инстансов."
 
-[backends.offline_title]
-en = "${title: String} is offline"
-ru = "${title: String} недоступен"
-
 [backends.offline_message]
 en = "Installed instances from this backend will appear here when known locally."
 ru = "Установленные инстансы с этого бэкенда появятся здесь, если они есть локально."
-
-[backends.fetch_failed_title]
-en = "Failed to fetch ${title: String}"
-ru = "Не удалось загрузить ${title: String}"
-
-[backends.not_fetched_title]
-en = "${title: String} has not been fetched"
-ru = "${title: String} ещё не загружался"
 
 [backends.not_fetched_message]
 en = "Use Refresh to try fetching this backend."
 ru = "Нажмите «Обновить», чтобы попробовать загрузить этот бэкенд."
 
-[settings.title]
-en = "Launcher Settings"
-ru = "Настройки лаунчера"
-
 [settings.hide_after_launch_title]
-en = "Hide launcher after launch"
+en = "Minimize after launch"
 ru = "Скрывать лаунчер после запуска"
 
 [settings.hide_after_launch_desc]
@@ -510,10 +422,6 @@ ru = "Скрывать строку аккаунта на карточках и�
 en = "Language"
 ru = "Язык"
 
-[settings.language_desc]
-en = "Choose the launcher interface language."
-ru = "Выберите язык интерфейса лаунчера."
-
 [settings.language_english]
 en = "English"
 ru = "English"
@@ -529,10 +437,6 @@ ru = "Удаляет все инстансы, аккаунты, Java, кэш и 
 [settings.delete_all_data]
 en = "Delete"
 ru = "Удалить"
-
-[settings.delete_all_data_confirm]
-en = "Click again to delete everything"
-ru = "Нажмите ещё раз, чтобы удалить всё"
 
 [settings.language_russian]
 en = "Русский"
@@ -559,8 +463,8 @@ en = "Offline"
 ru = "Офлайн"
 
 [placeholders.manifest_url]
-en = "https://example.com/data/instance_manifest.json"
-ru = "https://example.com/data/instance_manifest.json"
+en = "Manifest URL"
+ru = "URL манифеста"
 
 [placeholders.offline_nickname]
 en = "Offline nickname"
@@ -582,16 +486,12 @@ ru = "Client secret"
 en = "Launcher name"
 ru = "Имя лаунчера"
 
-[placeholders.memory_mib]
-en = "Memory MiB"
-ru = "Память (МиБ)"
-
 [placeholders.jvm_opts]
 en = "Extra JVM options"
 ru = "Дополнительные опции JVM"
 
 [placeholders.instance_name]
-en = "My Instance"
+en = "My instance"
 ru = "Мой инстанс"
 
 [placeholders.minecraft_version]
@@ -850,10 +750,6 @@ ru = "Не удалось удалить URL бэкенда: ${error: String}"
 en = "Failed to open instance folder: ${error: String}"
 ru = "Не удалось открыть папку инстанса: ${error: String}"
 
-[notifications.failed_open_logs]
-en = "Failed to open logs: ${error: String}"
-ru = "Не удалось открыть логи: ${error: String}"
-
 [notifications.failed_open_launcher_directory]
 en = "Failed to open launcher directory: ${error: String}"
 ru = "Не удалось открыть папку лаунчера: ${error: String}"
@@ -1001,3 +897,254 @@ ru = 'Доступна новая версия лаунчера. Обновит�
 [update.available_nix]
 en = "A new launcher version is available. Update it through Nix."
 ru = "Доступна новая версия лаунчера. Обновите её через Nix."
+
+[common.open]
+en = "Open"
+ru = "Открыть"
+
+[nav.all]
+en = "All instances"
+ru = "Все инстансы"
+
+[nav.library]
+en = "Library"
+ru = "Библиотека"
+
+[nav.manage]
+en = "Manage"
+ru = "Управление"
+
+[accounts.advanced_desc]
+en = "Telegram and Ely.by"
+ru = "Telegram и Ely.by"
+
+[accounts.clear_override]
+en = "Clear override"
+ru = "Сбросить замену"
+
+[accounts.no_accounts_short]
+en = "No accounts"
+ru = "Нет аккаунтов"
+
+[accounts.override_desc]
+en = "Launch with an account from another provider instead."
+ru = "Запускать с аккаунтом другого провайдера."
+
+[instances.copy_path]
+en = "Copy path"
+ru = "Скопировать путь"
+
+[instances.danger_zone]
+en = "Danger zone"
+ru = "Опасная зона"
+
+[instances.delete_title]
+en = "Delete ${name: String}?"
+ru = "Удалить ${name: String}?"
+
+[instances.delete_description]
+en = "Removes the instance folder, including worlds and game settings."
+ru = "Удаляет папку сборки вместе с мирами и настройками игры."
+
+[instances.details]
+en = "Details"
+ru = "Подробности"
+
+[instances.folder]
+en = "Folder"
+ru = "Папка"
+
+[instances.version]
+en = "Version"
+ru = "Версия"
+
+[instances.java_path]
+en = "Java path"
+ru = "Путь к Java"
+
+[instances.maintenance]
+en = "Maintenance"
+ru = "Обслуживание"
+
+[instances.resync_desc]
+en = "Download missing or changed files."
+ru = "Скачать недостающие и изменённые файлы."
+
+[instances.hard_resync_desc]
+en = "Also overwrite files you changed."
+ru = "Также перезаписать изменённые вами файлы."
+
+[instances.override_short]
+en = "override"
+ru = "замена"
+
+[instances.play_as]
+en = "Play as"
+ru = "Играть как"
+
+[instances.tab_overview]
+en = "Overview"
+ru = "Обзор"
+
+[instances.tab_runtime]
+en = "Java & memory"
+ru = "Java и память"
+
+[logs.copy]
+en = "Copy"
+ru = "Скопировать"
+
+[logs.empty]
+en = "No launch log yet"
+ru = "Лога запуска пока нет"
+
+
+[logs.open_file]
+en = "Open file"
+ru = "Открыть файл"
+
+
+[memory.title]
+en = "Memory"
+ru = "Память"
+
+[memory.reset]
+en = "Reset to pack default"
+ru = "Сбросить на значение по умолчанию"
+
+[memory.high_warning]
+en = "Over 75% of this system's ${total: String} GB"
+ru = "Больше 75% от ${total: String} ГБ в системе"
+
+[mods.count]
+en = "Mods ${enabled: usize}/${total: usize}"
+ru = "Моды ${enabled: usize}/${total: usize}"
+
+[mods.none_enabled]
+en = "None enabled"
+ru = "Ничего не включено"
+
+[mods.locked]
+en = "Stop the game or install to change mods."
+ru = "Остановите игру или установку, чтобы менять моды."
+
+[palette.title]
+en = "Command palette"
+ru = "Палитра команд"
+
+[palette.placeholder]
+en = "Search instances and actions"
+ru = "Поиск сборок и действий"
+
+[palette.play]
+en = "Play ${name: String}"
+ru = "Играть: ${name: String}"
+
+[settings.general]
+en = "General"
+ru = "Общие"
+
+[settings.storage]
+en = "Storage"
+ru = "Хранилище"
+
+[settings.shortcuts]
+en = "Shortcuts"
+ru = "Сочетания клавиш"
+
+[local.select_minecraft_version]
+en = "Select a Minecraft version"
+ru = "Выберите версию Minecraft"
+
+[palette.search]
+en = "Search"
+ru = "Поиск"
+
+[notifications.copied]
+en = "Copied"
+ru = "Скопировано"
+
+
+[memory.pack_default]
+en = "Default: ${gb: String} GB"
+ru = "По умолчанию: ${gb: String} ГБ"
+
+[common.remove_title]
+en = "Remove ${name: String}?"
+ru = "Удалить ${name: String}?"
+
+[logs.find]
+en = "Find"
+ru = "Найти"
+
+[logs.keep_updating]
+en = "Keep updating"
+ru = "Обновлять"
+
+[logs.wrap]
+en = "Wrap lines"
+ru = "Переносить строки"
+
+[logs.color]
+en = "Color lines"
+ru = "Подсвечивать строки"
+
+[logs.collapse]
+en = "Collapse stack traces"
+ru = "Сворачивать стектрейсы"
+
+[logs.bottom]
+en = "Scroll to bottom"
+ru = "Вниз"
+
+[logs.clear]
+en = "Clear"
+ru = "Очистить"
+
+[logs.upload]
+en = "Upload to mclo.gs"
+ru = "Загрузить на mclo.gs"
+
+[logs.upload_title]
+en = "Upload log to mclo.gs?"
+ru = "Загрузить лог на mclo.gs?"
+
+[logs.upload_description]
+en = "Anyone with the link can read it."
+ru = "Его сможет прочитать любой, у кого есть ссылка."
+
+[logs.upload_confirm]
+en = "Upload"
+ru = "Загрузить"
+
+[logs.current_run]
+en = "Current run"
+ru = "Текущий запуск"
+
+[logs.group_launcher]
+en = "Launcher"
+ru = "Лаунчер"
+
+[logs.group_game]
+en = "Game logs"
+ru = "Логи игры"
+
+[logs.group_crashes]
+en = "Crash reports"
+ru = "Краш-репорты"
+
+[logs.empty_file]
+en = "Empty file"
+ru = "Пустой файл"
+
+[logs.more_lines]
+en = "${count: usize} more lines"
+ru = "ещё строк: ${count: usize}"
+
+[notifications.log_uploaded]
+en = "Link copied"
+ru = "Ссылка скопирована"
+
+[notifications.log_upload_failed]
+en = "Upload failed: ${error: String}"
+ru = "Не удалось загрузить: ${error: String}"

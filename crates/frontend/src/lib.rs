@@ -1,3 +1,4 @@
+mod assets;
 pub mod auth_qr;
 pub mod component;
 pub mod entity;
@@ -23,7 +24,23 @@ use launcher_build_config::{launcher_app_id, launcher_name};
 use processor::Processor;
 use root::LauncherRoot;
 
-actions!(launcher, [Quit]);
+actions!(
+    launcher,
+    [Quit, OpenPalette, OpenSettings, RefreshAll, GoBack]
+);
+
+pub fn launch_log_path(launcher_dir: &std::path::Path, dir_name: &str) -> PathBuf {
+    launcher_dir
+        .join("logs")
+        .join(format!("launch-{dir_name}.log"))
+}
+
+pub fn game_dir(launcher_dir: &std::path::Path, dir_name: &str) -> PathBuf {
+    launcher_dir
+        .join("instances")
+        .join(dir_name)
+        .join("minecraft")
+}
 
 pub fn start(
     launcher_dir: PathBuf,
@@ -31,15 +48,31 @@ pub fn start(
     mut receiver: FrontendReceiver,
 ) -> anyhow::Result<()> {
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
             gpui_kit::init(cx);
             gpui_kit::component::Theme::change(gpui_kit::component::ThemeMode::Dark, None, cx);
+            let theme = gpui_kit::component::Theme::global_mut(cx);
+            theme.overlay = gpui_kit::black().opacity(0.55);
+            theme.popover = theme.tab_bar;
             cx.bind_keys([
                 #[cfg(target_os = "macos")]
                 KeyBinding::new("cmd-q", Quit, None),
                 #[cfg(not(target_os = "macos"))]
                 KeyBinding::new("alt-f4", Quit, None),
+                KeyBinding::new("escape", GoBack, Some("Launcher")),
+                #[cfg(target_os = "macos")]
+                KeyBinding::new("cmd-k", OpenPalette, None),
+                #[cfg(target_os = "macos")]
+                KeyBinding::new("cmd-,", OpenSettings, Some("Launcher")),
+                #[cfg(target_os = "macos")]
+                KeyBinding::new("cmd-r", RefreshAll, Some("Launcher")),
+                #[cfg(not(target_os = "macos"))]
+                KeyBinding::new("ctrl-k", OpenPalette, None),
+                #[cfg(not(target_os = "macos"))]
+                KeyBinding::new("ctrl-,", OpenSettings, Some("Launcher")),
+                #[cfg(not(target_os = "macos"))]
+                KeyBinding::new("ctrl-r", RefreshAll, Some("Launcher")),
             ]);
             cx.on_action(|_: &Quit, cx: &mut App| {
                 cx.quit();

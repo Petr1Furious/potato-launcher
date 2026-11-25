@@ -2272,8 +2272,6 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "604d277dd339c63d13a3016d22a84622cc7511fdfd8e88573c0709088ede3500"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -4226,6 +4224,7 @@ name = "launcher-frontend"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "flate2",
  "gpui-kit",
  "image",
  "instance",
@@ -4237,6 +4236,7 @@ dependencies = [
  "open",
  "qrcode",
  "smallvec",
+ "sysinfo",
  "url",
 ]
 

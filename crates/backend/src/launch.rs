@@ -220,7 +220,7 @@ pub(crate) async fn launch_instance(request: LaunchRequest) -> Result<LaunchStar
 
     let logs_dir = LogsDir::root().to_fs(&data_dir);
     tokio::fs::create_dir_all(&logs_dir).await?;
-    let log_file = std::fs::File::create(logs_dir.join("latest_minecraft_launch.log"))?;
+    let log_file = std::fs::File::create(logs_dir.join(format!("launch-{}.log", local.dir_name)))?;
 
     log::info!(
         "Launching {} with Java at {}",

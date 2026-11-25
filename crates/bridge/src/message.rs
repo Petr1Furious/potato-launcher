@@ -79,6 +79,7 @@ pub enum MessageToBackend {
         enabled: bool,
     },
     ResolveJavaPath(InstanceHandle),
+    UploadLog(Arc<str>),
     CreateLocalInstance {
         display_name: String,
         minecraft_version: String,
@@ -145,6 +146,7 @@ pub enum MessageToFrontend {
         instance: InstanceHandle,
         path: Option<Arc<str>>,
     },
+    LogUploaded(Arc<str>),
     Quit,
 }
 

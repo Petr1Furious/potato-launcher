@@ -105,6 +105,16 @@ impl Processor {
                     .java_resolve
                     .update(cx, |cache, cx| cache.set(instance, path, cx));
             }
+            MessageToFrontend::LogUploaded(url) => {
+                cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(url.to_string()));
+                self.data.notifications.update(cx, |entries, cx| {
+                    entries.push(
+                        NotificationLevel::Success,
+                        launcher_i18n::notifications::log_uploaded(),
+                        cx,
+                    );
+                });
+            }
             MessageToFrontend::Quit => {
                 cx.quit();
             }

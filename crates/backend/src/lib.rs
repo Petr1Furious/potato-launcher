@@ -3,6 +3,7 @@ mod install;
 pub mod instances;
 mod launch;
 mod local;
+mod mclogs;
 mod tasks;
 mod update;
 mod versions;
@@ -2490,6 +2491,22 @@ pub async fn run(
                     }
                     MessageToBackend::ResolveJavaPath(instance) => {
                         state.resolve_java_path(instance, internal_sender.clone());
+                    }
+                    MessageToBackend::UploadLog(content) => {
+                        let client = state.client.clone();
+                        let frontend = frontend.clone();
+                        tokio::spawn(async move {
+                            match mclogs::upload(&client, &content).await {
+                                Ok(url) => frontend.send(MessageToFrontend::LogUploaded(url)),
+                                Err(err) => {
+                                    log::error!("Failed to upload log: {err:#}");
+                                    frontend.send(MessageToFrontend::Notification {
+                                        level: NotificationLevel::Error,
+                                        message: Arc::from(launcher_i18n::notifications::log_upload_failed(err.to_string())),
+                                    });
+                                }
+                            }
+                        });
                     }
                     MessageToBackend::CreateLocalInstance {
                         display_name,

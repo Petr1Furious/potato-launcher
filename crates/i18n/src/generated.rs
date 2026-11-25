@@ -22,8 +22,12 @@ pub mod accounts {
             "add_offline" => Some(add_offline()),
             "add_telegram" => Some(add_telegram()),
             "advanced" => Some(advanced()),
+            "advanced_desc" => Some(advanced_desc()),
             "advanced_section" => Some(advanced_section()),
+            "clear_override" => Some(clear_override()),
+            "no_accounts_short" => Some(no_accounts_short()),
             "no_accounts_yet" => Some(no_accounts_yet()),
+            "override_desc" => Some(override_desc()),
             "section" => Some(section()),
             "title" => Some(title()),
             _ => None,
@@ -32,7 +36,7 @@ pub mod accounts {
     pub fn account_override_section() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Переопределение аккаунта",
-            _ => "Account Override",
+            _ => "Account override",
         }
     }
     pub fn account_section() -> &'static str {
@@ -44,7 +48,7 @@ pub mod accounts {
     pub fn add_account_section() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Добавить аккаунт",
-            _ => "Add Account",
+            _ => "Add account",
         }
     }
     pub fn add_elyby() -> &'static str {
@@ -62,7 +66,7 @@ pub mod accounts {
     pub fn add_offline() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Добавить офлайн",
-            _ => "Add Offline",
+            _ => "Add offline",
         }
     }
     pub fn add_telegram() -> &'static str {
@@ -77,16 +81,40 @@ pub mod accounts {
             _ => "Advanced",
         }
     }
+    pub fn advanced_desc() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Telegram и Ely.by",
+            _ => "Telegram and Ely.by",
+        }
+    }
     pub fn advanced_section() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Дополнительные аккаунты",
-            _ => "Advanced Accounts",
+            1 => "Другие провайдеры",
+            _ => "Other providers",
+        }
+    }
+    pub fn clear_override() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Сбросить замену",
+            _ => "Clear override",
+        }
+    }
+    pub fn no_accounts_short() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Нет аккаунтов",
+            _ => "No accounts",
         }
     }
     pub fn no_accounts_yet() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Аккаунты ещё не добавлены.",
             _ => "No accounts have been added yet.",
+        }
+    }
+    pub fn override_desc() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Запускать с аккаунтом другого провайдера.",
+            _ => "Launch with an account from another provider instead.",
         }
     }
     pub fn required_provider(provider: String) -> String {
@@ -183,13 +211,13 @@ pub mod backends {
     pub fn add_backend() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Добавить бэкенд",
-            _ => "Add Backend",
+            _ => "Add backend",
         }
     }
     pub fn add_backend_section() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Добавить бэкенд",
-            _ => "Add Backend",
+            _ => "Add backend",
         }
     }
     pub fn configured() -> &'static str {
@@ -201,19 +229,13 @@ pub mod backends {
     pub fn configured_backends() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Настроенные бэкенды",
-            _ => "Configured Backends",
+            _ => "Configured backends",
         }
     }
     pub fn discovered() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Обнаружен",
             _ => "Discovered",
-        }
-    }
-    pub fn fetch_failed_title(title: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Не удалось загрузить {title}"),
-            _ => format!("Failed to fetch {title}"),
         }
     }
     pub fn local_only() -> &'static str {
@@ -246,12 +268,6 @@ pub mod backends {
             _ => "Use Refresh to try fetching this backend.",
         }
     }
-    pub fn not_fetched_title(title: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("{title} ещё не загружался"),
-            _ => format!("{title} has not been fetched"),
-        }
-    }
     pub fn offline() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "офлайн",
@@ -264,28 +280,16 @@ pub mod backends {
             _ => "Installed instances from this backend will appear here when known locally.",
         }
     }
-    pub fn offline_title(title: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("{title} недоступен"),
-            _ => format!("{title} is offline"),
-        }
-    }
     pub fn published_count(count: usize) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("{count} инстансов"),
-            _ => format!("{count} instances"),
+            1 => format!("Опубликовано: {count}"),
+            _ => format!("Published: {count}"),
         }
     }
     pub fn refreshing_message() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Бэкенд ещё не вернул список инстансов.",
             _ => "The backend has not returned an instance list yet.",
-        }
-    }
-    pub fn refreshing_title(title: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Обновление {title}"),
-            _ => format!("Refreshing {title}"),
         }
     }
     pub fn title() -> &'static str {
@@ -299,15 +303,11 @@ pub mod common {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
             "cancel" => Some(cancel()),
-            "close" => Some(close()),
-            "default" => Some(default()),
-            "details" => Some(details()),
             "dismiss" => Some(dismiss()),
             "error" => Some(error()),
             "info" => Some(info()),
             "local" => Some(local()),
-            "off" => Some(off()),
-            "on" => Some(on()),
+            "open" => Some(open()),
             "refresh" => Some(refresh()),
             "refreshing" => Some(refreshing()),
             "remove" => Some(remove()),
@@ -324,24 +324,6 @@ pub mod common {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Отмена",
             _ => "Cancel",
-        }
-    }
-    pub fn close() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Закрыть",
-            _ => "Close",
-        }
-    }
-    pub fn default() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "По умолчанию",
-            _ => "Default",
-        }
-    }
-    pub fn details() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Подробности",
-            _ => "Details",
         }
     }
     pub fn dismiss() -> &'static str {
@@ -368,16 +350,10 @@ pub mod common {
             _ => "Local",
         }
     }
-    pub fn off() -> &'static str {
+    pub fn open() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Выкл.",
-            _ => "Off",
-        }
-    }
-    pub fn on() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Вкл.",
-            _ => "On",
+            1 => "Открыть",
+            _ => "Open",
         }
     }
     pub fn refresh() -> &'static str {
@@ -396,6 +372,12 @@ pub mod common {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Удалить",
             _ => "Remove",
+        }
+    }
+    pub fn remove_title(name: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Удалить {name}?"),
+            _ => format!("Remove {name}?"),
         }
     }
     pub fn retry() -> &'static str {
@@ -438,21 +420,25 @@ pub mod common {
 pub mod instances {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
-            "actions" => Some(actions()),
             "add_account" => Some(add_account()),
             "add_account_card" => Some(add_account_card()),
             "any_provider" => Some(any_provider()),
             "choose_account" => Some(choose_account()),
-            "confirm_delete" => Some(confirm_delete()),
-            "confirm_delete_hint" => Some(confirm_delete_hint()),
+            "copy_path" => Some(copy_path()),
+            "danger_zone" => Some(danger_zone()),
             "delete" => Some(delete()),
+            "delete_description" => Some(delete_description()),
+            "details" => Some(details()),
+            "folder" => Some(folder()),
             "hard_resync" => Some(hard_resync()),
+            "hard_resync_desc" => Some(hard_resync_desc()),
             "install" => Some(install()),
             "java_browse" => Some(java_browse()),
             "java_clear" => Some(java_clear()),
             "java_find" => Some(java_find()),
             "java_install_required" => Some(java_install_required()),
             "java_not_found" => Some(java_not_found()),
+            "java_path" => Some(java_path()),
             "java_path_auto_detect" => Some(java_path_auto_detect()),
             "java_resolving" => Some(java_resolving()),
             "java_section" => Some(java_section()),
@@ -465,25 +451,23 @@ pub mod instances {
             "launching" => Some(launching()),
             "local_empty_hint" => Some(local_empty_hint()),
             "logs" => Some(logs()),
+            "maintenance" => Some(maintenance()),
             "needs_launcher_update" => Some(needs_launcher_update()),
             "no_account_selected" => Some(no_account_selected()),
             "no_instances_hint" => Some(no_instances_hint()),
             "no_instances_yet" => Some(no_instances_yet()),
             "open_instance_folder" => Some(open_instance_folder()),
-            "open_latest_launch_log" => Some(open_latest_launch_log()),
             "open_launcher_directory" => Some(open_launcher_directory()),
             "optional_mods_desc" => Some(optional_mods_desc()),
             "optional_mods_title" => Some(optional_mods_title()),
-            "override_suffix" => Some(override_suffix()),
+            "override_short" => Some(override_short()),
             "play" => Some(play()),
             "play_again" => Some(play_again()),
+            "play_as" => Some(play_as()),
             "remove" => Some(remove()),
             "resync" => Some(resync()),
-            "runtime" => Some(runtime()),
-            "set_java_path" => Some(set_java_path()),
-            "set_memory" => Some(set_memory()),
+            "resync_desc" => Some(resync_desc()),
             "set_opts" => Some(set_opts()),
-            "status" => Some(status()),
             "status_available" => Some(status_available()),
             "status_failed" => Some(status_failed()),
             "status_installed" => Some(status_installed()),
@@ -493,23 +477,20 @@ pub mod instances {
             "status_outdated" => Some(status_outdated()),
             "status_outdated_offline" => Some(status_outdated_offline()),
             "status_running" => Some(status_running()),
+            "tab_overview" => Some(tab_overview()),
+            "tab_runtime" => Some(tab_runtime()),
             "update" => Some(update()),
             "use_native_glfw_desc" => Some(use_native_glfw_desc()),
             "use_native_glfw_title" => Some(use_native_glfw_title()),
             "used_by_installed" => Some(used_by_installed()),
+            "version" => Some(version()),
             _ => None,
-        }
-    }
-    pub fn actions() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Действия",
-            _ => "Actions",
         }
     }
     pub fn add_account() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Добавить аккаунт",
-            _ => "Add Account",
+            _ => "Add account",
         }
     }
     pub fn add_account_card() -> &'static str {
@@ -530,22 +511,16 @@ pub mod instances {
             _ => "Choose an account",
         }
     }
-    pub fn confirm_delete() -> &'static str {
+    pub fn copy_path() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Подтвердить удаление",
-            _ => "Confirm Delete",
+            1 => "Скопировать путь",
+            _ => "Copy path",
         }
     }
-    pub fn confirm_delete_hint() -> &'static str {
+    pub fn danger_zone() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Нажмите «Подтвердить удаление», чтобы удалить инстанс с диска.",
-            _ => "Click Confirm Delete to remove this instance from disk.",
-        }
-    }
-    pub fn default_memory(xmx: u64) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Память по умолчанию: {xmx} МБ"),
-            _ => format!("Default memory: {xmx} MB"),
+            1 => "Опасная зона",
+            _ => "Danger zone",
         }
     }
     pub fn delete() -> &'static str {
@@ -554,16 +529,40 @@ pub mod instances {
             _ => "Delete",
         }
     }
-    pub fn effective_memory(xmx: u64) -> String {
+    pub fn delete_description() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Текущая память: {xmx} МБ"),
-            _ => format!("Effective memory: {xmx} MB"),
+            1 => "Удаляет папку сборки вместе с мирами и настройками игры.",
+            _ => "Removes the instance folder, including worlds and game settings.",
+        }
+    }
+    pub fn delete_title(name: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Удалить {name}?"),
+            _ => format!("Delete {name}?"),
+        }
+    }
+    pub fn details() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Подробности",
+            _ => "Details",
+        }
+    }
+    pub fn folder() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Папка",
+            _ => "Folder",
         }
     }
     pub fn hard_resync() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Сбросить",
-            _ => "Hard Resync",
+            _ => "Hard resync",
+        }
+    }
+    pub fn hard_resync_desc() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Также перезаписать изменённые вами файлы.",
+            _ => "Also overwrite files you changed.",
         }
     }
     pub fn install() -> &'static str {
@@ -600,6 +599,12 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Java не найдена",
             _ => "Java not found",
+        }
+    }
+    pub fn java_path() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Путь к Java",
+            _ => "Java path",
         }
     }
     pub fn java_path_auto_detect() -> &'static str {
@@ -672,14 +677,20 @@ pub mod instances {
     }
     pub fn local_empty_hint() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Локальных инстансов пока нет. Нажмите «Добавить локальный», чтобы создать.",
-            _ => "No local instances yet. Use Add local to create one.",
+            1 => "Локальных инстансов пока нет.",
+            _ => "No local instances yet.",
         }
     }
     pub fn logs() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Логи",
             _ => "Logs",
+        }
+    }
+    pub fn maintenance() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Обслуживание",
+            _ => "Maintenance",
         }
     }
     pub fn needs_launcher_update() -> &'static str {
@@ -711,19 +722,13 @@ pub mod instances {
     pub fn open_instance_folder() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Открыть папку инстанса",
-            _ => "Open Instance Folder",
-        }
-    }
-    pub fn open_latest_launch_log() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Открыть последний лог запуска",
-            _ => "Open Latest Launch Log",
+            _ => "Open instance folder",
         }
     }
     pub fn open_launcher_directory() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Открыть папку лаунчера",
-            _ => "Open Launcher Directory",
+            _ => "Open launcher folder",
         }
     }
     pub fn optional_mods_desc() -> &'static str {
@@ -738,10 +743,10 @@ pub mod instances {
             _ => "Optional mods",
         }
     }
-    pub fn override_suffix() -> &'static str {
+    pub fn override_short() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => ", переопределение",
-            _ => ", Override",
+            1 => "замена",
+            _ => "override",
         }
     }
     pub fn play() -> &'static str {
@@ -753,7 +758,13 @@ pub mod instances {
     pub fn play_again() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Играть снова",
-            _ => "Play Again",
+            _ => "Play again",
+        }
+    }
+    pub fn play_as() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Играть как",
+            _ => "Play as",
         }
     }
     pub fn remove() -> &'static str {
@@ -774,34 +785,16 @@ pub mod instances {
             _ => "Resync",
         }
     }
-    pub fn runtime() -> &'static str {
+    pub fn resync_desc() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Запуск",
-            _ => "Runtime",
-        }
-    }
-    pub fn set_java_path() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Задать путь",
-            _ => "Set Path",
-        }
-    }
-    pub fn set_memory() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Задать память",
-            _ => "Set Memory",
+            1 => "Скачать недостающие и изменённые файлы.",
+            _ => "Download missing or changed files.",
         }
     }
     pub fn set_opts() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Сохранить",
             _ => "Save",
-        }
-    }
-    pub fn status() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Статус",
-            _ => "Status",
         }
     }
     pub fn status_available() -> &'static str {
@@ -843,7 +836,7 @@ pub mod instances {
     pub fn status_orphaned() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Не в каталоге",
-            _ => "Orphaned",
+            _ => "Unlisted",
         }
     }
     pub fn status_outdated() -> &'static str {
@@ -862,6 +855,18 @@ pub mod instances {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Запущен",
             _ => "Running",
+        }
+    }
+    pub fn tab_overview() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Обзор",
+            _ => "Overview",
+        }
+    }
+    pub fn tab_runtime() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Java и память",
+            _ => "Java & memory",
         }
     }
     pub fn update() -> &'static str {
@@ -888,6 +893,12 @@ pub mod instances {
             _ => "Used by installed instances",
         }
     }
+    pub fn version() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Версия",
+            _ => "Version",
+        }
+    }
 }
 pub mod local {
     pub fn get(key: &str) -> Option<&'static str> {
@@ -905,6 +916,7 @@ pub mod local {
             "loader_versions_error" => Some(loader_versions_error()),
             "loader_versions_loading" => Some(loader_versions_loading()),
             "minecraft_version" => Some(minecraft_version()),
+            "select_minecraft_version" => Some(select_minecraft_version()),
             "show_snapshots" => Some(show_snapshots()),
             "versions_error" => Some(versions_error()),
             "versions_loading_game_versions" => Some(versions_loading_game_versions()),
@@ -996,6 +1008,12 @@ pub mod local {
             _ => "Minecraft version",
         }
     }
+    pub fn select_minecraft_version() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Выберите версию Minecraft",
+            _ => "Select a Minecraft version",
+        }
+    }
     pub fn show_snapshots() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Показывать снимки",
@@ -1021,11 +1039,219 @@ pub mod local {
         }
     }
 }
+pub mod logs {
+    pub fn get(key: &str) -> Option<&'static str> {
+        match key {
+            "bottom" => Some(bottom()),
+            "clear" => Some(clear()),
+            "collapse" => Some(collapse()),
+            "color" => Some(color()),
+            "copy" => Some(copy()),
+            "current_run" => Some(current_run()),
+            "empty" => Some(empty()),
+            "empty_file" => Some(empty_file()),
+            "find" => Some(find()),
+            "group_crashes" => Some(group_crashes()),
+            "group_game" => Some(group_game()),
+            "group_launcher" => Some(group_launcher()),
+            "keep_updating" => Some(keep_updating()),
+            "open_file" => Some(open_file()),
+            "upload" => Some(upload()),
+            "upload_confirm" => Some(upload_confirm()),
+            "upload_description" => Some(upload_description()),
+            "upload_title" => Some(upload_title()),
+            "wrap" => Some(wrap()),
+            _ => None,
+        }
+    }
+    pub fn bottom() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Вниз",
+            _ => "Scroll to bottom",
+        }
+    }
+    pub fn clear() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Очистить",
+            _ => "Clear",
+        }
+    }
+    pub fn collapse() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Сворачивать стектрейсы",
+            _ => "Collapse stack traces",
+        }
+    }
+    pub fn color() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Подсвечивать строки",
+            _ => "Color lines",
+        }
+    }
+    pub fn copy() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Скопировать",
+            _ => "Copy",
+        }
+    }
+    pub fn current_run() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Текущий запуск",
+            _ => "Current run",
+        }
+    }
+    pub fn empty() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Лога запуска пока нет",
+            _ => "No launch log yet",
+        }
+    }
+    pub fn empty_file() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Пустой файл",
+            _ => "Empty file",
+        }
+    }
+    pub fn find() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Найти",
+            _ => "Find",
+        }
+    }
+    pub fn group_crashes() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Краш-репорты",
+            _ => "Crash reports",
+        }
+    }
+    pub fn group_game() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Логи игры",
+            _ => "Game logs",
+        }
+    }
+    pub fn group_launcher() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Лаунчер",
+            _ => "Launcher",
+        }
+    }
+    pub fn keep_updating() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Обновлять",
+            _ => "Keep updating",
+        }
+    }
+    pub fn more_lines(count: usize) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("ещё строк: {count}"),
+            _ => format!("{count} more lines"),
+        }
+    }
+    pub fn open_file() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Открыть файл",
+            _ => "Open file",
+        }
+    }
+    pub fn upload() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Загрузить на mclo.gs",
+            _ => "Upload to mclo.gs",
+        }
+    }
+    pub fn upload_confirm() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Загрузить",
+            _ => "Upload",
+        }
+    }
+    pub fn upload_description() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Его сможет прочитать любой, у кого есть ссылка.",
+            _ => "Anyone with the link can read it.",
+        }
+    }
+    pub fn upload_title() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Загрузить лог на mclo.gs?",
+            _ => "Upload log to mclo.gs?",
+        }
+    }
+    pub fn wrap() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Переносить строки",
+            _ => "Wrap lines",
+        }
+    }
+}
+pub mod memory {
+    pub fn get(key: &str) -> Option<&'static str> {
+        match key {
+            "reset" => Some(reset()),
+            "title" => Some(title()),
+            _ => None,
+        }
+    }
+    pub fn high_warning(total: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Больше 75% от {total} ГБ в системе"),
+            _ => format!("Over 75% of this system's {total} GB"),
+        }
+    }
+    pub fn pack_default(gb: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("По умолчанию: {gb} ГБ"),
+            _ => format!("Default: {gb} GB"),
+        }
+    }
+    pub fn reset() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Сбросить на значение по умолчанию",
+            _ => "Reset to pack default",
+        }
+    }
+    pub fn title() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Память",
+            _ => "Memory",
+        }
+    }
+}
+pub mod mods {
+    pub fn get(key: &str) -> Option<&'static str> {
+        match key {
+            "locked" => Some(locked()),
+            "none_enabled" => Some(none_enabled()),
+            _ => None,
+        }
+    }
+    pub fn count(enabled: usize, total: usize) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Моды {enabled}/{total}"),
+            _ => format!("Mods {enabled}/{total}"),
+        }
+    }
+    pub fn locked() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Остановите игру или установку, чтобы менять моды.",
+            _ => "Stop the game or install to change mods.",
+        }
+    }
+    pub fn none_enabled() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Ничего не включено",
+            _ => "None enabled",
+        }
+    }
+}
 pub mod nav {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
             "accounts" => Some(accounts()),
-            "configure_backends" => Some(configure_backends()),
+            "all" => Some(all()),
+            "library" => Some(library()),
+            "manage" => Some(manage()),
             _ => None,
         }
     }
@@ -1035,10 +1261,22 @@ pub mod nav {
             _ => "Accounts",
         }
     }
-    pub fn configure_backends() -> &'static str {
+    pub fn all() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Настроить бэкенды",
-            _ => "Configure backends",
+            1 => "Все инстансы",
+            _ => "All instances",
+        }
+    }
+    pub fn library() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Библиотека",
+            _ => "Library",
+        }
+    }
+    pub fn manage() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Управление",
+            _ => "Manage",
         }
     }
 }
@@ -1048,6 +1286,7 @@ pub mod notifications {
             "accounts_reset_from_corruption" => Some(accounts_reset_from_corruption()),
             "already_launching_or_running" => Some(already_launching_or_running()),
             "authentication_cancelled" => Some(authentication_cancelled()),
+            "copied" => Some(copied()),
             "data_from_newer_launcher" => Some(data_from_newer_launcher()),
             "delete_all_data_busy" => Some(delete_all_data_busy()),
             "enter_offline_nickname" => Some(enter_offline_nickname()),
@@ -1061,6 +1300,7 @@ pub mod notifications {
                 Some(local_instance_loader_version_required())
             }
             "local_instance_name_empty" => Some(local_instance_name_empty()),
+            "log_uploaded" => Some(log_uploaded()),
             "minecraft_running" => Some(minecraft_running()),
             "offline_nickname_empty" => Some(offline_nickname_empty()),
             "optional_mod_install_in_progress" => Some(optional_mod_install_in_progress()),
@@ -1095,6 +1335,12 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Ошибка авторизации: {error}"),
             _ => format!("Authentication failed: {error}"),
+        }
+    }
+    pub fn copied() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Скопировано",
+            _ => "Copied",
         }
     }
     pub fn data_from_newer_launcher() -> &'static str {
@@ -1143,12 +1389,6 @@ pub mod notifications {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Не удалось открыть папку лаунчера: {error}"),
             _ => format!("Failed to open launcher directory: {error}"),
-        }
-    }
-    pub fn failed_open_logs(error: String) -> String {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => format!("Не удалось открыть логи: {error}"),
-            _ => format!("Failed to open logs: {error}"),
         }
     }
     pub fn failed_remove_account(error: String) -> String {
@@ -1309,6 +1549,18 @@ pub mod notifications {
             _ => "Instance name cannot be empty",
         }
     }
+    pub fn log_upload_failed(error: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Не удалось загрузить: {error}"),
+            _ => format!("Upload failed: {error}"),
+        }
+    }
+    pub fn log_uploaded() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Ссылка скопирована",
+            _ => "Link copied",
+        }
+    }
     pub fn minecraft_exited_with_code(code: i32) -> String {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => format!("Minecraft завершился с кодом {code}"),
@@ -1388,6 +1640,40 @@ pub mod notifications {
         }
     }
 }
+pub mod palette {
+    pub fn get(key: &str) -> Option<&'static str> {
+        match key {
+            "placeholder" => Some(placeholder()),
+            "search" => Some(search()),
+            "title" => Some(title()),
+            _ => None,
+        }
+    }
+    pub fn placeholder() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Поиск сборок и действий",
+            _ => "Search instances and actions",
+        }
+    }
+    pub fn play(name: String) -> String {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => format!("Играть: {name}"),
+            _ => format!("Play {name}"),
+        }
+    }
+    pub fn search() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Поиск",
+            _ => "Search",
+        }
+    }
+    pub fn title() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Палитра команд",
+            _ => "Command palette",
+        }
+    }
+}
 pub mod placeholders {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
@@ -1398,7 +1684,6 @@ pub mod placeholders {
             "launcher_name" => Some(launcher_name()),
             "loader_version" => Some(loader_version()),
             "manifest_url" => Some(manifest_url()),
-            "memory_mib" => Some(memory_mib()),
             "minecraft_version" => Some(minecraft_version()),
             "offline_nickname" => Some(offline_nickname()),
             "telegram_auth_base_url" => Some(telegram_auth_base_url()),
@@ -1420,7 +1705,7 @@ pub mod placeholders {
     pub fn instance_name() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Мой инстанс",
-            _ => "My Instance",
+            _ => "My instance",
         }
     }
     pub fn jvm_opts() -> &'static str {
@@ -1443,14 +1728,8 @@ pub mod placeholders {
     }
     pub fn manifest_url() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "https://example.com/data/instance_manifest.json",
-            _ => "https://example.com/data/instance_manifest.json",
-        }
-    }
-    pub fn memory_mib() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Память (МиБ)",
-            _ => "Memory MiB",
+            1 => "URL манифеста",
+            _ => "Manifest URL",
         }
     }
     pub fn minecraft_version() -> &'static str {
@@ -1656,18 +1935,18 @@ pub mod settings {
     pub fn get(key: &str) -> Option<&'static str> {
         match key {
             "delete_all_data" => Some(delete_all_data()),
-            "delete_all_data_confirm" => Some(delete_all_data_confirm()),
             "delete_all_data_desc" => Some(delete_all_data_desc()),
             "delete_all_data_title" => Some(delete_all_data_title()),
+            "general" => Some(general()),
             "hide_after_launch_desc" => Some(hide_after_launch_desc()),
             "hide_after_launch_title" => Some(hide_after_launch_title()),
             "hide_usernames_desc" => Some(hide_usernames_desc()),
             "hide_usernames_title" => Some(hide_usernames_title()),
-            "language_desc" => Some(language_desc()),
             "language_english" => Some(language_english()),
             "language_russian" => Some(language_russian()),
             "language_title" => Some(language_title()),
-            "title" => Some(title()),
+            "shortcuts" => Some(shortcuts()),
+            "storage" => Some(storage()),
             _ => None,
         }
     }
@@ -1675,12 +1954,6 @@ pub mod settings {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Удалить",
             _ => "Delete",
-        }
-    }
-    pub fn delete_all_data_confirm() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Нажмите ещё раз, чтобы удалить всё",
-            _ => "Click again to delete everything",
         }
     }
     pub fn delete_all_data_desc() -> &'static str {
@@ -1699,6 +1972,12 @@ pub mod settings {
             _ => "Delete all launcher data",
         }
     }
+    pub fn general() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Общие",
+            _ => "General",
+        }
+    }
     pub fn hide_after_launch_desc() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Сворачивать окно лаунчера при запуске Minecraft.",
@@ -1708,7 +1987,7 @@ pub mod settings {
     pub fn hide_after_launch_title() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Скрывать лаунчер после запуска",
-            _ => "Hide launcher after launch",
+            _ => "Minimize after launch",
         }
     }
     pub fn hide_usernames_desc() -> &'static str {
@@ -1721,12 +2000,6 @@ pub mod settings {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
             1 => "Скрывать имена в карточках",
             _ => "Hide usernames in cards",
-        }
-    }
-    pub fn language_desc() -> &'static str {
-        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Выберите язык интерфейса лаунчера.",
-            _ => "Choose the launcher interface language.",
         }
     }
     pub fn language_english() -> &'static str {
@@ -1747,10 +2020,16 @@ pub mod settings {
             _ => "Language",
         }
     }
-    pub fn title() -> &'static str {
+    pub fn shortcuts() -> &'static str {
         match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
-            1 => "Настройки лаунчера",
-            _ => "Launcher Settings",
+            1 => "Сочетания клавиш",
+            _ => "Shortcuts",
+        }
+    }
+    pub fn storage() -> &'static str {
+        match crate::LANG.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => "Хранилище",
+            _ => "Storage",
         }
     }
 }
