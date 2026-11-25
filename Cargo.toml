@@ -21,7 +21,7 @@ reqwest = { version = "0.13.5", features = ["json", "stream", "form"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 thiserror = "2.0.21"
-tokio = { version = "1.53.3", features = [
+tokio = { version = "1.54.1", features = [
     "rt-multi-thread",
     "macros",
     "time",
@@ -32,30 +32,29 @@ tokio = { version = "1.53.3", features = [
     "sync",
 ] }
 tokio-util = "0.7.20"
-log = "0.4.34"
+log = "0.4.35"
 fern = "0.7.1"
 humantime = "2"
 async-trait = "0.1.92"
-anyhow = "1.0.104"
-open = "5.4.4"
+anyhow = "1.0.105"
+open = "5.4.5"
 dirs = "7.0.0"
-flate2 = { version = "1.1.10", default-features = false, features = ["miniz_oxide"] }
+flate2 = { version = "1.1.11", default-features = false, features = ["miniz_oxide"] }
 futures = "0.3.34"
 lazy_static = "1.5.1"
 num_cpus = "1.17.0"
-rand = "0.10.3"
 sha1 = "0.11.0"
 tar = "0.4.46"
-clap = "4.6.7"
+clap = "4.6.10"
 winapi = { version = "0.3.9", features = ["fileapi", "winbase"] }
 winreg = "0.56.0"
-self-replace = "1.5.0"
-url = { version = "2.5.8", features = ["serde"] }
-relative-path = { version = "2.0.2", features = ["serde"] }
-uuid = { version = "1.28.0", features = ["serde", "v4"] }
-toml = "1.1.8"
-toml_edit = "0.25.17"
-gpui-kit = "0.7.3"
+self-replace = "1.5.1"
+url = { version = "2.5.9", features = ["serde"] }
+relative-path = { version = "2.0.3", features = ["serde"] }
+uuid = { version = "1.29.3", features = ["serde", "v4"] }
+toml = "1.2.2"
+toml_edit = "0.25.20"
+gpui-kit = "0.11.0"
 either = { version = "1.19.0", features = ["serde"] }
 unidecode = "0.3.0"
 async_zip = { version = "0.0.19", features = ["tokio", "deflate"] }

@@ -14,6 +14,6 @@ log.workspace = true
 url.workspace = true
 launcher-i18n = { path = "../i18n" }
 instance = { path = "../instance" }
-qrcode = "0.14.1"
+qrcode = "0.15.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-smallvec = "1.16.3"
+smallvec = "1.16.6"

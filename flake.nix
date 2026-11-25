@@ -1,6 +1,7 @@
 {
   inputs = {
     nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.xz";
+    flake-utils.url = "github:numtide/flake-utils";
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -24,7 +25,7 @@
         };
         toolchain = pkgs.fenix.fromToolchainFile {
           file = ./rust-toolchain.toml;
-          sha256 = "sha256-+xUr6Al1wZSqX8aEsq7DpuFOK4Ve/i+qTl+K5uWQ9GM=";
+          sha256 = "sha256-MFHoWVcPZKjFrLnQnodCXbUsfZcofGfo9tV9fTTvklg=";
         };
       in
       {
@@ -38,7 +39,7 @@
           {
             RUST_SRC_PATH = "${toolchain}/lib/rustlib/src/rust/library";
 
-            buildInputs = pkgs.lib.optionals pkgs.stdenv.isLinux (
+            buildInputs = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux (
               with pkgs;
               [
                 libxcb
@@ -63,9 +64,9 @@
                   ]
                 ))
               ]
-              ++ lib.optionals stdenv.isLinux [ flatpak-builder ];
+              ++ lib.optionals stdenv.hostPlatform.isLinux [ flatpak-builder ];
           }
-          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             # keep in sync with deps in package.nix
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath (
               with pkgs;

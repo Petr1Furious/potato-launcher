@@ -21,7 +21,7 @@ launcher-auth = { path = "../auth" }
 launcher-build-config = { path = "../build-config" }
 log.workspace = true
 percent-encoding = "2"
-object_store = { version = "0.12", features = ["aws"] }
+object_store = { version = "0.14", features = ["aws"] }
 relative-path.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -35,7 +35,7 @@ url.workspace = true
 utils = { path = "../utils" }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.190"
+libc = "0.2.191"
 
 [dev-dependencies]
 async_zip.workspace = true

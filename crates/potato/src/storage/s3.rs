@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use futures::{StreamExt, TryStreamExt};
 use object_store::{
-    ObjectStore, PutMode, PutOptions, PutPayload, aws::AmazonS3Builder, buffered::BufWriter,
-    path::Path as StorePath,
+    ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, aws::AmazonS3Builder,
+    buffered::BufWriter, path::Path as StorePath,
 };
 use tokio::io::AsyncWriteExt;
 

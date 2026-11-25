@@ -163,13 +163,13 @@ jobs:
       - name: Resolve build environment
         run: ./scripts/ci/set-build-env.sh
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: launcher-*
           merge-multiple: true
           path: release/launcher
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: potato-*
           merge-multiple: true

@@ -29,8 +29,8 @@ futures.workspace = true
 flate2.workspace = true
 tar.workspace = true
 either.workspace = true
-serde-saphyr = "2.0.0"
-toml_edit = "0.25.17"
+serde-saphyr = "2.2.0"
+toml_edit = "0.25.20"
 
 [dev-dependencies]
 tempfile = "3"
