@@ -122,7 +122,7 @@ impl VersionMetadataInfo {
 
 /// Bump only in case when old launchers wouldn't be able to run the new format.
 /// Launchers refuse to install entries with a higher format.
-pub const INSTANCE_FORMAT: u32 = 1;
+pub const INSTANCE_FORMAT: u32 = 2;
 
 fn first_format() -> u32 {
     1

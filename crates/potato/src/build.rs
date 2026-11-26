@@ -197,6 +197,12 @@ pub async fn build(ctx: &mut Ctx, commit: &str) -> anyhow::Result<BuildOutput> {
     let mirror = config.publish.mirror;
 
     let entries = collect_entries(ctx, &tree, &config).await?;
+    for entry in &entries {
+        let path = format!("{}/{}", entry.file.dir, entry.file.filename);
+        if config.is_deleted(&path) {
+            bail!("{path} is in the pack and in a delete rule, remove one");
+        }
+    }
 
     let staging = ctx.cache_dir.join("staging").join(&config.id);
     let source = staging.join("source");

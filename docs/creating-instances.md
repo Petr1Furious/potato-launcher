@@ -16,6 +16,8 @@ Forks of Prism, such as [Fjord Launcher](https://github.com/unmojang/FjordLaunch
 - **Cargo**: `cargo install --git https://github.com/Petr1Furious/potato-launcher potato`
 - **Nix**: `nix run github:Petr1Furious/potato-launcher#potato -- --help`
 
+If you build your own launcher from a fork, use `potato` from the fork's releases too. Players' launchers need to be at least as new as the `potato` that published the instance.
+
 `potato` needs `git`. For `rsync://` targets, you'll also need `rsync` and `ssh`, and for repos that use Git LFS, `git-lfs`.
 
 ## Quick start
@@ -137,7 +139,7 @@ The managed paths, and how the launcher applies each of them on clients. Only th
 Common fields:
 
 - **path**: Relative to the game folder.
-- **type**: `file`, `directory` or `config_options`
+- **type**: `file`, `directory`, `config_options` or `delete`
 - **apply_on**: `update` (only when the pack changes) or `always` (every launch). Default: `update`
 - **version**: Once a player has applied a rule with this version, it's skipped until you raise it. Useful for one-time changes players may undo later.
 
@@ -155,6 +157,8 @@ Common fields:
 
 - **config_type**: `json`, `yaml`, `toml` or `properties`. `properties` keeps each file's `=` or `:` separator, so it also works for `options.txt`.
 - **options**: A list of `{ key = ["section", "name"], value = ... }`
+
+`delete` removes a file or folder from players' game folders, such as a config a mod no longer uses. Add a `version` to delete it only once, so players can create it again. The path can't be in `mods/`, use `blocked` under `[client]` for that.
 
 Deeper paths win over shallower ones. For example, you can mark `config` as `skip_if_dir_exists` and still force one file inside it with a `file` rule.
 

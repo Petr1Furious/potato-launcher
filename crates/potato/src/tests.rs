@@ -1029,3 +1029,23 @@ async fn push_removes_pulled_files_the_repo_dropped() {
     sync::push(&mut s.ctx, "prism", false).await.unwrap();
     assert!(!s.game.join("kubejs/new.js").exists());
 }
+
+#[tokio::test]
+async fn delete_rules_are_pushed_but_not_pulled() {
+    let mut s = Setup::new();
+    let config = read(&s.repo.join("potato.toml"));
+    write(
+        &s.repo.join("potato.toml"),
+        &format!("{config}\n[[paths]]\npath = \"config/old.toml\"\ntype = \"delete\"\n"),
+    );
+    s.commit("delete old config");
+    write(&s.game.join("config/old.toml"), "old\n");
+
+    sync::pull(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(!s.repo.join("config/old.toml").exists());
+    s.commit("pull");
+
+    sync::push(&mut s.ctx, "prism", false).await.unwrap();
+    assert!(!s.game.join("config/old.toml").exists());
+    assert!(s.game.join("config/a.toml").exists());
+}

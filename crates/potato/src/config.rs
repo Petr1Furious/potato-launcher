@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context, bail};
 use instance::{
-    instance_metadata::{ContentRule, ResourceSyncMode},
+    instance_metadata::{ContentRule, ResourceSyncMode, RuleKind},
     localized::LocalizedString,
     mod_sync::ModSyncMode,
 };
@@ -134,7 +134,42 @@ impl Config {
             utils::instance_id::validate_instance_id(&set.id)
                 .map_err(|err| anyhow::anyhow!("invalid optional set id '{}': {err}", set.id))?;
         }
+        for rule in config
+            .paths
+            .iter()
+            .filter(|rule| matches!(rule.kind, RuleKind::Delete))
+        {
+            let path = normalized(rule);
+            if !instance::instance_metadata::is_safe_delete_path(&rule.path) {
+                bail!(
+                    "can't delete '{}', use a path inside the game folder",
+                    rule.path
+                );
+            }
+            if under(&path, "mods") {
+                bail!("can't delete '{path}', use [client] blocked for mods");
+            }
+            if let Some(rule) = config.paths.iter().find(|rule| {
+                !matches!(rule.kind, RuleKind::Delete) && under(&normalized(rule), &path)
+            }) {
+                bail!("'{}' is inside the deleted path '{path}'", rule.path);
+            }
+        }
         Ok(config)
+    }
+
+    pub fn delete_paths(&self) -> Vec<String> {
+        self.paths
+            .iter()
+            .filter(|rule| matches!(rule.kind, RuleKind::Delete))
+            .map(normalized)
+            .collect()
+    }
+
+    pub fn is_deleted(&self, path: &str) -> bool {
+        self.delete_paths()
+            .iter()
+            .any(|deleted| under(path, deleted))
     }
 
     pub fn load(repo: &Path) -> anyhow::Result<Self> {
@@ -147,7 +182,8 @@ impl Config {
     pub fn managed_roots(&self) -> Vec<String> {
         self.paths
             .iter()
-            .map(|rule| rule.path.normalize().into_string())
+            .filter(|rule| !matches!(rule.kind, RuleKind::Delete))
+            .map(normalized)
             .filter(|path| !path.is_empty() && path != "mods")
             .collect()
     }
@@ -171,8 +207,12 @@ impl Config {
         if crate::index::index_dir_of(path).is_some() || crate::git::is_committed_binary(path) {
             return false;
         }
-        self.managed_roots().iter().any(|root| under(path, root))
+        self.managed_roots().iter().any(|root| under(path, root)) && !self.is_deleted(path)
     }
+}
+
+fn normalized(rule: &ContentRule) -> String {
+    rule.path.normalize().into_string()
 }
 
 pub fn under(path: &str, root: &str) -> bool {
@@ -352,6 +392,26 @@ exclude = ["config/foo.toml"]
             config.publish.object_url("abcdef").as_str(),
             "https://mc.example.com/data/objects/ab/abcdef"
         );
+    }
+
+    #[test]
+    fn delete_rules() {
+        let with = |rule: &str| format!("{EXAMPLE}\n[[paths]]\n{rule}\ntype = \"delete\"\n");
+        let config = Config::parse(&with("path = \"config/old.toml\"")).unwrap();
+        assert!(!config.is_managed_file("config/old.toml"));
+        assert!(config.is_managed_file("config/new.toml"));
+        for bad in [
+            "\"../x\"",
+            "\".\"",
+            "\"mods/a.jar\"",
+            "\"options.txt\"",
+            "\"\"",
+        ] {
+            assert!(
+                Config::parse(&with(&format!("path = {bad}"))).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

@@ -214,6 +214,7 @@ fn prism_managed_files(config: &Config, game_dir: &Path) -> anyhow::Result<Vec<(
             if rel
                 .split('/')
                 .any(|part| part == ".index" || part == LOCAL_DIR)
+                || config.is_deleted(&rel)
             {
                 continue;
             }
@@ -897,7 +898,7 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
         snapshot,
         agreed,
     } = state;
-    let pushed = diff(&snapshot, &head_domain);
+    let mut pushed = diff(&snapshot, &head_domain);
     if !force {
         if !changes.is_empty() {
             let list = list_changes(&changes, &HashMap::new(), name);
@@ -950,6 +951,13 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
         }
     }
     apply_jars(ctx, &config, &target, &base_tree, &head_tree, exact).await?;
+    for path in config.delete_paths() {
+        let full = target.game_dir.join(&path);
+        if !target.is_excluded(&path) && full.symlink_metadata().is_ok() {
+            remove_file_or_dir(&full)?;
+            pushed.push(Change::Deleted(path));
+        }
+    }
     ctx.hashes.save()?;
 
     set_record(&ctx.git, &target, &head)?;
@@ -958,6 +966,15 @@ pub async fn push(ctx: &mut Ctx, name: &str, force: bool) -> anyhow::Result<()> 
     } else {
         println!("{name}:");
         print!("{}", list_changes(&pushed, &agreed.notes, name));
+    }
+    Ok(())
+}
+
+fn remove_file_or_dir(path: &Path) -> anyhow::Result<()> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)?;
+    } else {
+        std::fs::remove_file(path)?;
     }
     Ok(())
 }

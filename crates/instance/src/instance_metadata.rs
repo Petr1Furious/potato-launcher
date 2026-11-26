@@ -86,6 +86,7 @@ pub enum RuleKind {
     File(FileRule),
     ConfigOptions(ConfigOptionsRule),
     Directory(DirectoryRule),
+    Delete,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -112,12 +113,21 @@ impl ContentRule {
             RuleKind::File(_) => "file",
             RuleKind::ConfigOptions(_) => "config_options",
             RuleKind::Directory(_) => "directory",
+            RuleKind::Delete => "delete",
         }
     }
 
     fn version_key(&self) -> (String, &'static str) {
         (self.path.normalize().into_string(), self.kind_tag())
     }
+}
+
+pub fn is_safe_delete_path(path: &relative_path::RelativePath) -> bool {
+    let path = path.normalize();
+    !path.as_str().is_empty()
+        && path
+            .components()
+            .all(|part| matches!(part, relative_path::Component::Normal(_)))
 }
 
 fn previous_rule_versions(rules: &[ContentRule]) -> HashMap<(String, &'static str), u32> {
@@ -273,6 +283,8 @@ pub enum InstanceMetadataError {
     MissingObject(String),
     #[error("include entry and object paths do not match: {0}")]
     PathMismatch(String),
+    #[error("invalid delete path: {0}")]
+    InvalidDeletePath(String),
     #[error("mod sync failed: {0}")]
     ModSync(#[from] ModSyncError),
     #[error("failed while checking local files for download: {0}")]
@@ -660,6 +672,16 @@ impl InstanceMetadata {
                         }
                     }
                 }
+                RuleKind::Delete => {
+                    if !is_safe_delete_path(&entry.path) {
+                        return Err(InstanceMetadataError::InvalidDeletePath(
+                            entry.path.to_string(),
+                        ));
+                    }
+                    if apply_versioned {
+                        tasks.delete_tasks.push(DeleteTask { path: entry_path });
+                    }
+                }
             }
         }
 
@@ -839,5 +861,46 @@ mod tests {
                 "versions/fabric-loader-0.19.2-1.21.11/fabric-loader-0.19.2-1.21.11.jar"
             )
         );
+    }
+
+    #[tokio::test]
+    async fn delete_rules() {
+        let rule = |path: &str, version: Option<u32>| ContentRule {
+            path: path.into(),
+            apply_on: ApplyOn::Update,
+            version,
+            kind: RuleKind::Delete,
+        };
+        let instance_dir = InstancesDir::root()
+            .instance_dir("test")
+            .with_data_dir(DataDir::new(std::env::temp_dir()));
+        let params = |previous_content_rules| InstallParams {
+            instance_dir: instance_dir.clone(),
+            cause: InstallCause::Update,
+            force_overwrite: false,
+            previous_mod_entries: vec![],
+            previous_content_rules,
+            optional_sets_enabled: HashMap::new(),
+        };
+
+        let metadata = empty_metadata(vec![rule("config/old.toml", Some(1))], vec![]);
+        let tasks = metadata.get_include_tasks(&params(vec![])).await.unwrap();
+        assert_eq!(
+            tasks.delete_tasks[0].path,
+            instance_dir.minecraft_dir().join("config/old.toml")
+        );
+        let tasks = metadata
+            .get_include_tasks(&params(vec![rule("config/old.toml", Some(1))]))
+            .await
+            .unwrap();
+        assert!(tasks.delete_tasks.is_empty(), "already applied");
+
+        for bad in ["", ".", "../x", "a/../.."] {
+            let metadata = empty_metadata(vec![rule(bad, None)], vec![]);
+            assert!(
+                metadata.get_include_tasks(&params(vec![])).await.is_err(),
+                "{bad}"
+            );
+        }
     }
 }

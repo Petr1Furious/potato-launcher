@@ -714,6 +714,10 @@ impl InstanceGenerator {
                             overwrite
                         }
                         RuleKind::ConfigOptions(..) => true,
+                        RuleKind::Delete => {
+                            content_rules.push(rule);
+                            continue;
+                        }
                     };
                     existing_paths
                         .get_mut(&overwrite_bucket)
